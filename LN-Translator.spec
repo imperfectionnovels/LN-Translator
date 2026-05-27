@@ -65,15 +65,14 @@ datas += collect_data_files("zhconv")
 # Hidden imports: modules imported via string (importlib, __import__),
 # stringly-typed entry points, or dynamically resolved by frozen-mode
 # entry points. The translator factory dispatches to backends by
-# provider_type name, so the per-backend modules must all ship even when
-# they're not statically referenced from app_entry.
+# provider_type name (factory.py::_DISPATCH → importlib.import_module),
+# so EVERY backend in backend.services.translators must ship even when
+# nothing statically references it from app_entry. Walking the whole
+# subpackage (same pattern used below for backend.services.scrapers)
+# guarantees that any new translator added later is auto-bundled — the
+# per-file enumeration this replaces had drifted to miss 14 of 19
+# backends, leaving most non-default providers broken in the EXE.
 hiddenimports = [
-    "backend.services.translators.claude_agent",
-    "backend.services.translators.claude_cli",
-    "backend.services.translators.gemini",
-    "backend.services.translators.deepseek",
-    "backend.services.translators.deepseek_revise",
-    "backend.services.translators.opus_mt",
     "backend.services.opus_mt_models",
     "backend.services.free_draft_queue",
     "backend.routes.opus_mt",
@@ -83,6 +82,7 @@ hiddenimports = [
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
 ]
+hiddenimports += collect_submodules("backend.services.translators")
 # Free-tier OPUS-MT backend: ctranslate2 + sentencepiece both ship compiled
 # extensions (libctranslate2.dll on Windows; sentencepiece bundles its own
 # native binaries). collect_dynamic_libs picks up the .pyd / .dll files

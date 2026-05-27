@@ -65,8 +65,10 @@ async def get_chapter(
     # OPUS_MT_LOCK), so this does not delay any in-flight LLM translation.
     try:
         from backend.services import free_draft_queue
-        import asyncio as _asyncio
-        _asyncio.create_task(
+        # _spawn (not bare asyncio.create_task) keeps a strong reference
+        # in free_draft_queue._background_tasks so the loop can't GC the
+        # task before it starts — silently dropping the user's free draft.
+        free_draft_queue._spawn(
             free_draft_queue.maybe_queue_for_open_chapter(novel_id, r["id"])
         )
     except Exception:
