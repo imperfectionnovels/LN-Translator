@@ -67,22 +67,47 @@ datas += collect_data_files("zhconv")
 # entry points. The translator factory dispatches to backends by
 # provider_type name (factory.py::_DISPATCH → importlib.import_module),
 # so EVERY backend in backend.services.translators must ship even when
-# nothing statically references it from app_entry. Walking the whole
-# subpackage (same pattern used below for backend.services.scrapers)
-# guarantees that any new translator added later is auto-bundled — the
-# per-file enumeration this replaces had drifted to miss 14 of 19
-# backends, leaving most non-default providers broken in the EXE.
+# nothing statically references it from app_entry. Listed explicitly
+# because collect_submodules("backend.services.translators") returns an
+# empty list during spec evaluation in this build env — the manual list
+# is the only path that reliably bundles all 19 backends. Keep this in
+# sync with factory.py::_DISPATCH when a new translator lands; the
+# catalog-parity test catches drift between catalog/dispatch but does
+# not see this spec file.
 hiddenimports = [
     "backend.services.opus_mt_models",
     "backend.services.free_draft_queue",
     "backend.routes.opus_mt",
+    # Subscription / CLI subprocess backends.
+    "backend.services.translators.claude_agent",
+    "backend.services.translators.claude_cli",
+    "backend.services.translators.codex_cli",
+    "backend.services.translators.gemini_cli",
+    "backend.services.translators.opencode",
+    # API-key backends.
+    "backend.services.translators.anthropic_api",
+    "backend.services.translators.gemini",
+    "backend.services.translators.openai",
+    "backend.services.translators.deepseek",
+    "backend.services.translators.deepseek_revise",
+    "backend.services.translators.xai",
+    "backend.services.translators.mistral",
+    "backend.services.translators.openrouter",
+    "backend.services.translators.qwen",
+    "backend.services.translators.zhipu",
+    "backend.services.translators.moonshot",
+    "backend.services.translators.groq",
+    "backend.services.translators.openai_compatible",
+    "backend.services.translators.openai_compatible_generic",
+    # Local.
+    "backend.services.translators.ollama",
+    "backend.services.translators.opus_mt",
     # keyring backends — pick whichever module the platform actually has.
     # The frozen build needs at least one or set_secret returns 503.
     "keyring.backends.Windows",
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
 ]
-hiddenimports += collect_submodules("backend.services.translators")
 # Free-tier OPUS-MT backend: ctranslate2 + sentencepiece both ship compiled
 # extensions (libctranslate2.dll on Windows; sentencepiece bundles its own
 # native binaries). collect_dynamic_libs picks up the .pyd / .dll files
