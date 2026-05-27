@@ -195,6 +195,7 @@ const api = {
   chapter: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}`),
   retranslate: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/retranslate`, { method: "POST" }),
   retryRefinement: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/retry-refinement`, { method: "POST" }),
+  refreshFreeDraft: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/refresh-free-draft`, { method: "POST" }),
   cancelQueueChapter: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/queue`, { method: "DELETE" }),
   cancelQueueAll: (id) => apiFetch(`/api/novels/${id}/queue`, { method: "DELETE" }),
   globalQueue: () => apiFetch(`/api/novels/queue/all`),

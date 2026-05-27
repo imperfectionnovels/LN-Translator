@@ -2249,6 +2249,14 @@ function _displayedEnglish(ch) {
   if (translationSource === "free_draft" && ch.free_draft_text) {
     return ch.free_draft_text;
   }
+  // 2026-05-27: when the novel has a refiner configured AND polishing
+  // is mid-flight, suppress the draft. The user explicitly does not want
+  // to see the draft body and then watch it get replaced by the refined
+  // version a minute later — they only want the polished output. The
+  // refinement banner still surfaces the "polishing in progress" status.
+  if (ch.refinement_status === "pending" || ch.refinement_status === "in_progress") {
+    return "";
+  }
   if (ch.refinement_status === "done" && ch.refined_text) {
     return ch.refined_text;
   }
@@ -2273,9 +2281,9 @@ function applyRefinementBanner(ch) {
   card.className = "alert-banner refinement-banner";
   card.setAttribute("role", "status");
   if (ch.refinement_status === "pending") {
-    card.innerHTML = `<span class="msg">Refinement queued. The draft below will be replaced when polishing completes.</span>`;
+    card.innerHTML = `<span class="msg">Refinement queued. The polished version will appear here when polishing completes.</span>`;
   } else if (ch.refinement_status === "in_progress") {
-    card.innerHTML = `<span class="msg">Refinement in progress…</span>`;
+    card.innerHTML = `<span class="msg">Polishing in progress. The polished version will appear when complete…</span>`;
   } else if (ch.refinement_status === "error") {
     const msg = ch.refinement_error || "unknown error";
     card.innerHTML = `
@@ -2776,6 +2784,23 @@ retranslateBtn.addEventListener("click", async () => {
     "Re-translation queued. Refreshing when done."
   );
 });
+
+// 2026-05-27 — manual refresh of the OPUS-MT free draft. The free draft is
+// generated lazily on chapter open and otherwise has no in-app recompute
+// path; if the OPUS-MT model was misconfigured when the draft was first
+// produced (placeholder tokens, repeated phrases, garbage output), the
+// stuck text would otherwise pollute the PEMT reference forever. This
+// button clears free_draft_text and re-queues the worker.
+const refreshFreeDraftBtn = document.getElementById("refresh-free-draft");
+if (refreshFreeDraftBtn) {
+  refreshFreeDraftBtn.addEventListener("click", async () => {
+    await runAction(
+      refreshFreeDraftBtn,
+      () => api.refreshFreeDraft(novelId, currentCh),
+      "Free draft regeneration queued. The new draft will appear shortly."
+    );
+  });
+}
 
 // Style-note dialog: view / edit the per-novel voice brief. The brief is
 // injected into every chapter translation prompt as a voice anchor.
