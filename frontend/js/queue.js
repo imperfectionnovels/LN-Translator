@@ -1,0 +1,224 @@
+/* Design v2 Phase E2 — Queue Stack page.
+ *
+ * Read-only kanban of the cross-novel translate queue: Now translating,
+ * Up next, Recent (done + errored). Reuses /api/novels/queue/all (extended
+ * to return `recent` in the same commit as this page). Polls every 4s,
+ * paused when the tab is hidden, identical cadence to the floating
+ * queue-panel pill. No reorder in this phase — Phase E3 wires the
+ * queue_position column and ⬆⬇ controls. */
+
+(function () {
+  const POLL_MS = 4000;
+  const nowEl    = document.getElementById("qs-now");
+  const nextEl   = document.getElementById("qs-next");
+  const recentEl = document.getElementById("qs-recent");
+  const nowCount    = document.getElementById("qs-now-count");
+  const nextCount   = document.getElementById("qs-next-count");
+  const recentCount = document.getElementById("qs-recent-count");
+  const sumEl   = document.getElementById("queue-summary");
+  const toastEl = document.getElementById("qs-toast");
+  const refreshBtn = document.getElementById("queue-refresh-btn");
+  const cancelAllBtn = document.getElementById("queue-cancel-all");
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+    })[c]);
+  }
+  function relTime(ts) {
+    if (!ts) return "";
+    const iso = ts.includes("T") ? ts : ts.replace(" ", "T") + "Z";
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "";
+    const minsAgo = (Date.now() - t) / 60000;
+    if (minsAgo < 1) return "just now";
+    if (minsAgo < 60) return `${Math.floor(minsAgo)}m ago`;
+    const hours = minsAgo / 60;
+    if (hours < 24) return `${Math.floor(hours)}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
+  function firstCJK(s) {
+    const m = String(s || "").match(/[㐀-鿿]/);
+    return m ? m[0] : "·";
+  }
+  function showToast(msg, kind = "info") {
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.className = `status ${kind}`;
+    setTimeout(() => { toastEl.textContent = ""; toastEl.className = "status"; }, 5000);
+  }
+
+  // confirmDialog lives in frontend/js/utils.js (C7).
+
+  function renderActiveCard(item) {
+    // The single "now translating" card. Larger than queued rows so the eye
+    // catches what's actually happening. The compact 6-stage strip is a
+    // placeholder for the live-pipeline diagram coming in Phase F.
+    return `
+      <div class="qs-active-card" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
+        <div class="qs-motif">${escapeHtml(firstCJK(item.novel_title))}</div>
+        <div class="qs-active-body">
+          <div class="qs-active-eyebrow">${escapeHtml(item.novel_title)}</div>
+          <div class="qs-active-title">Ch. ${item.chapter_num} · ${escapeHtml(item.title)}</div>
+          <div class="qs-stage-bar" aria-hidden="true">
+            <span class="qs-stage done"></span>
+            <span class="qs-stage done"></span>
+            <span class="qs-stage active"></span>
+            <span class="qs-stage"></span>
+            <span class="qs-stage"></span>
+            <span class="qs-stage"></span>
+          </div>
+          <div class="qs-active-meta">
+            <span class="qs-pulse"></span>
+            <span>Translating…</span>
+            <a class="qs-link" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open in reader</a>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderQueuedRow(item) {
+    return `
+      <div class="qs-row" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
+        <div class="qs-row-motif">${escapeHtml(firstCJK(item.novel_title))}</div>
+        <div class="qs-row-body">
+          <div class="qs-row-title">${escapeHtml(item.novel_title)}</div>
+          <div class="qs-row-sub">Ch. ${item.chapter_num} · ${escapeHtml(item.title)}</div>
+        </div>
+        <div class="qs-row-actions">
+          <a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open</a>
+          <button class="qs-row-btn" data-act="dequeue" type="button" title="Drop this chapter from the queue">×</button>
+        </div>
+      </div>`;
+  }
+
+  function renderRecentRow(item) {
+    const isError = item.status === "error";
+    return `
+      <div class="qs-row qs-row-recent${isError ? " is-error" : ""}" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
+        <div class="qs-row-motif">${escapeHtml(firstCJK(item.novel_title))}</div>
+        <div class="qs-row-body">
+          <div class="qs-row-title">${escapeHtml(item.novel_title)}</div>
+          <div class="qs-row-sub">
+            Ch. ${item.chapter_num}
+            <span class="qs-status ${isError ? "is-err" : "is-ok"}">${isError ? "error" : "done"}</span>
+            <span class="qs-when muted">${escapeHtml(relTime(item.translated_at))}</span>
+          </div>
+          ${isError && item.error_msg ? `<div class="qs-row-error">${escapeHtml(item.error_msg)}</div>` : ""}
+        </div>
+        <div class="qs-row-actions">
+          ${isError
+            ? `<button class="qs-row-btn" data-act="retry" type="button">Retry</button>`
+            : `<a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Read</a>`}
+        </div>
+      </div>`;
+  }
+
+  async function dequeueChapter(novelId, chapterNum, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      // Reuse the existing per-chapter cancel — same endpoint the reader
+      // uses to drop a chapter from the queue. Cheap, atomic.
+      await api.cancelQueueChapter(novelId, chapterNum);
+      await refresh();
+    } catch (e) {
+      showToast(`Drop failed: ${e.message}`, "err");
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function retryChapter(novelId, chapterNum, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api.retranslate(novelId, chapterNum);
+      await refresh();
+    } catch (e) {
+      showToast(`Retry failed: ${e.message}`, "err");
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function render(snap) {
+    const translate = snap.translate || [];
+    const recent = snap.recent || [];
+    const inFlight = translate.filter(t => t.in_flight);
+    const upNext = translate.filter(t => !t.in_flight);
+
+    nowCount.textContent = inFlight.length;
+    nextCount.textContent = upNext.length;
+    recentCount.textContent = recent.length;
+    // Q1: keep each column section's aria-label aligned with its current
+    // count so screen-readers hear "Now translating, 2 items" rather than
+    // an unlabelled <section>.
+    const labelItems = (n) => `${n} ${n === 1 ? "item" : "items"}`;
+    document.getElementById("qs-col-now")?.setAttribute("aria-label", `Now translating, ${labelItems(inFlight.length)}`);
+    document.getElementById("qs-col-next")?.setAttribute("aria-label", `Up next, ${labelItems(upNext.length)}`);
+    document.getElementById("qs-col-recent")?.setAttribute("aria-label", `Recent, ${labelItems(recent.length)}`);
+
+    nowEl.innerHTML = inFlight.length
+      ? inFlight.map(renderActiveCard).join("")
+      : `<div class="qs-empty muted">Nothing in flight.</div>`;
+
+    nextEl.innerHTML = upNext.length
+      ? upNext.map(renderQueuedRow).join("")
+      : `<div class="qs-empty muted">Queue is empty.</div>`;
+
+    recentEl.innerHTML = recent.length
+      ? recent.map(renderRecentRow).join("")
+      : `<div class="qs-empty muted">No recent activity.</div>`;
+
+    sumEl.textContent = `${inFlight.length} translating · ${upNext.length} queued · ${recent.length} recent`;
+
+    // Wire row actions.
+    nextEl.querySelectorAll(".qs-row[data-novel]").forEach(row => {
+      const dq = row.querySelector("[data-act='dequeue']");
+      if (dq) dq.addEventListener("click", () => dequeueChapter(
+        parseInt(row.dataset.novel, 10),
+        parseInt(row.dataset.ch, 10),
+        dq,
+      ));
+    });
+    recentEl.querySelectorAll(".qs-row[data-novel]").forEach(row => {
+      const retry = row.querySelector("[data-act='retry']");
+      if (retry) retry.addEventListener("click", () => retryChapter(
+        parseInt(row.dataset.novel, 10),
+        parseInt(row.dataset.ch, 10),
+        retry,
+      ));
+    });
+  }
+
+  async function refresh() {
+    try {
+      const snap = await api.globalQueue();
+      render(snap);
+    } catch (e) {
+      showToast(`Refresh failed: ${e.message}`, "err");
+    }
+  }
+
+  refreshBtn?.addEventListener("click", refresh);
+  cancelAllBtn?.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Cancel all queued chapters?",
+      body: "<p>This drops every waiting chapter from the queue across all novels. The chapter currently mid-translation finishes on its own.</p>",
+      okText: "Cancel all queued",
+    });
+    if (!ok) return;
+    try {
+      await api.cancelGlobalQueue();
+      showToast("Cleared all queued chapters.", "ok");
+      await refresh();
+    } catch (e) {
+      showToast(`Cancel failed: ${e.message}`, "err");
+    }
+  });
+
+  // Poll while tab is visible.
+  refresh();
+  setInterval(() => {
+    if (document.visibilityState === "visible") refresh();
+  }, POLL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refresh();
+  });
+})();

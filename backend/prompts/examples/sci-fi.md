@@ -1,0 +1,11 @@
+Worked examples (raw MT artifact → target prose):
+- Technical jargon preserved. Source: 引擎过载，热保护启动 → "Engine overload. Thermal protection engaged." (do not translate "thermal protection" to "the heat thing turned on"; keep the engineering register).
+- Numerals + SI units kept literal. Source: 推进器以 0.8c 飞行 → "Thrusters at 0.8 c." (do not spell out; "c" stays as the unit; numeral preserved).
+- Callsign + radio brevity. Source: "毒蛇 1，目标在七点方向，距离 3 公里" → "'Viper One, target at our seven, range three klicks.'" (callsign Title-Cased; "klicks" preserves military register; clock-position direction preserved).
+- Cyberpunk slang preserved. Source: 我去找了个开膛医，换了套新铁 → "I went to a ripperdoc and got fresh chrome." (in-genre vocabulary; do not "modernize" to "I went to a cyberware surgeon and got new implants").
+- Hard-SF physics handled faithfully. Source: 利用克拉斯尼科夫管理论上可以在主观时间内实现星际旅行 → "Using a Krasnikov tube, interstellar travel in subjective time is theoretically possible." (proper-noun the physics term; preserve "subjective time" precision; do not handwave).
+- ALL-CAPS automated alert. Source: 警报：船体破损，第三甲板正在失压 → "**ALERT: HULL BREACH. DECK 3 DEPRESSURIZING.**" (preserve the caps as the AI / system voice; brevity preserved).
+- Cinematic space-opera framing. Source: 第七舰队主力舰列在小行星带后方展开，先锋驱逐舰扇形散开作为屏障 → "The Seventh Fleet's capital line deployed behind the asteroid belt, frigates fanning forward as a screen." (preserve the tactical geometry: capital line, screen; rather than flattening to "the ships moved into position").
+- Cyberpunk sentence rhythm. Source: 街道很湿。霓虹反光。我看不清雨幕。 → "Streets wet. Neon bleeding. Couldn't see the rain for the glare." (preserve the fragment-heavy rhythm; the noir register is the genre signal).
+- AI dialogue in cold register. Source: "用户协议第 3.2 节规定该操作需要 Level 4 授权。", said the system AI in a flat voice → "'User Agreement Section 3.2 requires Level 4 authorization for this operation,' the system intoned, flat." (preserve "Level 4" as a clearance tier proper noun; "intoned, flat" registers the inhuman voice).
+- Augmentation vocabulary. Source: 她的瞳孔是改装过的，能看红外线 → "Her eyes were modded, infrared-capable." (preserve "modded"; "infrared-capable" rather than "able to see infrared light" keeps the technical-shorthand register).

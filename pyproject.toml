@@ -1,0 +1,87 @@
+[project]
+name = "chinese-novel-translator"
+version = "0.1.0b1"
+description = "Translate light novels to English via user-configured AI providers (Anthropic, Google, DeepSeek, OpenAI-compatible); ships as a desktop EXE or local web server."
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "ImperfectionNovels"}]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "aiosqlite>=0.20",
+    "chardet>=5.2",
+    "google-genai>=0.3",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.12",
+    "pydantic>=2.9",
+    "claude-agent-sdk>=0.1.81",
+    "openai>=1.50",
+    "zhconv>=1.4",
+    "python-docx>=1.1",
+    "ebooklib>=0.18",
+    "httpx>=0.27",
+    "trafilatura>=1.12",
+    "keyring>=25.0",
+    "pywebview>=5.0",
+    # cloudscraper: legacy CF v1/v2 JS challenge solver. Lighter than the
+    # vendored lncrawl bundle. Kept as a secondary fallback after
+    # curl_cffi — they cover different failure modes (cloudscraper
+    # handles JS challenges that don't need a real browser; curl_cffi
+    # handles TLS-fingerprint blocks). Wrapped + SSRF-validated by
+    # backend/services/scrapers/cloudflare.py — never called raw.
+    "cloudscraper>=1.2.71,<2.0.0",
+    # curl_cffi: real Chrome / Firefox TLS handshake via curl-impersonate.
+    # The PRIMARY fallback for sites whose Cloudflare checks the TLS JA3/
+    # JA4 fingerprint (which is what blocks Python's stdlib SSL even
+    # behind a Chrome-shaped UA + headers). Compiled C extension —
+    # PyInstaller picks it up via hiddenimports in LN-Translator.spec.
+    "curl_cffi>=0.7,<1.0",
+    # beautifulsoup4: site-specific recipes (backend/services/scrapers/*)
+    # use BS4 selectors to dig out chapter lists / titles / covers. Out of
+    # the trafilatura main-article pipeline because per-site selectors are
+    # the whole point of a recipe.
+    "beautifulsoup4>=4.12,<5.0",
+    # ctranslate2 + sentencepiece: powers the free-tier OPUS-MT NMT backend
+    # (backend/services/translators/opus_mt.py). Loaded lazily — boot does
+    # not depend on these. CTranslate2 ships x86_64 Windows wheels on PyPI
+    # (≥ 4.0). The PyInstaller spec uses collect_dynamic_libs to bundle
+    # both native libraries; see LN-Translator.spec.
+    "ctranslate2>=4.4",
+    "sentencepiece>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+build = [
+    "pyinstaller>=6.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/ImperfectionNovels/LN-Translator"
+Repository = "https://github.com/ImperfectionNovels/LN-Translator"
+Issues = "https://github.com/ImperfectionNovels/LN-Translator/issues"
+
+[project.scripts]
+ln-translator = "backend.app_entry:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I"]
+ignore = ["E501"]

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Welcome · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/onboarding.css?v=1">
+</head>
+<body class="onboarding-body">
+
+<div class="ob-shell">
+  <header class="ob-header">
+    <div class="ob-seal" aria-hidden="true">譯</div>
+    <div>
+      <div class="eyebrow"><span>LN Translator</span></div>
+      <h1 class="ob-title">Welcome.</h1>
+      <p class="ob-sub">Translate Chinese light novels into English using your preferred AI. A two-minute setup gets you reading.</p>
+    </div>
+    <a class="ob-skip" href="/library" title="Skip setup and go straight to the library">Skip for now →</a>
+  </header>
+
+  <ol class="ob-steps" aria-label="Setup steps">
+    <li class="ob-step is-active" data-step="1"><span class="ob-step-num">1</span><span>Pick a translator</span></li>
+    <li class="ob-step" data-step="2"><span class="ob-step-num">2</span><span>Add an API key</span></li>
+    <li class="ob-step" data-step="3"><span class="ob-step-num">3</span><span>You're ready</span></li>
+  </ol>
+
+  <!-- ============================ STEP 1: Pick translator =================== -->
+  <section class="ob-panel is-active" data-panel="1">
+    <h2 class="ob-h2">Which AI should translate?</h2>
+    <p class="ob-lead">You can change this later or set different translators per novel. The default option uses your local Claude Code subscription. No API key required.</p>
+    <div class="ob-provider-grid" id="ob-provider-grid">
+      <button type="button" class="ob-provider is-selected" data-provider-type="claude_agent" data-model="claude-opus-4-7" data-secret-ref="">
+        <div class="ob-prov-icon" style="--prov-hue:#c8423a">C</div>
+        <div class="ob-prov-name">Claude Agent SDK</div>
+        <div class="ob-prov-meta">Opus 4.7 · uses local Claude Code subscription</div>
+        <div class="ob-prov-note">No key needed. Runs through your installed <code>claude</code> CLI. Best quality, serial.</div>
+      </button>
+      <button type="button" class="ob-provider" data-provider-type="gemini" data-model="gemini-3-pro-preview" data-secret-ref="GEMINI_API_KEY">
+        <div class="ob-prov-icon" style="--prov-hue:#4a6da8">G</div>
+        <div class="ob-prov-name">Google Gemini</div>
+        <div class="ob-prov-meta">3 Pro · paid API</div>
+        <div class="ob-prov-note">Fast and cheap. Needs a Google AI Studio API key.</div>
+      </button>
+      <button type="button" class="ob-provider" data-provider-type="deepseek" data-model="deepseek-chat" data-secret-ref="DEEPSEEK_API_KEY">
+        <div class="ob-prov-icon" style="--prov-hue:#2f6a5e">D</div>
+        <div class="ob-prov-name">DeepSeek</div>
+        <div class="ob-prov-meta">deepseek-chat · OpenAI-compatible</div>
+        <div class="ob-prov-note">Internal translate→revise pass built in. Needs a DeepSeek API key.</div>
+      </button>
+    </div>
+    <div class="ob-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn-primary" data-act="next">Continue →</button>
+    </div>
+  </section>
+
+  <!-- ============================ STEP 2: API key ============================ -->
+  <section class="ob-panel" data-panel="2">
+    <h2 class="ob-h2" id="ob-step2-title">Add an API key</h2>
+    <p class="ob-lead" id="ob-step2-lead">Your key is stored in the OS keychain. Never written to the database or returned in API responses.</p>
+
+    <form class="ob-form" id="ob-key-form">
+      <div class="ob-form-row">
+        <label for="ob-key-input" id="ob-key-input-label">API key</label>
+        <input type="password" id="ob-key-input" autocomplete="off" spellcheck="false" autocapitalize="off"
+               placeholder="paste your key here">
+      </div>
+      <div class="ob-form-hint" id="ob-key-hint"></div>
+      <div class="ob-key-status hidden" id="ob-key-status" role="status"></div>
+    </form>
+
+    <div class="ob-actions">
+      <button type="button" class="btn-ghost" data-act="back">← Back</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn-ghost" data-act="skip-key" id="ob-skip-key" hidden>Skip · set the key later</button>
+      <button type="button" class="btn-primary" data-act="save-key" id="ob-save-key">Save &amp; continue →</button>
+    </div>
+  </section>
+
+  <!-- ============================ STEP 3: Ready ============================== -->
+  <section class="ob-panel" data-panel="3">
+    <h2 class="ob-h2">You're ready.</h2>
+    <p class="ob-lead">You can change providers, add more, configure refinement passes, or set per-novel translators in Settings at any time.</p>
+    <div class="ob-summary" id="ob-summary"></div>
+    <div class="ob-cta-row">
+      <a class="ob-cta-card" href="/">
+        <div class="ob-cta-eyebrow">Import a novel</div>
+        <div class="ob-cta-title">Paste a chapter →</div>
+        <div class="ob-cta-sub">The fastest way to see the translator at work.</div>
+      </a>
+      <a class="ob-cta-card" href="/library">
+        <div class="ob-cta-eyebrow">Browse later</div>
+        <div class="ob-cta-title">Go to library →</div>
+        <div class="ob-cta-sub">Your empty shelf is waiting.</div>
+      </a>
+    </div>
+    <div class="ob-actions">
+      <button type="button" class="btn-ghost" data-act="back">← Back</button>
+    </div>
+  </section>
+</div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/onboarding.js"></script>
+</body>
+</html>

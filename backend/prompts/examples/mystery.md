@@ -1,0 +1,10 @@
+Worked examples (raw MT artifact → target prose):
+- Spatial precision preserved. Source: 刀放在桌上的台灯旁边 → "The knife was on the table, by the lamp." NOT: "The knife was on the table near the lamp." (the exact spatial relationship may be the clue; preserve precision).
+- Hedge in witness statement preserved. Source: "我好像看见他离开了" → "'I think I saw him leave.'" NOT: "'I saw him leave.'" (the hedge is forensic evidence; do not strengthen testimony the witness softened).
+- Lie rendered as lie, in the speaker's voice. Source: "我整晚都在家。" (later proven false) → "'I was home all evening.'" (render exactly; do not editorialize via word choice that the detective will later disprove this).
+- Time stamp preserved precisely. Source: 大概九点十五到九点二十之间 → "Around 9:15 to 9:20." (preserve the range; if the source had specified 9:17 exactly, preserve that exactness).
+- Forensic precision. Source: 死者颈部有切割伤 → "The deceased had an incised wound on the neck." NOT: "The victim had a cut on the neck." (forensic register; "incised wound" is the technical term).
+- Police jurisdiction term per glossary. Source: 他们到了派出所 → "They arrived at the local police station." NOT: "They arrived at the precinct." (preserve the Chinese police structure unless the glossary has domesticated it).
+- Interrogation interruption preserved. Source: "我——我的意思是，那天我并没有——" → "'I... I mean, that day I didn't...'" (preserve the disfluency; the psychology of the witness is in the broken phrasing).
+- Reveal pacing preserved. Source: "首先，凶手必须熟悉这栋楼的布局。其次，凶手必须有钥匙。再者，凶手必须……" → "'First, the killer must know the layout of this building. Second, the killer must have had a key. Third, the killer must…'" (preserve the point-by-point structure; do not consolidate the detective's reasoning).
+- False solution rendered straight before the true one. (When the detective walks through a wrong solution before revealing the right one, render the wrong solution with full conviction. Do not telegraph through hedging vocabulary that it is wrong; the reader's experience of false-then-true is the storytelling.)

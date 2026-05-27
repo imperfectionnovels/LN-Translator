@@ -1,0 +1,153 @@
+"""Optional per-novel refinement pass.
+
+A novel with `novels.refinement_provider_id` set runs an extra LLM call
+after the translator commits. The refiner takes the translator's draft
+English body and polishes it into more readable novel prose — surface
+smoothing only, NO re-checking against the Chinese source. The draft is
+the source of truth for fidelity; the refiner trusts it.
+
+State machine on the `chapters` table:
+- `refinement_status` ∈ {none, pending, in_progress, done, error}
+- `refined_text` populated on success
+- `refinement_error` populated on failure
+- `refined_at` timestamp on success
+
+The queue worker drives the state transitions; this module is the pure
+"run an LLM call to polish text" function.
+
+Glossary block: locked terms are passed into the refiner so it doesn't
+accidentally mutate them while polishing ("True Person Sea's Roar" →
+"The True Person of Sea's Roar" would otherwise read as a legitimate
+edit). The user's stated requirement "Keep genre terminology consistent"
+relies on the refiner seeing the locked names.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from backend.models import GlossaryEntry
+from backend.services import llm_cache
+from backend.services.glossary import dedupe_against_locked
+from backend.services.providers import Provider
+from backend.services.translators.base import format_glossary
+from backend.services.translators.factory import get_translator
+
+logger = logging.getLogger(__name__)
+
+
+# System instruction the refiner runs under. Distinct from the translator's
+# genre-aware system instruction: this voice is the editor's, not the
+# translator's. Kept short and stable so the cache key is predictable.
+#
+# CRITICAL (2026-05-23): 3 of 4 backends ignore self.system_instruction in
+# _complete_plain (gemini, claude_agent, claude_cli) — only DeepSeek reads
+# it. To guarantee the editor role reaches every backend, this string is
+# also folded into the user prompt at the top (see _REFINER_USER_TEMPLATE).
+# The class-level system instruction is kept for backends that DO use it
+# (DeepSeek) but is no longer load-bearing.
+_REFINER_SYSTEM_INSTRUCTION = (
+    "You are a meticulous literary editor specializing in polished English "
+    "novel prose. You take a draft translation and edit it for surface "
+    "quality: rhythm, verb strength, sentence variety, dialogue clarity, "
+    "paragraphing. You do not re-translate from a source language — the "
+    "draft IS the canonical text; you trust its meaning and only smooth "
+    "the English surface. You never invent new content, never drop "
+    "details, and never mutate glossary terms."
+)
+
+
+# The user-supplied prompt template (Phase 4 kickoff, 2026-05-23). Edit-only
+# directives — surface polish, preserve everything else. The {glossary_block}
+# placeholder names every glossary entry so the refiner preserves them.
+# The editor role is folded in at the top because most backends' plain-text
+# completion path doesn't forward system_instruction.
+_REFINER_USER_TEMPLATE = """ROLE: You are a meticulous literary editor specializing in polished English novel prose. You take a draft translation and edit it for surface quality only — you do not re-translate. The draft IS the canonical text; you trust its meaning and only smooth the English surface. Never invent new content, drop details, or mutate glossary terms.
+
+TASK: Edit the following translated web novel passage so it reads like a polished English novel.
+
+Requirements:
+- Preserve the original meaning, plot events, character names, cultivation terms, and implied worldbuilding.
+- Do not add new information or remove important details.
+- Keep the same point of view and tense unless the original clearly needs smoothing.
+- Make the prose natural, immersive, and dramatic, like a proper novel rather than a literal translation.
+- Improve sentence flow, rhythm, dialogue/thought clarity, and paragraphing.
+- Keep internal thoughts in italics.
+- Do not use em dashes.
+- Keep genre terminology consistent.
+- Return only the edited version unless you notice a serious ambiguity.
+
+GLOSSARY (every entry, locked and auto-detected — preserve EXACTLY as written; never mutate, paraphrase, or re-case any of them):
+{glossary_block}
+
+DRAFT PASSAGE TO EDIT:
+{draft}"""
+
+
+def _build_refiner_prompt(
+    draft: str, glossary: list[GlossaryEntry] | None,
+) -> str:
+    # CRITICAL (2026-05-23 fix): the refiner must see BOTH locked AND
+    # auto-detected entries, not just locked ones. The queue worker merges
+    # the translator's new_terms into the glossary BEFORE the refiner runs,
+    # so any auto-detected term the refiner is allowed to mutate would
+    # leave the stored glossary entry pointing at text the reader never
+    # sees. Pass everything; tell the refiner to preserve all of it.
+    all_terms = dedupe_against_locked(glossary or [])
+    glossary_block = format_glossary(
+        all_terms, empty_label="(no glossary entries)"
+    )
+    return _REFINER_USER_TEMPLATE.format(
+        glossary_block=glossary_block, draft=draft,
+    )
+
+
+async def refine_chapter(
+    draft: str,
+    provider: Provider,
+    glossary: list[GlossaryEntry] | None = None,
+    *,
+    use_cache: bool = True,
+) -> str:
+    """Run the refiner against `draft` and return the polished text.
+
+    The refiner uses the backend's `_complete_plain` hook because it has
+    no envelope to parse — the output is the polished prose, full stop.
+    """
+    backend = get_translator(provider)
+    # Stash the refiner's system instruction on the backend instance so
+    # backends that read self.system_instruction (gemini, deepseek,
+    # claude_agent) route the correct system message. Single-threaded
+    # queue lock keeps this safe.
+    backend.system_instruction = _REFINER_SYSTEM_INSTRUCTION
+    prompt = _build_refiner_prompt(draft, glossary)
+    cache_key = llm_cache.refinement_key(
+        backend_id=backend.cache_identity(),
+        system_instruction=_REFINER_SYSTEM_INSTRUCTION,
+        draft_translation=prompt,
+    )
+    if use_cache:
+        cached = llm_cache.load_refinement(cache_key)
+        if cached is not None:
+            logger.info(
+                "refiner cache HIT (key %s…, provider=%s)",
+                cache_key[:12], provider.name,
+            )
+            return cached
+        logger.info(
+            "refiner cache MISS (key %s…, provider=%s)",
+            cache_key[:12], provider.name,
+        )
+    else:
+        logger.info(
+            "refiner cache SKIP (key %s…, provider=%s)",
+            cache_key[:12], provider.name,
+        )
+    refined = (await backend._complete_plain(prompt)).strip()
+    if not refined:
+        raise RuntimeError(
+            f"refiner ({provider.name}) returned empty output for a "
+            f"{len(draft)}-char draft"
+        )
+    llm_cache.store_refinement(cache_key, refined)
+    return refined

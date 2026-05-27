@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Glossary · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/glossary.css?v=2">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <h1 id="novel-title" hidden>Glossary</h1>
+  <nav class="crumbs" aria-label="Breadcrumb" id="crumbs">
+    <a href="/library">Library</a>
+    <span class="sep">›</span>
+    <a id="crumb-novel" href="#">Novel</a>
+    <span class="sep">›</span>
+    <span class="here">Glossary</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">詞</span><span>Glossary</span></div>
+      <h1 class="h-title" id="head-title">Terms &amp; Names</h1>
+      <div class="h-sub" id="head-sub">Per-novel mappings keep terminology consistent across chapters.</div>
+    </div>
+    <div class="h-actions">
+      <a class="btn-ghost" href="/glossary/global" title="Manage cross-novel glossary terms">⇄ Global glossary</a>
+      <details class="download-menu" id="glossary-export-menu">
+        <summary title="Export glossary">Export ▾</summary>
+        <div class="menu">
+          <a id="export-csv" href="#" download>Glossary · .csv</a>
+          <a id="export-md" href="#" download>Glossary · .md</a>
+        </div>
+      </details>
+      <button class="btn-primary" id="add-entry-btn"><span class="han-mark">新</span>＋ New term</button>
+    </div>
+  </div>
+
+  <!-- Health ribbon — quietly visible when the glossaryHealth endpoint
+       reports anything (duplicates, unused, etc.). Hidden when clean. -->
+  <div id="health-ribbon" class="health-ribbon hidden" role="status" aria-live="polite">
+    <span class="han">健</span>
+    <span class="ribbon-msg" id="health-ribbon-msg"></span>
+    <span class="ribbon-spacer"></span>
+    <span class="h-stats" id="health-ribbon-stats"></span>
+    <button type="button" class="btn-tiny" id="health-open">Open health →</button>
+    <button type="button" class="btn-tiny" id="health-dismiss" title="Dismiss until next change" aria-label="Dismiss health ribbon">×</button>
+  </div>
+
+  <!-- Top: category rail (replaces left sidebar). -->
+  <div class="cat-rail" id="cat-rail" role="tablist" aria-label="Filter by category"></div>
+
+  <!-- Control bar: search · source · sort · view toggle -->
+  <div class="control-bar">
+    <div class="search-field">
+      <span class="han" aria-hidden="true">尋</span>
+      <input id="search" type="search" placeholder="Search Chinese, pinyin, or English…" aria-label="Search glossary">
+      <!-- G3: ⌘K opens the command palette globally, not this input.
+           Dropped the kbd hint here so it doesn't imply otherwise. -->
+    </div>
+    <div class="source-seg" id="filter-mode" role="group" aria-label="Filter by entry source">
+      <button type="button" data-filter="all" class="on" aria-pressed="true">All</button>
+      <button type="button" data-filter="locked" aria-pressed="false" title="Manually-locked entries (won't be auto-overwritten)">Locked <span class="seg-count" data-count="locked">0</span></button>
+      <button type="button" data-filter="auto" aria-pressed="false" title="Auto-extracted by the translator and not yet locked">Auto <span class="seg-count" data-count="auto">0</span></button>
+      <button type="button" data-filter="manual" aria-pressed="false" title="Manually added entries">Manual <span class="seg-count" data-count="manual">0</span></button>
+    </div>
+    <span class="cb-spacer"></span>
+    <label class="sort-pick">
+      <span>Sort</span>
+      <select id="sort-by">
+        <option value="recent" selected>Recently added</option>
+        <option value="alpha-en">English A → Z</option>
+        <option value="alpha-zh">Chinese A → Z</option>
+      </select>
+    </label>
+    <div class="view-toggle" role="group" aria-label="View mode">
+      <button type="button" data-view="cards" class="on" title="Card view (V)"><span class="han">片</span>Cards</button>
+      <button type="button" data-view="list" title="List view (V)"><span class="han">列</span>List</button>
+    </div>
+  </div>
+
+  <div id="toast" class="status" aria-live="polite" role="status"></div>
+
+  <div id="gloss-bulk-bar" class="gloss-bulk-bar hidden" role="region" aria-label="Bulk actions">
+    <span class="count"><span id="gloss-bulk-count">0</span> <em>selected</em></span>
+    <span class="spacer"></span>
+    <button type="button" id="gloss-bulk-lock"><span class="han">鎖</span>Lock</button>
+    <button type="button" id="gloss-bulk-unlock">Unlock</button>
+    <button type="button" class="primary" id="gloss-bulk-retranslate" title="Re-translate every chapter that uses any of the selected terms. Chapters using multiple selected terms are queued exactly once."><span class="han">↻</span>Retranslate affected</button>
+    <button type="button" class="danger" id="gloss-bulk-delete">Delete</button>
+    <button type="button" id="gloss-bulk-clear">Clear</button>
+  </div>
+
+  <section id="gloss-rows" class="gloss-grid" aria-busy="true">
+    <div class="plate skeleton-plate"><div class="skeleton skeleton-line long" style="height:32px;"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div></div>
+    <div class="plate skeleton-plate"><div class="skeleton skeleton-line med" style="height:32px;"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div></div>
+    <div class="plate skeleton-plate"><div class="skeleton skeleton-line long" style="height:32px;"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line long"></div></div>
+  </section>
+</main>
+
+<dialog id="health-dialog" class="dialog" aria-labelledby="health-dialog-title">
+  <h3 id="health-dialog-title">Glossary health</h3>
+  <div id="health-dialog-body" class="health-body">
+    <p class="muted">Loading…</p>
+  </div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-primary" id="health-close">Close</button>
+  </div>
+</dialog>
+
+<!-- Three-choice dialog (Initiative 4). Opens after a term_en change to
+     let the user decide what to do with existing chapters: apply in-place
+     (cheap text substitution), retranslate (full re-translation), or
+     neither (just keep the glossary edit). -->
+<dialog id="apply-choice-dialog" class="dialog" aria-labelledby="apply-choice-title">
+  <h3 id="apply-choice-title">Term updated. Apply to existing chapters?</h3>
+  <div class="dialog-body" id="apply-choice-body"></div>
+  <div class="dialog-meta hidden" id="apply-choice-meta"></div>
+  <div class="dialog-actions" style="flex-wrap: wrap;">
+    <button type="button" class="btn-ghost" data-choice="none">Just update the glossary</button>
+    <button type="button" class="btn-ghost" data-choice="retranslate">Retranslate affected chapters</button>
+    <button type="button" class="btn-primary" data-choice="apply">Apply to existing translations</button>
+  </div>
+</dialog>
+
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+  <h3 id="confirm-dialog-title">Confirm</h3>
+  <div class="dialog-body" id="confirm-dialog-body"></div>
+  <div class="dialog-meta hidden" id="confirm-dialog-meta"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+    <button type="button" class="btn-primary" data-act="ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/glossary.js?v=2"></script>
+</body>
+</html>

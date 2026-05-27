@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Queue · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/queue.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span aria-hidden="true">›</span>
+    <span class="here">Queue</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">列</span><span>Translation queue</span></div>
+      <h1 class="h-title">Pipeline</h1>
+      <div class="h-sub" id="queue-summary">Loading…</div>
+    </div>
+    <div class="h-actions">
+      <button type="button" class="btn-ghost" id="queue-refresh-btn" title="Refresh now (polls every 4s automatically)">↻ Refresh</button>
+      <button type="button" class="btn-ghost danger-confirm" id="queue-cancel-all">Cancel all queued</button>
+    </div>
+  </div>
+
+  <div class="queue-stack">
+    <!-- Q1: aria-label on each column section is updated live by queue.js
+         so screen-reader users hear "Now translating, 2 items" rather than
+         the column's visual chrome alone. -->
+    <section class="qs-col qs-col-now" id="qs-col-now" aria-label="Now translating, 0 items">
+      <div class="qs-col-head">
+        <span class="qs-col-eyebrow">Now translating</span>
+        <span class="qs-col-count" id="qs-now-count">0</span>
+      </div>
+      <div class="qs-col-body" id="qs-now">
+        <div class="qs-empty muted">Nothing in flight.</div>
+      </div>
+    </section>
+    <section class="qs-col qs-col-next" id="qs-col-next" aria-label="Up next, 0 items">
+      <div class="qs-col-head">
+        <span class="qs-col-eyebrow">Up next</span>
+        <span class="qs-col-count" id="qs-next-count">0</span>
+      </div>
+      <div class="qs-col-body" id="qs-next">
+        <div class="qs-empty muted">Queue is empty.</div>
+      </div>
+    </section>
+    <section class="qs-col qs-col-recent" id="qs-col-recent" aria-label="Recent, 0 items">
+      <div class="qs-col-head">
+        <span class="qs-col-eyebrow">Recent</span>
+        <span class="qs-col-count" id="qs-recent-count">0</span>
+      </div>
+      <div class="qs-col-body" id="qs-recent">
+        <div class="qs-empty muted">No recent activity.</div>
+      </div>
+    </section>
+  </div>
+
+  <div id="qs-toast" class="status" aria-live="polite" role="status"></div>
+</main>
+
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+  <h3 id="confirm-dialog-title">Confirm</h3>
+  <div class="dialog-body" id="confirm-dialog-body"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+    <button type="button" class="btn-primary danger-confirm" data-act="ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/queue.js"></script>
+</body>
+</html>

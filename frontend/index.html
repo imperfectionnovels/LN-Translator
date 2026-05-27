@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>LN Translator · Import</title>
+<!-- Canonical FOUC bootstrap. See frontend/js/boot.js. -->
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/home.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">入</span><span>Import</span></div>
+      <h1 class="h-title" id="page-title">Import a novel</h1>
+      <div class="h-sub">Paste a chapter, drop a .txt file, or drop a folder of files. Chapters import as raw; pick which ones to translate from the reader.</div>
+    </div>
+  </div>
+
+  <div id="append-banner-row" class="append-banner-row hidden">
+    <p id="append-banner" class="status info" aria-live="polite"></p>
+    <a href="/" class="back-link" style="margin-left: 10px;">Switch to new novel</a>
+    <a href="/library" class="back-link">← Back to Library</a>
+  </div>
+
+  <div class="import-grid">
+    <div>
+      <div class="import-tabs" id="import-tabs" role="tablist" aria-label="Import sources">
+        <button data-tab="paste" class="on" role="tab" id="tab-paste" aria-selected="true" aria-controls="panel-paste" tabindex="0"><span class="tab-han">貼</span>Paste text</button>
+        <button data-tab="url" role="tab" id="tab-url" aria-selected="false" aria-controls="panel-url" tabindex="-1"><span class="tab-han">網</span>Paste URL<span class="tab-pip" title="URL imports also fetch the cover image when the page has one">scrapes cover too</span></button>
+        <button data-tab="upload" role="tab" id="tab-upload" aria-selected="false" aria-controls="panel-upload" tabindex="-1"><span class="tab-han">檔</span>Upload file</button>
+        <button data-tab="bulk" role="tab" id="tab-bulk" aria-selected="false" aria-controls="panel-bulk" tabindex="-1"><span class="tab-han">册</span>Bulk upload</button>
+      </div>
+
+      <div class="card tab-panel" id="panel-paste" role="tabpanel" aria-labelledby="tab-paste">
+        <div class="title-field">
+          <label for="title-paste">Title</label>
+          <input id="title-paste" type="text" placeholder="e.g. 凡人修仙传">
+        </div>
+        <div class="title-field genre-field">
+          <label for="genre-paste">Genre <span class="muted">· pick one to enable Import</span></label>
+          <select id="genre-paste" class="import-genre"></select>
+        </div>
+        <label for="text-paste">Chinese chapter(s)</label>
+        <div class="paste-scroll">
+          <span class="paste-scroll-edge left" aria-hidden="true"></span>
+          <textarea id="text-paste" rows="14" placeholder="Paste Chinese chapters. Multiple chapters are split on 第X章 markers automatically."></textarea>
+          <span class="paste-scroll-edge right" aria-hidden="true"></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; margin-top: 4px;">
+          <button id="submit-paste" class="primary">Import chapters</button>
+          <span class="spacer"></span>
+          <span class="muted" id="paste-stats"></span>
+        </div>
+      </div>
+
+      <div class="tab-panel hidden" id="panel-url" role="tabpanel" aria-labelledby="tab-url">
+        <div class="card title-field">
+          <label for="title-url">Title <span class="muted">(optional · uses the page's title if blank)</span></label>
+          <input id="title-url" type="text" placeholder="e.g. 凡人修仙传">
+        </div>
+        <div class="card title-field genre-field">
+          <label for="genre-url">Genre <span class="muted">· pick one to enable Import</span></label>
+          <select id="genre-url" class="import-genre"></select>
+        </div>
+        <div class="card">
+          <label for="text-url">Chapter URL</label>
+          <input id="text-url" type="url" placeholder="https://example.com/chapter/1234" style="width:100%;">
+          <p class="muted" style="margin-top: 8px; font-size: 0.85rem;">
+            Pastes the fetched article text through the normal chapter parser.
+            Only public http(s) URLs are allowed; internal addresses and
+            non-article pages are rejected. Pages rendered by JavaScript
+            after page load may not extract; paste the text directly in
+            that case.
+          </p>
+          <div style="display:flex; align-items:center; gap:10px; margin-top: 8px;">
+            <button id="submit-url" class="primary">Fetch &amp; import</button>
+            <span class="spacer"></span>
+            <span class="muted" id="url-stats"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel hidden" id="panel-upload" role="tabpanel" aria-labelledby="tab-upload">
+        <div class="card title-field">
+          <label for="title-upload">Title</label>
+          <input id="title-upload" type="text" placeholder="Novel title">
+        </div>
+        <div class="card title-field genre-field">
+          <label for="genre-upload">Genre <span class="muted">· pick one to enable Import</span></label>
+          <select id="genre-upload" class="import-genre"></select>
+        </div>
+        <div class="drop-zone" id="drop-upload">
+          <span class="glyph">檔</span>
+          <h3>Drop a .txt / .epub / .docx / .html file here</h3>
+          <div class="sub">UTF-8 or GBK · EPUB / DOCX paragraphs flattened · EPUB cover auto-imported</div>
+          <span class="or">or</span>
+          <input id="file-upload" type="file" accept=".txt,.epub,.docx,.html,.htm,text/plain,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/html" hidden>
+          <button class="icon-btn" id="browse-upload" type="button">Browse files</button>
+          <div class="file-row" id="upload-name"></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; margin-top: 10px;">
+          <button id="submit-upload" class="primary">Upload &amp; import</button>
+        </div>
+      </div>
+
+      <div class="tab-panel hidden" id="panel-bulk" role="tabpanel" aria-labelledby="tab-bulk">
+        <div class="card title-field">
+          <label for="title-bulk">Title</label>
+          <input id="title-bulk" type="text" placeholder="Novel title">
+        </div>
+        <div class="card title-field genre-field">
+          <label for="genre-bulk">Genre <span class="muted">· pick one to enable Import</span></label>
+          <select id="genre-bulk" class="import-genre"></select>
+        </div>
+        <div class="drop-zone" id="drop-bulk">
+          <span class="glyph">册</span>
+          <h3>Drop many .txt files</h3>
+          <div class="sub">One file per chapter · ordered by filename</div>
+          <span class="or">or</span>
+          <input id="file-bulk" type="file" accept=".txt,text/plain" multiple hidden>
+          <button class="icon-btn" id="browse-bulk" type="button">Choose files</button>
+        </div>
+        <ul id="bulk-file-list" class="muted" style="margin-top:10px; padding-left: 18px;"></ul>
+        <p class="muted" style="margin-top: 6px;">Chapters are imported as raw text. Open the reader and click <strong>Translate</strong> on any chapter to render it into English.</p>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button id="submit-bulk" class="primary">Import chapters</button>
+        </div>
+      </div>
+
+      <div id="status" class="status" aria-live="polite" role="status"></div>
+    </div>
+
+    <!-- 2026-05-25 F05/F06/F08: import preview gate. Single modal reused
+         across all 4 import tabs. Submit handlers call api.importPreview
+         first, populate this dialog, then on Confirm fire the actual
+         import. The loud-fallback warning surfaces inline here when 0/1
+         chapters are detected so the user knows they're about to commit
+         a single-blob chapter. -->
+    <dialog id="import-preview-dialog" class="dialog" aria-labelledby="import-preview-title">
+      <h3 id="import-preview-title">Preview import</h3>
+      <div class="dialog-body">
+        <div id="import-preview-summary"></div>
+        <div id="import-preview-fallback-warning" hidden></div>
+        <h4 style="margin: 10px 0 4px; font-size: 13px;">Detected headings (first 5):</h4>
+        <ul id="import-preview-headings" style="font-size: 13px;"></ul>
+        <h4 style="margin: 10px 0 4px; font-size: 13px;">First chapter snippet:</h4>
+        <pre id="import-preview-snippet" style="font-size: 12px; max-height: 160px; overflow:auto; background: var(--bg-tint); padding: 8px; border-radius: 4px; white-space: pre-wrap;"></pre>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn-ghost" data-act="cancel">Back to edit</button>
+        <button type="button" class="btn-primary" id="import-preview-confirm">Looks right · Import</button>
+      </div>
+    </dialog>
+
+    <div>
+      <div class="import-tip">
+        <h4>Recent novels</h4>
+        <div class="recent-list" id="recent-list" aria-busy="true">
+          <div class="skeleton-recent-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div></div>
+          <div class="skeleton-recent-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short"></div></div>
+          <div class="skeleton-recent-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/home.js"></script>
+</body>
+</html>

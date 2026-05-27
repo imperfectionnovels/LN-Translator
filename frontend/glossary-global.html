@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Global Glossary · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/glossary.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span class="sep">›</span>
+    <span class="here">Global glossary</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">詞</span><span>Global glossary</span></div>
+      <h1 class="h-title">Cross-novel terms</h1>
+      <div class="h-sub">
+        Terms here apply to every novel's translations. A per-novel entry
+        with the same Chinese always wins, so a novel can override a global
+        rendering when it needs to.
+      </div>
+    </div>
+    <div class="h-actions">
+      <button class="btn-primary" id="add-entry-btn">＋ New global term</button>
+    </div>
+  </div>
+
+  <form id="add-entry-form" class="add-entry-form" hidden>
+    <label for="new-zh">Chinese</label>
+    <input id="new-zh" type="text" placeholder="中文 term" required>
+    <label for="new-en">English</label>
+    <input id="new-en" type="text" placeholder="English term" required>
+    <select id="new-category">
+      <option value="character" selected>character</option>
+      <option value="place">place</option>
+      <option value="technique">technique</option>
+      <option value="item">item</option>
+      <option value="other">other</option>
+      <option value="idiom">idiom</option>
+    </select>
+    <input id="new-notes" type="text" placeholder="Notes (optional)">
+    <input id="new-usage-note" type="text" placeholder="Usage note · one-line gloss injected into every translation prompt (optional)">
+    <button class="btn-primary" type="submit">Add</button>
+    <button id="cancel-add" type="button" class="btn-ghost">Cancel</button>
+  </form>
+  <div id="toast" class="status" aria-live="polite" role="status"></div>
+
+  <div id="gloss-rows" class="gloss-grid" aria-busy="true">
+    <div class="gloss-card"><div class="skeleton skeleton-line long" style="height:22px;"></div><div class="skeleton skeleton-line med"></div></div>
+    <div class="gloss-card"><div class="skeleton skeleton-line med" style="height:22px;"></div><div class="skeleton skeleton-line long"></div></div>
+    <div class="gloss-card"><div class="skeleton skeleton-line long" style="height:22px;"></div><div class="skeleton skeleton-line short"></div></div>
+  </div>
+</main>
+
+<!-- Initiative 4 three-choice dialog: same shape as the per-novel page. -->
+<dialog id="apply-choice-dialog" class="dialog" aria-labelledby="apply-choice-title">
+  <h3 id="apply-choice-title">Global term updated. Apply to existing chapters?</h3>
+  <div class="dialog-body" id="apply-choice-body"></div>
+  <div class="dialog-meta hidden" id="apply-choice-meta"></div>
+  <div class="dialog-actions" style="flex-wrap: wrap;">
+    <button type="button" class="btn-ghost" data-choice="none">Just update the glossary</button>
+    <button type="button" class="btn-primary" data-choice="apply">Apply across all novels</button>
+  </div>
+</dialog>
+
+<!-- Confirm dialog — used by delete + edit-warning flows. Same shape as
+     the per-novel glossary page so we can share the confirmDialog helper. -->
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+  <h3 id="confirm-dialog-title">Confirm</h3>
+  <div class="dialog-body" id="confirm-dialog-body"></div>
+  <div class="dialog-meta hidden" id="confirm-dialog-meta"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+    <button type="button" class="btn-primary" data-act="ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/glossary-global.js"></script>
+</body>
+</html>

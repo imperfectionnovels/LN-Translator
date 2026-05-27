@@ -1,0 +1,268 @@
+"""Shared base class for translators that speak the OpenAI Chat Completions
+shape — POST `<base_url>/chat/completions` with a Bearer-token API key.
+
+Covers OpenAI itself, xAI Grok, Mistral, OpenRouter, Qwen, Zhipu GLM, Moonshot
+Kimi, Groq, Ollama's `/v1` proxy, and the generic catch-all
+`openai_compatible` type. Each subclass is typically <20 lines — set `name`,
+declare `DEFAULT_BASE_URL`, and that's it.
+
+Deliberately NOT used by `deepseek.py`. DeepSeek has its own translate→reflect
+→improve revision pipeline and overrides `translate_chapter` end-to-end; it
+stays as a standalone class so this shared base can keep its happy path
+narrow.
+
+What this base provides:
+- `_complete` and `_complete_plain` (the two abstract hooks `BaseTranslator`
+  declares).
+- HTTP plumbing through the `openai.AsyncOpenAI` async SDK (Bearer auth,
+  configurable base_url, configurable timeout).
+- Exponential backoff on transient errors (429 / 5xx / network).
+- Token-usage emit so `chapters.cost_usd` keeps working.
+
+What subclasses can override:
+- `DEFAULT_BASE_URL` — used when the Provider doesn't pin one.
+- `TEMPERATURE` — translation temperature for `_complete`. Defaults to 0.3.
+- `MAX_OUTPUT_TOKENS` — soft cap on output tokens. Defaults to None (let the
+  model decide).
+- `_build_kwargs(model, system, user)` — for vendors that need extra fields.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+
+import httpx
+import openai
+
+from backend.services.providers import Provider, resolve_secret
+
+from .base import (
+    BACKOFF_SCHEDULE,
+    BaseTranslator,
+    TransientTranslatorError,
+)
+
+logger = logging.getLogger(__name__)
+
+# Per-request timeout. 5 minutes covers slow long-context calls without
+# letting a hung connection wedge the serial queue forever.
+DEFAULT_REQUEST_TIMEOUT = 300.0
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Same classification rule across every OpenAI-compatible vendor: 408,
+    429, 5xx, and any transport-level network blip is retryable; auth and
+    bad-model are not."""
+    if isinstance(
+        exc,
+        (
+            openai.RateLimitError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+        ),
+    ):
+        return True
+    if isinstance(exc, openai.APIStatusError):
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int) and (status == 408 or status == 429 or status >= 500):
+            return True
+        return False
+    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+        return True
+    if isinstance(exc, (asyncio.TimeoutError, ConnectionError)):
+        return True
+    return False
+
+
+class OpenAICompatibleTranslator(BaseTranslator):
+    """Subclass-friendly translator for any vendor exposing an OpenAI-style
+    `/chat/completions` endpoint.
+
+    Subclass contract: set `name` and (optionally) `DEFAULT_BASE_URL`,
+    `TEMPERATURE`, `MAX_OUTPUT_TOKENS`. The Provider's `model_id`, `base_url`,
+    and `secret_ref` flow in through `__init__`. The Provider is required —
+    these backends have no legacy env-var fallback (unlike `gemini` /
+    `deepseek` / `claude_cli`, which predate the providers table).
+    """
+
+    # Override in subclass. None means "the Provider must supply a base_url"
+    # — useful for the generic `openai_compatible` type where there is no
+    # sensible default.
+    DEFAULT_BASE_URL: str | None = None
+
+    # Translation temperature. 0.3 matches every other backend's literary-prose
+    # default. Subclasses can lower it for stricter, less-creative output.
+    TEMPERATURE: float = 0.3
+
+    # Optional soft cap on output tokens. Most vendors accept None (= no cap
+    # set on our side; the API's own limit applies). Subclasses can lower it
+    # for chat-tuned smaller models that benefit from explicit ceilings.
+    MAX_OUTPUT_TOKENS: int | None = None
+
+    # Force-serial. The process-global queue lock already enforces this; the
+    # class-level constant just makes the contract visible to the route
+    # layer.
+    max_parallel = 1
+
+    def __init__(self, provider: Provider | None = None) -> None:
+        if provider is None:
+            # OpenAI-compatible backends were introduced AFTER the providers
+            # table became the source of truth. They have no legacy env-var
+            # fallback path. The factory raises here rather than the queue
+            # worker getting a None client mid-translate.
+            raise RuntimeError(
+                f"{type(self).__name__} requires an explicit Provider row "
+                "— configure one via /settings."
+            )
+        api_key = resolve_secret(provider)
+        if not api_key:
+            raise RuntimeError(
+                f"Provider {provider.name!r} ({provider.provider_type}) has "
+                f"no resolvable API key. Set the env var named in its "
+                f"secret_ref ({provider.secret_ref!r}) or store it via the "
+                f"settings UI's Set API Key button."
+            )
+        base_url = provider.base_url or self.DEFAULT_BASE_URL
+        if not base_url:
+            raise RuntimeError(
+                f"Provider {provider.name!r} ({provider.provider_type}) "
+                "has no base_url set and the backend declares no default. "
+                "Edit the provider and set a Base URL."
+            )
+        self.model_id = provider.model_id
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=DEFAULT_REQUEST_TIMEOUT,
+        )
+        # Stash for log lines. Useful when the user has three OpenAI-compatible
+        # providers and needs to know which one a log entry came from.
+        self._provider_name = provider.name
+
+    async def _complete(self, prompt: str) -> str:
+        # self.system_instruction is set per-call by BaseTranslator.translate_chapter
+        # from the resolved (genre, custom_brief). Pass it as the system message.
+        return await self._call(
+            user_prompt=prompt,
+            system_prompt=self.system_instruction,
+            temperature=self.TEMPERATURE,
+            label="translate",
+        )
+
+    async def _complete_plain(self, prompt: str) -> str:
+        # Plain-text fallback: no system instruction (the user prompt
+        # carries the full request), same temperature.
+        return await self._call(
+            user_prompt=prompt,
+            system_prompt=None,
+            temperature=self.TEMPERATURE,
+            label="fallback",
+        )
+
+    def _build_kwargs(
+        self,
+        *,
+        model: str,
+        system_prompt: str | None,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int | None,
+    ) -> dict:
+        """Hook for subclasses that need extra request fields. The default
+        is the lowest-common-denominator OpenAI-compatible shape — works
+        with every vendor in the catalog."""
+        messages: list[dict] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+        kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return kwargs
+
+    async def _call(
+        self,
+        *,
+        user_prompt: str,
+        system_prompt: str | None,
+        temperature: float,
+        label: str,
+    ) -> str:
+        self._check_call_budget()
+        kwargs = self._build_kwargs(
+            model=self.model_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tokens=self.MAX_OUTPUT_TOKENS,
+        )
+
+        t0 = time.perf_counter()
+        last_exc: BaseException | None = None
+        for attempt in range(len(BACKOFF_SCHEDULE) + 1):
+            try:
+                response = await self._client.chat.completions.create(**kwargs)
+                choices = response.choices or []
+                if not choices:
+                    raise ValueError(f"{self.name} returned no choices")
+                choice = choices[0]
+                # Plumb usage so chapters.cost_usd keeps working. The OpenAI
+                # schema's `prompt_tokens_details.cached_tokens` shows up when
+                # the vendor advertises prompt caching (OpenAI itself,
+                # OpenRouter via underlying provider). Coerce missing fields
+                # to 0 — vendor schemas vary on which sub-objects are present.
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    prompt_details = getattr(usage, "prompt_tokens_details", None)
+                    cached = (
+                        (getattr(prompt_details, "cached_tokens", None) or 0)
+                        if prompt_details else 0
+                    )
+                    self._emit_usage(
+                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                        cached_input_tokens=cached,
+                    )
+                if choice.finish_reason == "length":
+                    # Truncated output — retrying yields the same truncation.
+                    # Surface a clean error rather than committing a partial
+                    # chapter.
+                    raise TransientTranslatorError(
+                        f"{self.name} response truncated at the token limit "
+                        f"(label={label}). The chapter is unchanged. "
+                        "Retranslate later or pick a model with a larger "
+                        "context window."
+                    )
+                logger.info(
+                    "%s %s call (%s): %.1fs",
+                    self.name, label, self._provider_name, time.perf_counter() - t0,
+                )
+                return choice.message.content or ""
+            except Exception as e:
+                if not _is_transient(e):
+                    raise
+                last_exc = e
+                if attempt >= len(BACKOFF_SCHEDULE):
+                    break
+                delay = BACKOFF_SCHEDULE[attempt]
+                logger.warning(
+                    "%s transient error (attempt %d/%d): %s — retrying in %.1fs",
+                    self.name,
+                    attempt + 1,
+                    len(BACKOFF_SCHEDULE) + 1,
+                    e,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        status = getattr(last_exc, "status_code", None)
+        raise TransientTranslatorError(
+            f"{self.name} temporarily unavailable ({status or 'transient error'}). "
+            "The chapter is unchanged — try Retranslate later."
+        ) from last_exc

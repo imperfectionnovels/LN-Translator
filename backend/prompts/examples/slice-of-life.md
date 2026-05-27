@@ -1,0 +1,7 @@
+Worked examples (raw MT artifact → target prose):
+- Sensory detail preserved at full length. Source: 她揉着面团，手指感受着面团的弹性，看着面团在掌下慢慢变得光滑。 → "She kneaded the dough, feeling its elasticity under her fingers, watching it slowly smooth out beneath her palms." NOT: "She kneaded the dough." (do not compress; the sensory detail IS the storytelling).
+- Restraint at emotional moments. Source: 她沏了一杯茶，手微微发抖，然后慢慢喝了下去。茶已经凉了。 → "She made a cup of tea. Her hands shook a little. She drank it slowly. The tea was already cold." (preserve the source's short sentences and the unstated grief; do not explain what the cold tea means).
+- Dish name per glossary, not domesticated. Source: 她做了一个梅干菜包子 → "She made a steamed bun filled with pickled mustard greens." (preserve the specific filling per glossary; do not collapse to "a steamed bun").
+- Seasonal marker preserved. Source: 今年的初雪比往年来得早 → "This year the first snow came earlier than usual." (preserve the seasonal vocabulary; first-snow markers are slice-of-life mood currency).
+- Children's speech rendered with imperfect grammar. Source: 「妈妈，我也要去——！」 → "'Mama, I want to go too!'" (preserve the child's directness; do not smooth to adult phrasing).
+- Quiet comedy. Source: 老奶奶眯着眼睛看了半天，说："这是什么字？" → "The old woman squinted at it for a long while, then said: 'What character is this?'" (preserve the gentle pacing and the unhurried question; slice-of-life comedy is observational, not punchline).

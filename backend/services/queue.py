@@ -1,0 +1,1123 @@
+"""Per-chapter translate queue.
+
+Single-pass pipeline: the translator owns correctness AND prose. Each chapter
+runs through one LLM call (claude_agent with extended thinking by default),
+then deterministic text fixups clean em-dashes / brackets / casing. Guardrail
+hits are LOGGED but no longer trigger retries or mark chapters degraded — the
+single-pass thesis is that noticing happens upstream of checking, so a retry
+is just two shallow passes instead of one deeper one.
+
+Chapters only enter the queue when the user explicitly indicates them
+(per-chapter buttons, glossary retranslate-affected). The `translate_queued`
+flag survives a server restart so `drain_on_startup` re-spawns workers for
+anything still pending. Concurrency is strictly serial via one process-global
+asyncio.Lock — every backend is effectively max_parallel=1 (Claude burns the
+subscription window in parallel, Gemini burns tokens).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+
+import aiosqlite
+
+from backend.config import (
+    PREVIOUS_CONTEXT_ENABLED,
+    PREVIOUS_CONTEXT_MAX_GAP,
+    PREVIOUS_CONTEXT_PARAGRAPHS,
+)
+from backend.db import open_conn
+from backend.services import global_glossary as global_glossary_svc
+from backend.services import glossary as glossary_svc
+from backend.services import tm as tm_svc
+from backend.services.observations import (
+    NormalizedObservation,
+    implicit_observation_glossary_merge_error,
+    implicit_observation_tm_inconsistency,
+    implicit_observation_translation_degraded,
+    normalize_observer_outputs,
+)
+from backend.services.parser import normalize_title_en, strip_leading_title_line
+from backend.services.providers import (
+    Provider,
+    get_default_provider,
+    load_provider,
+)
+from backend.services.refiner import refine_chapter
+from backend.services.text_fixups import (
+    enforce_brackets,
+    enforce_em_dash,
+    enforce_locked_term_casing,
+    enforce_stem_branch_casing,
+)
+from backend.services.text_observers import (
+    detect_double_possessive,
+    detect_glossary_predicate_loss,
+    detect_intensifier_inflation_on_glossary_term,
+    detect_locked_idiom_grammar,
+    detect_malformed_compounds,
+    detect_mid_sentence_paragraph_break,
+    detect_mt_texture,
+)
+from backend.services.translators import translate_chapter
+
+logger = logging.getLogger(__name__)
+
+
+def _body_correctness_observations(
+    source_zh: str,
+    en_text: str,
+    glossary,
+) -> list[str]:
+    """Deterministic correctness observations on the translator body.
+
+    Post-architectural-collapse these are observers, not gates: hits are logged
+    but no longer retry the translator or mark the chapter degraded. The
+    single-pass thesis is that noticing has to happen inside the translator's
+    thinking phase — a follow-up retry just adds handoff tax for the same
+    shallow pass.
+
+    Kept body-only on purpose: title-targeted observations are added at the
+    caller side because they reference the translator's `res.title_en`.
+    """
+    found: list[str] = []
+    for zh, en in glossary_svc.missing_translator_terms(source_zh, en_text, glossary):
+        found.append(f'missing locked glossary term {zh!r} → {en!r}')
+    found.extend(detect_locked_idiom_grammar(en_text, glossary))
+    for phrase in detect_malformed_compounds(en_text, glossary):
+        found.append(f"malformed compound {phrase!r}")
+    mt_tells = detect_mt_texture(en_text)
+    if mt_tells:
+        found.append("mt-texture tics: " + "; ".join(mt_tells))
+    found.extend(detect_double_possessive(en_text, glossary))
+    found.extend(detect_intensifier_inflation_on_glossary_term(en_text, glossary))
+    found.extend(detect_mid_sentence_paragraph_break(en_text))
+    found.extend(
+        detect_glossary_predicate_loss(
+            source_zh, en_text, glossary, source_label="chapter body",
+        )
+    )
+    return found
+
+
+# Process-global lock. Acquired by every translate task before doing work, so
+# however many tasks have been spawned, only one runs at a time. Subscription
+# quota math (Claude) and API spend (Gemini/DeepSeek) require serial.
+_translator_lock = asyncio.Lock()
+
+# Strong references to in-flight fire-and-forget worker tasks. asyncio's event
+# loop keeps only a WEAK reference to a task, so an unreferenced task can be
+# garbage-collected mid-run — silently dropping a queued chapter. Holding the
+# task here until its done-callback fires prevents that.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+# Batch size for IN(...) clauses in reset_chapters_for_retranslate and
+# queue_translations. SQLite caps parameters at 999 on pre-3.32 builds and
+# 32766 on newer; 500 is comfortably under both.
+_QUEUE_BATCH_CHUNK = 500
+
+def _compute_cost_usd(usage, provider) -> float | None:
+    """Returns None — cost computation was removed when user-entered pricing
+    was dropped from the Add Provider dialog (2026-05-26 catalog redesign).
+    Kept as a function so the queue worker call site stays unchanged; the
+    column simply stays NULL on every translate. Token counts
+    (input_tokens / output_tokens / cached_input_tokens) are still recorded
+    and surface in the per-chapter diagnostics.
+    """
+    return None
+
+
+# Minimum draft length (stripped) to bother calling the refiner. Drafts
+# shorter than this are usually parse errors or stray author-note rows;
+# refining them burns a paid LLM round-trip for ≤ a paragraph of text the
+# reader will show as-is anyway. The chapter is marked refinement_status
+# 'none' (same as the empty-draft path) so the reader falls back to the
+# draft without a banner.
+_REFINEMENT_MIN_DRAFT_CHARS = 200
+
+
+def spawn_translate_worker(novel_id: int, chapter_id: int) -> None:
+    """Spawn a translator worker task without touching the DB. Caller is
+    responsible for having already set translate_queued=1 in a prior
+    transaction. Used by the retranslate paths."""
+    _spawn(_run_translate(novel_id, chapter_id))
+
+
+async def queue_translation(novel_id: int, chapter_id: int) -> None:
+    """Mark a chapter as queued for translation and spawn a worker task."""
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "UPDATE chapters SET translate_queued = 1 "
+            "WHERE id = ? AND novel_id = ?",
+            (chapter_id, novel_id),
+        )
+        await conn.commit()
+    if (cur.rowcount or 0) > 0:
+        _spawn(_run_translate(novel_id, chapter_id))
+
+
+async def queue_translations(novel_id: int, chapter_ids: list[int]) -> None:
+    """Batched `queue_translation` for many chapters in one UPDATE per chunk."""
+    if not chapter_ids:
+        return
+    spawned: list[int] = []
+    async with open_conn() as conn:
+        for i in range(0, len(chapter_ids), _QUEUE_BATCH_CHUNK):
+            chunk = chapter_ids[i : i + _QUEUE_BATCH_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            await conn.execute(
+                f"UPDATE chapters SET translate_queued = 1 "
+                f"WHERE novel_id = ? AND id IN ({placeholders})",
+                [novel_id, *chunk],
+            )
+            cur = await conn.execute(
+                f"SELECT id FROM chapters "
+                f"WHERE novel_id = ? AND id IN ({placeholders}) "
+                f"  AND translate_queued = 1",
+                [novel_id, *chunk],
+            )
+            spawned.extend(r["id"] for r in await cur.fetchall())
+        await conn.commit()
+    for cid in spawned:
+        _spawn(_run_translate(novel_id, cid))
+
+
+async def reset_chapters_for_retranslate(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_ids: list[int],
+) -> list[int]:
+    """Reset rows for a re-translation + flag them in the queue, atomically.
+    Returns the chapter ids actually reset (in-flight rows are skipped by
+    the WHERE guard). The caller spawns workers via spawn_translate_worker
+    — the flag is already set, so don't go through queue_translation again.
+
+    Race-safety against the worker's claim: the worker's pending→translating
+    claim has `WHERE status='pending'`; the worker's terminal success UPDATE
+    has `WHERE status='translating'`. The `status != 'translating'` guard
+    here skips in-flight rows entirely; the worker's UPDATE still wins.
+
+    Crash-window durability: single atomic UPDATE means reset and flag
+    commit together or not at all."""
+    if not chapter_ids:
+        return []
+    reset_ids: list[int] = []
+    for i in range(0, len(chapter_ids), _QUEUE_BATCH_CHUNK):
+        chunk = chapter_ids[i : i + _QUEUE_BATCH_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        await conn.execute(
+            f"UPDATE chapters SET "
+            f"status = 'pending', error_msg = NULL, "
+            f"force_retranslate = 1, translate_queued = 1, "
+            f"translation_degraded = 0, glossary_merge_error = NULL "
+            f"WHERE novel_id = ? AND id IN ({placeholders}) "
+            f"  AND status != 'translating'",
+            [novel_id, *chunk],
+        )
+        cur = await conn.execute(
+            f"SELECT id FROM chapters "
+            f"WHERE novel_id = ? AND id IN ({placeholders}) "
+            f"  AND translate_queued = 1 AND status = 'pending'",
+            [novel_id, *chunk],
+        )
+        reset_ids.extend(r["id"] for r in await cur.fetchall())
+    await conn.commit()
+    return reset_ids
+
+
+async def shutdown() -> None:
+    """Cancel and await every in-flight queue worker. Called from main.py's
+    lifespan finally-block so subprocess cleanup paths run before the event
+    loop is torn down (Claude CLI / Agent kill their child process on
+    CancelledError)."""
+    if not _background_tasks:
+        return
+    tasks = list(_background_tasks)
+    for t in tasks:
+        t.cancel()
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        still_running = sum(1 for t in tasks if not t.done())
+        logger.warning(
+            "queue shutdown: %d task(s) did not finish within 10s; "
+            "an orphan child process may survive if subprocess.kill was not delivered.",
+            still_running,
+        )
+
+
+async def drain_on_startup() -> None:
+    """Re-spawn worker tasks for every chapter still flagged in the queue.
+
+    Without this, a server restart loses the in-flight queue: orphan recovery
+    resets 'translating' → 'pending' but the asyncio tasks that were waiting
+    on the lock are gone, so nothing picks the rows back up.
+
+    Also resumes refinement work: reset refinement_status='in_progress' →
+    'pending' (server died mid-refinement) then spawn refine workers for
+    every 'pending' row.
+    """
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id, novel_id FROM chapters WHERE translate_queued = 1 "
+            "ORDER BY novel_id, chapter_num"
+        )
+        translate_rows = await cur.fetchall()
+        # Refinement recovery: reset in_progress → pending. Locked in 2026-05-23
+        # over the 'mark error / require manual retry' alternative because the
+        # user picked auto-recovery — they don't want a stuck refinement to
+        # require manual action.
+        recovered = await conn.execute(
+            "UPDATE chapters SET refinement_status = 'pending', "
+            "refinement_error = NULL "
+            "WHERE refinement_status = 'in_progress'"
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT id, novel_id FROM chapters "
+            "WHERE refinement_status = 'pending' "
+            "ORDER BY novel_id, chapter_num"
+        )
+        refine_rows = await cur.fetchall()
+    for r in translate_rows:
+        _spawn(_run_translate(r["novel_id"], r["id"]))
+    for r in refine_rows:
+        _spawn(_run_refine(r["novel_id"], r["id"]))
+    if translate_rows:
+        logger.info("queue drain: %d translate tasks resumed", len(translate_rows))
+    if recovered.rowcount:
+        logger.info(
+            "queue drain: %d stuck refinements reset in_progress → pending",
+            recovered.rowcount,
+        )
+    if refine_rows:
+        logger.info("queue drain: %d refine tasks resumed", len(refine_rows))
+
+
+async def _run_translate(novel_id: int, chapter_id: int) -> None:
+    """One translate task: wait on the translator lock, then process the row.
+
+    Chains into the refinement pass in the SAME lock acquisition when the
+    chapter ends up with refinement_status='pending'. Sequencing them under
+    one lock keeps the queue strictly serial AND avoids a race where another
+    translate task could wedge between the two passes on the same chapter.
+    """
+    async with _translator_lock:
+        try:
+            async with open_conn() as conn:
+                await _translate_chapter_in_db(conn, novel_id, chapter_id)
+                # Same lock, same connection: if the translator just flipped
+                # refinement_status='pending', refine now. _refine is a no-op
+                # for any other status, so this branch costs a single SELECT
+                # when refinement isn't configured.
+                await _refine_chapter_in_db(conn, novel_id, chapter_id)
+        except Exception:
+            logger.exception("queue translate ch_id=%d crashed", chapter_id)
+            try:
+                async with open_conn() as recovery:
+                    await recovery.execute(
+                        "UPDATE chapters SET "
+                        "status = CASE WHEN status = 'translating' THEN 'error' ELSE status END, "
+                        "error_msg = CASE WHEN status = 'translating' "
+                        " THEN COALESCE(error_msg, 'translator worker crashed') "
+                        " ELSE error_msg END, "
+                        "translate_queued = 0 "
+                        "WHERE id = ?",
+                        (chapter_id,),
+                    )
+                    await recovery.commit()
+            except Exception:
+                logger.exception(
+                    "translate recovery cleanup also failed for ch_id=%d; "
+                    "queue flag may be stuck until next server restart",
+                    chapter_id,
+                )
+
+
+async def _emit_tm_inconsistency_observations(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_id: int,
+) -> None:
+    """Initiative 5 — write a `tm_inconsistency` observation row for every
+    paragraph in THIS chapter whose source_hash has > 1 distinct target
+    rendering across the novel's TM.
+
+    Runs inside the surrounding success-commit transaction so observations
+    land atomically with the chapter UPDATE. Idempotent against re-runs:
+    the chapter's observation rows were just cleared by the
+    DELETE+INSERT cycle above, so we won't double-write.
+    """
+    # Pull this chapter's TM rows; for each, query the full set of distinct
+    # target_text values sharing the source_hash across the novel. If > 1,
+    # emit an observation.
+    cur = await conn.execute(
+        "SELECT paragraph_index, source_text, source_hash, target_text "
+        "FROM tm_segments WHERE chapter_id = ? ORDER BY paragraph_index",
+        (chapter_id,),
+    )
+    my_rows = await cur.fetchall()
+    for r in my_rows:
+        cur = await conn.execute(
+            "SELECT DISTINCT target_text FROM tm_segments "
+            "WHERE novel_id = ? AND source_hash = ?",
+            (novel_id, r["source_hash"]),
+        )
+        renderings = [row["target_text"] for row in await cur.fetchall()]
+        if len(renderings) < 2:
+            continue
+        obs = implicit_observation_tm_inconsistency(
+            source_text=r["source_text"],
+            paragraph_index=r["paragraph_index"],
+            renderings=renderings,
+        )
+        await conn.execute(
+            "INSERT INTO chapter_observations "
+            "(chapter_id, kind, severity, paragraph_index, excerpt) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (chapter_id, obs.kind, obs.severity, obs.paragraph_index, obs.excerpt),
+        )
+
+
+async def _translate_chapter_in_db(
+    conn: aiosqlite.Connection, novel_id: int, chapter_id: int
+) -> None:
+    """Translate one chapter: claim the row, call the LLM, write result.
+
+    Single-pass shape: one LLM call (with extended thinking on claude_agent),
+    deterministic text fixups, atomic success commit. Guardrail hits are
+    logged as observations only — they do not mark the chapter degraded.
+    `translation_degraded` collapses to "the translator's plain-text
+    fallback was used"."""
+    cur = await conn.execute(
+        "SELECT chapter_num, title_zh, original_text, status, translate_queued, "
+        "force_retranslate, free_draft_text FROM chapters "
+        "WHERE id = ? AND novel_id = ?",
+        (chapter_id, novel_id),
+    )
+    r = await cur.fetchone()
+    if r is None:
+        await _clear_translate_queue(conn, chapter_id)
+        return
+    if not r["translate_queued"]:
+        return
+    if r["status"] == "done":
+        await _clear_translate_queue(conn, chapter_id)
+        return
+    claim = await conn.execute(
+        "UPDATE chapters SET status = 'translating' "
+        "WHERE id = ? AND novel_id = ? AND status = 'pending'",
+        (chapter_id, novel_id),
+    )
+    await conn.commit()
+    if (claim.rowcount or 0) == 0:
+        # See predecessor commit comment: don't reuse _clear_translate_queue
+        # here — a concurrent /retranslate could race the unconditional clear.
+        # The status != 'pending' guard makes this atomic w.r.t. retranslate.
+        await conn.execute(
+            "UPDATE chapters SET translate_queued = 0 "
+            "WHERE id = ? AND novel_id = ? AND status != 'pending'",
+            (chapter_id, novel_id),
+        )
+        await conn.commit()
+        return
+    try:
+        # Initiative 3: union of per-novel + global glossary. Per-novel
+        # entries (locked or auto) shadow any global entry on the same term.
+        # The composer stamps scope='novel'/'global' so format_glossary can
+        # render visible precedence labels in the prompt.
+        glossary = await global_glossary_svc.list_for_novel_with_globals(
+            conn, novel_id
+        )
+        previous_context = await _fetch_previous_chapter_tail(
+            conn, novel_id, r["chapter_num"]
+        )
+        style_edits = await _fetch_style_edits(conn, novel_id)
+        style_note = await _fetch_style_note(conn, novel_id)
+        provider = await _resolve_translator_provider(conn, novel_id)
+        novel_meta = await _fetch_novel_genre_brief(conn, novel_id)
+        # PEMT layer: pass the OPUS-MT free draft to the LLM as a fidelity
+        # reference. NULL when the draft hasn't run yet (or failed); the
+        # prompt omits the REFERENCE TRANSLATION section in that case.
+        free_draft = r["free_draft_text"]
+        translate_t0 = time.perf_counter()
+        result = await translate_chapter(
+            r["original_text"], r["title_zh"], glossary,
+            previous_context=previous_context,
+            style_edits=style_edits,
+            use_cache=not r["force_retranslate"],
+            style_note=style_note,
+            provider=provider,
+            genre=novel_meta["genre"],
+            custom_brief=novel_meta["custom_style_brief"],
+            free_draft=free_draft,
+            source_language=novel_meta["source_language"],
+        )
+        logger.info(
+            "queue: chapter %d translate stage %.1fs",
+            r["chapter_num"], time.perf_counter() - translate_t0,
+        )
+
+        # Pure text fixups — strip duplicated title lines, normalize locked-term
+        # casing, normalize Stem/Branch casing. Cheap, deterministic, no LLM.
+        text, ts_n = strip_leading_title_line(
+            result.translated_text, result.title_en
+        )
+        text, lt_n = enforce_locked_term_casing(text, glossary)
+        text, sb_n = enforce_stem_branch_casing(text)
+        result.translated_text = text
+        if ts_n + lt_n + sb_n:
+            logger.info(
+                "queue: chapter %d post-fixes: %d (title-strip) + %d (locked-case) + %d (stem-branch)",
+                r["chapter_num"], ts_n, lt_n, sb_n,
+            )
+
+        # Em-dash + bracket fixups land BEFORE the observers so detectors see
+        # the same body that gets committed — the QA dashboard's invariant
+        # ("observers run on the final committed body") only holds when the
+        # input matches what the reader sees.
+        title_en = normalize_title_en(result.title_en, r["chapter_num"])
+        cleaned_text, em_count = enforce_em_dash(result.translated_text)
+        cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
+        if em_count or brk_count:
+            logger.info(
+                "queue: chapter %d translate guardrails: %d em-dash, %d bracket fix(es)",
+                r["chapter_num"], em_count, brk_count,
+            )
+
+        # Observations only — no retry, no degraded mark. The single-pass
+        # thesis is that noticing happens inside the translator's thinking
+        # phase; a retry is just two shallow passes for the same deficit.
+        observation_messages = list(_body_correctness_observations(
+            r["original_text"], cleaned_text, glossary,
+        ))
+        for zh, en in glossary_svc.missing_translator_terms(
+            r["title_zh"] or "", title_en or "", glossary,
+        ):
+            observation_messages.append(f'missing title glossary term {zh!r} → {en!r}')
+        observation_messages.extend(
+            detect_glossary_predicate_loss(
+                r["title_zh"] or "", title_en or "", glossary,
+                source_label="chapter title",
+            )
+        )
+        if observation_messages:
+            logger.info(
+                "queue: chapter %d translation observations (logged, not retried) [%d]: %s",
+                r["chapter_num"], len(observation_messages),
+                "; ".join(observation_messages[:5]),
+            )
+
+        # translation_degraded now reflects ONLY the plain-text fallback case.
+        # Guardrail hits log but do not flag.
+        translation_degraded = result.degraded
+        if translation_degraded:
+            logger.info(
+                "queue: chapter %d marked degraded (translator fallback path)",
+                r["chapter_num"],
+            )
+
+        # Persist the normalized observation set. translation_degraded gets
+        # its own synthetic row so the panel renders it uniformly with the
+        # detect_* hits. The DELETE-then-INSERT happens inside the same
+        # transaction as the chapter UPDATE below — atomic replacement, no
+        # mixed-generation window.
+        normalized_observations: list[NormalizedObservation] = list(
+            normalize_observer_outputs(observation_messages)
+        )
+        if translation_degraded:
+            normalized_observations.append(
+                implicit_observation_translation_degraded()
+            )
+        # F26 (2026-05-25): per-novel observer mute. Read
+        # novels.disabled_observers (JSON array of kinds) and filter the
+        # observation list before persistence. Lets users mute false-
+        # positive observer categories per-novel without losing the
+        # other observers' signal.
+        try:
+            cur = await conn.execute(
+                "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+            )
+            mute_row = await cur.fetchone()
+            if mute_row and mute_row["disabled_observers"]:
+                import json as _json  # noqa: PLC0415
+                muted = set(_json.loads(mute_row["disabled_observers"]) or [])
+                if muted:
+                    normalized_observations = [
+                        o for o in normalized_observations if o.kind not in muted
+                    ]
+        except Exception:
+            # Malformed JSON: treat as no mutes (fail-open).
+            pass
+
+        # Token usage + cost. Only present on a fresh translation (cache
+        # hits and providers that don't emit usage leave it None); preserve
+        # the chapter's existing usage columns when this call didn't
+        # produce new ones, so a force-retranslate that hits the cache
+        # doesn't blank out the original record.
+        input_tokens = output_tokens = cached_input_tokens = None
+        cost_usd: float | None = None
+        if result.usage is not None and (
+            result.usage.input_tokens or result.usage.output_tokens
+        ):
+            input_tokens = result.usage.input_tokens
+            output_tokens = result.usage.output_tokens
+            cached_input_tokens = result.usage.cached_input_tokens
+            cost_usd = _compute_cost_usd(result.usage, provider)
+
+        # Atomic success commit. Also flag the chapter for the refinement
+        # pass when the novel has refinement_provider_id set — single
+        # transaction so a crash between translator-commit and pending-flag
+        # cannot leave a chapter with status='done' but no refinement signal.
+        refinement_pending = await _novel_has_refinement_provider(
+            conn, novel_id
+        )
+        new_refinement_status = "pending" if refinement_pending else "none"
+        # translated_by_provider_id is stamped on every successful commit so
+        # the reader's banner copy (e.g. "free-tier rough draft" vs "polished")
+        # can branch on the provider that actually produced this row, without
+        # re-deriving from novels.translator_provider_id (which can change
+        # later — see refined_by_provider_id for the same pattern).
+        translated_by_id = provider.id if provider is not None else None
+        if input_tokens is None:
+            # No fresh usage. Use COALESCE to keep whatever's already on
+            # the row (don't blank existing records on a cache hit).
+            upd = await conn.execute(
+                "UPDATE chapters SET "
+                "title_en = ?, translated_text = ?, status = 'done', "
+                "error_msg = NULL, force_retranslate = 0, "
+                "translation_degraded = ?, translate_queued = 0, "
+                "refinement_status = ?, refined_text = NULL, "
+                "refinement_error = NULL, refined_at = NULL, "
+                "translated_by_provider_id = ?, "
+                "translated_at = datetime('now') "
+                "WHERE id = ? AND novel_id = ? AND status = 'translating'",
+                (
+                    title_en, cleaned_text,
+                    1 if translation_degraded else 0,
+                    new_refinement_status,
+                    translated_by_id,
+                    chapter_id, novel_id,
+                ),
+            )
+        else:
+            upd = await conn.execute(
+                "UPDATE chapters SET "
+                "title_en = ?, translated_text = ?, status = 'done', "
+                "error_msg = NULL, force_retranslate = 0, "
+                "translation_degraded = ?, translate_queued = 0, "
+                "refinement_status = ?, refined_text = NULL, "
+                "refinement_error = NULL, refined_at = NULL, "
+                "input_tokens = ?, output_tokens = ?, "
+                "cached_input_tokens = ?, cost_usd = ?, "
+                "translated_by_provider_id = ?, "
+                "translated_at = datetime('now') "
+                "WHERE id = ? AND novel_id = ? AND status = 'translating'",
+                (
+                    title_en, cleaned_text,
+                    1 if translation_degraded else 0,
+                    new_refinement_status,
+                    input_tokens, output_tokens, cached_input_tokens, cost_usd,
+                    translated_by_id,
+                    chapter_id, novel_id,
+                ),
+            )
+        # Observation replacement runs in the SAME transaction as the chapter
+        # UPDATE — atomic swap, no panel-side mixed-generation view. Done only
+        # when the claim succeeded; a lost-claim branch below skips this.
+        if (upd.rowcount or 0) > 0:
+            await conn.execute(
+                "DELETE FROM chapter_observations WHERE chapter_id = ?",
+                (chapter_id,),
+            )
+            if normalized_observations:
+                await conn.executemany(
+                    "INSERT INTO chapter_observations "
+                    "(chapter_id, kind, severity, paragraph_index, excerpt) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            chapter_id, obs.kind, obs.severity,
+                            obs.paragraph_index, obs.excerpt,
+                        )
+                        for obs in normalized_observations
+                    ],
+                )
+            # F22 (2026-05-25): translation attempts log. One row per
+            # _translate_chapter_in_db call — same transaction so a partial
+            # attempt can't appear as a phantom row. Backends populate
+            # result.prompt_snapshot / result.parse_error when available;
+            # NULL on backends that haven't been updated to expose them.
+            try:
+                from backend.services.translation_attempts import (  # noqa: PLC0415
+                    record_attempt,
+                )
+                await record_attempt(
+                    conn,
+                    chapter_id=chapter_id,
+                    provider_id=provider.id if provider else None,
+                    model_id=provider.model_id if provider else None,
+                    status=("fallback_plaintext" if translation_degraded else "ok"),
+                    parse_error=getattr(result, "parse_error", None),
+                    prompt_snapshot=getattr(result, "prompt_snapshot", None),
+                    retry_count=0,
+                )
+            except Exception:
+                # Diagnostics MUST NOT fail the commit. Log and move on.
+                logger.exception(
+                    "queue: failed to record translation attempt for ch %d",
+                    r["chapter_num"],
+                )
+            # Initiative 5: refresh the TM rows for this chapter in the
+            # same transaction. Failed alignment skips the chapter
+            # silently — better than persisting wrong-paragraph pairs.
+            try:
+                n_segments = await tm_svc.replace_chapter_segments(
+                    conn, novel_id, chapter_id,
+                    r["original_text"], cleaned_text,
+                )
+                if n_segments:
+                    logger.info(
+                        "tm: chapter %d populated %d segments",
+                        r["chapter_num"], n_segments,
+                    )
+                    # Surface inconsistencies created by THIS chapter into the
+                    # QA panel as additional observation rows. We only check
+                    # source_hashes this chapter introduced (joining against
+                    # the rows that share them across the novel), so
+                    # unchanged chapters don't fire fresh observations.
+                    await _emit_tm_inconsistency_observations(
+                        conn, novel_id, chapter_id
+                    )
+            except Exception:
+                # TM write is best-effort observability — never fail the
+                # chapter commit because of it. The translation itself is
+                # what the user needs; the concordance index can recover
+                # on the next retranslate.
+                logger.exception(
+                    "tm: chapter %d populate failed; chapter commit "
+                    "proceeding without TM rows", r["chapter_num"],
+                )
+        await conn.commit()
+        if (upd.rowcount or 0) == 0:
+            logger.info(
+                "translate ch %d completed but row was no longer 'translating'; "
+                "discarding result",
+                r["chapter_num"],
+            )
+            await _clear_translate_queue(conn, chapter_id)
+            return
+
+        # Glossary merge runs after success commit so a merge failure does
+        # not bury the translation. The merge can still fail (SQLite write
+        # lock, transient I/O) — persist the failure on the row so the reader
+        # can surface a banner.
+        try:
+            glossary_candidates = glossary_svc.filter_glossary_candidates(
+                r["original_text"], result.new_terms
+            )
+            if glossary_candidates:
+                await glossary_svc.merge_new_terms(
+                    conn, novel_id, glossary_candidates
+                )
+            await conn.execute(
+                "UPDATE chapters SET glossary_merge_error = NULL WHERE id = ?",
+                (chapter_id,),
+            )
+            await conn.commit()
+        except Exception as merge_err:
+            logger.exception(
+                "glossary merge for ch %d failed; translation committed without "
+                "new-terms update", r["chapter_num"]
+            )
+            try:
+                await conn.execute(
+                    "UPDATE chapters SET glossary_merge_error = ? WHERE id = ?",
+                    (str(merge_err)[:4000], chapter_id),
+                )
+                # Surface the merge failure as an observation alongside the
+                # detect_* hits so the reader's QA panel renders it uniformly.
+                # Same transaction as the glossary_merge_error column update.
+                synthetic = implicit_observation_glossary_merge_error(
+                    str(merge_err)[:4000]
+                )
+                await conn.execute(
+                    "INSERT INTO chapter_observations "
+                    "(chapter_id, kind, severity, paragraph_index, excerpt) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        chapter_id, synthetic.kind, synthetic.severity,
+                        synthetic.paragraph_index, synthetic.excerpt,
+                    ),
+                )
+                await conn.commit()
+            except Exception:
+                logger.exception("could not even persist glossary_merge_error")
+    except Exception as e:
+        logger.exception("translate ch %d failed: %s", r["chapter_num"], e)
+        await conn.execute(
+            "UPDATE chapters SET status = 'error', error_msg = ?, "
+            "translate_queued = 0, force_retranslate = 0 "
+            "WHERE id = ? AND novel_id = ? AND status = 'translating'",
+            (str(e)[:4000], chapter_id, novel_id),
+        )
+        await conn.commit()
+
+
+# ============================================================================
+# Refinement worker
+# ============================================================================
+
+async def _novel_has_refinement_provider(
+    conn: aiosqlite.Connection, novel_id: int
+) -> bool:
+    """True when the novel has a non-NULL refinement_provider_id.
+
+    Read from the schema column; if the column doesn't exist (old DB) treat
+    as False so the legacy code path stays intact."""
+    try:
+        cur = await conn.execute(
+            "SELECT refinement_provider_id FROM novels WHERE id = ?",
+            (novel_id,),
+        )
+        row = await cur.fetchone()
+    except aiosqlite.OperationalError:
+        return False
+    return row is not None and row["refinement_provider_id"] is not None
+
+
+async def _resolve_refinement_provider(
+    conn: aiosqlite.Connection, novel_id: int
+) -> Provider | None:
+    """Load the novel's refinement Provider. Returns None when unset."""
+    try:
+        cur = await conn.execute(
+            "SELECT refinement_provider_id FROM novels WHERE id = ?",
+            (novel_id,),
+        )
+        row = await cur.fetchone()
+    except aiosqlite.OperationalError:
+        return None
+    if row is None or row["refinement_provider_id"] is None:
+        return None
+    provider = await load_provider(row["refinement_provider_id"])
+    if provider is None:
+        logger.warning(
+            "novel %d references refinement provider %d but the row is gone",
+            novel_id, row["refinement_provider_id"],
+        )
+    return provider
+
+
+async def _refine_chapter_in_db(
+    conn: aiosqlite.Connection, novel_id: int, chapter_id: int
+) -> None:
+    """Run the refinement pass on a chapter that's been flagged
+    refinement_status='pending'. No-op when status is anything else (the
+    chapter may have been refined already, errored out, or never had a
+    refiner configured). Single LLM call via refiner.refine_chapter.
+    """
+    cur = await conn.execute(
+        "SELECT chapter_num, translated_text, refinement_status "
+        "FROM chapters WHERE id = ? AND novel_id = ?",
+        (chapter_id, novel_id),
+    )
+    r = await cur.fetchone()
+    if r is None or r["refinement_status"] != "pending":
+        return
+    draft = r["translated_text"] or ""
+    if len(draft.strip()) < _REFINEMENT_MIN_DRAFT_CHARS:
+        # Empty or tiny drafts — most commonly a parse error or a 番外 /
+        # author-note row that snuck through the heading detector. Refining
+        # them just burns a paid round-trip for ≤ a paragraph of text the
+        # reader will display as-is anyway. Skip and clear pending.
+        #
+        # Safe interaction with `translation_degraded` (audited 2026-05-23):
+        # we only mutate `refinement_status` here, leaving the degraded flag
+        # set by the translate step untouched. The reader's quality banner
+        # (`applyQualityBanner`) keys off `translation_degraded` alone and
+        # the refinement banner (`applyRefinementBanner`) keys off
+        # `refinement_status` alone, so a short degraded chapter still
+        # surfaces the degraded warning.
+        logger.info(
+            "refine ch %d: draft is %d chars (< %d); marking 'none' and skipping",
+            r["chapter_num"], len(draft.strip()), _REFINEMENT_MIN_DRAFT_CHARS,
+        )
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'none' WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+        return
+    provider = await _resolve_refinement_provider(conn, novel_id)
+    if provider is None:
+        # User cleared refinement_provider_id between the translator's
+        # commit and now. Clear the pending flag and move on.
+        logger.info(
+            "refine ch %d: no refinement provider configured; clearing pending",
+            r["chapter_num"],
+        )
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'none' WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+        return
+    # Atomic claim: pending → in_progress only if currently pending.
+    claim = await conn.execute(
+        "UPDATE chapters SET refinement_status = 'in_progress' "
+        "WHERE id = ? AND refinement_status = 'pending'",
+        (chapter_id,),
+    )
+    await conn.commit()
+    if (claim.rowcount or 0) == 0:
+        return
+    # Initiative 3: refiner sees the same union as the translator so it
+    # doesn't replace a global term's rendering during the polish pass.
+    glossary = await global_glossary_svc.list_for_novel_with_globals(
+        conn, novel_id
+    )
+    refine_t0 = time.perf_counter()
+    try:
+        refined = await refine_chapter(draft, provider, glossary=glossary)
+    except Exception as e:
+        logger.exception(
+            "refine ch %d failed: %s", r["chapter_num"], e,
+        )
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'error', "
+            "refinement_error = ? "
+            "WHERE id = ? AND refinement_status = 'in_progress'",
+            (str(e)[:4000], chapter_id),
+        )
+        await conn.commit()
+        return
+    elapsed = time.perf_counter() - refine_t0
+    # Apply the same deterministic guardrails the translator output runs
+    # through. The refiner's prompt asks it not to introduce em-dashes,
+    # mutate locked terms, or break bracket formatting, but LLMs slip;
+    # without these the refined body can regress after a clean draft.
+    refined, lt_n = enforce_locked_term_casing(refined, glossary)
+    refined, sb_n = enforce_stem_branch_casing(refined)
+    refined, em_n = enforce_em_dash(refined)
+    refined, brk_n = enforce_brackets(refined, glossary=glossary)
+    if lt_n + sb_n + em_n + brk_n:
+        logger.info(
+            "refine ch %d post-fixes on refined text: "
+            "%d locked-case, %d stem-branch, %d em-dash, %d bracket",
+            r["chapter_num"], lt_n, sb_n, em_n, brk_n,
+        )
+    logger.info(
+        "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",
+        r["chapter_num"], elapsed, provider.name, len(draft), len(refined),
+    )
+    await conn.execute(
+        "UPDATE chapters SET refinement_status = 'done', "
+        "refined_text = ?, refined_at = datetime('now'), "
+        "refined_by_provider_id = ?, "
+        "refinement_error = NULL "
+        "WHERE id = ? AND refinement_status = 'in_progress'",
+        (refined, provider.id, chapter_id),
+    )
+    await conn.commit()
+
+
+async def _run_refine(novel_id: int, chapter_id: int) -> None:
+    """One refine task. Shares the process-global translator lock so refine
+    and translate are strictly serial — burning the provider's
+    subscription/token budget in parallel is the same anti-goal as for
+    translation."""
+    async with _translator_lock:
+        try:
+            async with open_conn() as conn:
+                await _refine_chapter_in_db(conn, novel_id, chapter_id)
+        except Exception:
+            logger.exception("queue refine ch_id=%d crashed", chapter_id)
+            try:
+                async with open_conn() as recovery:
+                    await recovery.execute(
+                        "UPDATE chapters SET "
+                        "refinement_status = CASE WHEN refinement_status = 'in_progress' "
+                        "    THEN 'error' ELSE refinement_status END, "
+                        "refinement_error = CASE WHEN refinement_status = 'in_progress' "
+                        "    THEN COALESCE(refinement_error, 'refiner worker crashed') "
+                        "    ELSE refinement_error END "
+                        "WHERE id = ?",
+                        (chapter_id,),
+                    )
+                    await recovery.commit()
+            except Exception:
+                logger.exception(
+                    "refine recovery cleanup also failed for ch_id=%d",
+                    chapter_id,
+                )
+
+
+def spawn_refine_worker(novel_id: int, chapter_id: int) -> None:
+    """Spawn a refine task. Caller has already set refinement_status='pending'
+    in a prior commit; this just queues the worker behind the translator
+    lock."""
+    _spawn(_run_refine(novel_id, chapter_id))
+
+
+_STYLE_EDIT_LIMIT = 10
+
+
+async def _fetch_style_edits(
+    conn: aiosqlite.Connection, novel_id: int
+) -> list[tuple[str, str]]:
+    """Pull the most-recent user paragraph edits for this novel, capped at
+    _STYLE_EDIT_LIMIT. Used as "preferred rewrites" examples in the translator
+    prompt — the LLM learns the user's phrasing over time without manual
+    prompt engineering.
+
+    Returns [] when the style_edits table doesn't exist (older DB) or there
+    are no captured edits yet. Edits are against the canonical translation
+    (refined_text when present, else translated_text)."""
+    try:
+        cur = await conn.execute(
+            "SELECT before_text, after_text FROM style_edits "
+            "WHERE novel_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (novel_id, _STYLE_EDIT_LIMIT),
+        )
+        rows = await cur.fetchall()
+    except aiosqlite.OperationalError:
+        return []
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str]] = []
+    for r in rows:
+        pair = (r["before_text"], r["after_text"])
+        if pair in seen:
+            continue
+        seen.add(pair)
+        result.append(pair)
+    return result
+
+
+async def _fetch_novel_genre_brief(
+    conn: aiosqlite.Connection, novel_id: int
+) -> dict:
+    """Pull the novel's genre, custom_style_brief, and source_language for
+    prompt building. Genre / brief may be NULL — the translator's
+    build_system_instruction handles NULL → DEFAULT_GENRE fallback.
+    source_language defaults to 'zh' for legacy rows."""
+    try:
+        cur = await conn.execute(
+            "SELECT genre, custom_style_brief, source_language FROM novels WHERE id = ?",
+            (novel_id,),
+        )
+        row = await cur.fetchone()
+    except aiosqlite.OperationalError:
+        return {"genre": None, "custom_style_brief": None, "source_language": "zh"}
+    if row is None:
+        return {"genre": None, "custom_style_brief": None, "source_language": "zh"}
+    return {
+        "genre": row["genre"],
+        "custom_style_brief": row["custom_style_brief"],
+        "source_language": row["source_language"] or "zh",
+    }
+
+
+async def _resolve_translator_provider(
+    conn: aiosqlite.Connection, novel_id: int
+) -> Provider | None:
+    """Resolve the Provider this novel's chapters should route to.
+
+    Lookup order: novel's translator_provider_id → providers row →
+    fallback to the global default provider (is_default=1). Returns None if
+    no providers are configured at all — `translate_chapter` then falls
+    through to the backward-compat `translator_factory()` so the env-var-
+    driven setup still works for the startup probe and tests.
+    """
+    try:
+        cur = await conn.execute(
+            "SELECT translator_provider_id FROM novels WHERE id = ?",
+            (novel_id,),
+        )
+        row = await cur.fetchone()
+    except aiosqlite.OperationalError:
+        return None
+    if row is not None and row["translator_provider_id"] is not None:
+        provider = await load_provider(row["translator_provider_id"])
+        if provider is not None:
+            return provider
+        logger.warning(
+            "novel %d references provider %d but the row is gone; falling back to default",
+            novel_id, row["translator_provider_id"],
+        )
+    return await get_default_provider()
+
+
+async def _fetch_style_note(
+    conn: aiosqlite.Connection, novel_id: int
+) -> str | None:
+    """Pull the per-novel style brief (250-300 word voice anchor). Returns
+    None when the novel hasn't had one generated yet — the prompt drops the
+    block entirely."""
+    try:
+        cur = await conn.execute(
+            "SELECT style_note FROM novels WHERE id = ?", (novel_id,)
+        )
+        r = await cur.fetchone()
+    except aiosqlite.OperationalError:
+        return None
+    if r is None:
+        return None
+    note = r["style_note"]
+    return note if note and note.strip() else None
+
+
+async def _fetch_previous_chapter_tail(
+    conn: aiosqlite.Connection, novel_id: int, chapter_num: int
+) -> str | None:
+    """Pull a previous chapter's final paragraphs (English) as a tone reference
+    for the translator.
+
+    Search rule: nearest earlier chapter with status='done', within
+    PREVIOUS_CONTEXT_MAX_GAP chapters back. Returns None on the first chapter,
+    when no done chapter exists within the gap window, or when the feature
+    is disabled."""
+    if not PREVIOUS_CONTEXT_ENABLED or chapter_num <= 1:
+        return None
+    floor = chapter_num - PREVIOUS_CONTEXT_MAX_GAP
+    cur = await conn.execute(
+        "SELECT translated_text FROM chapters "
+        "WHERE novel_id = ? AND chapter_num < ? AND chapter_num >= ? "
+        "  AND status = 'done' "
+        "ORDER BY chapter_num DESC LIMIT 1",
+        (novel_id, chapter_num, floor),
+    )
+    prev = await cur.fetchone()
+    if prev is None:
+        return None
+    body = prev["translated_text"]
+    if not body:
+        return None
+    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return None
+    tail = paragraphs[-PREVIOUS_CONTEXT_PARAGRAPHS:]
+    return "\n\n".join(tail)
+
+
+async def _clear_translate_queue(
+    conn: aiosqlite.Connection, chapter_id: int
+) -> None:
+    await conn.execute(
+        "UPDATE chapters SET translate_queued = 0 WHERE id = ?",
+        (chapter_id,),
+    )
+    await conn.commit()

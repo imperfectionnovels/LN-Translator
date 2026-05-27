@@ -1,0 +1,2124 @@
+/* Reader page — TOC drawer, chapter pane, glossary terms, dialogs, print.
+ * Loaded by reader.html alongside base.css. */
+
+/* ===== Reader stage layout ===== */
+.reader-body main { max-width: none; padding: 0; }
+.reader-stage {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: 100vh;
+}
+.reader-stage[data-toc="off"] { grid-template-columns: 1fr; }
+.reader-stage[data-toc="off"] .toc-rail { display: none; }
+
+/* Hamburger that opens the mobile drawer. Lives inside .chapter-bar but is
+ * hidden on desktop — at widths above TOC_DRAWER_BREAKPOINT (see below) the
+ * rail is always visible (or toggled via the in-rail "hide rail" button) and
+ * there's no need for it. */
+.mobile-toc-toggle { display: none; }
+
+/* Backdrop is rendered always (so transitions work) but starts inert. Only
+ * visible on mobile when the drawer is open. */
+.toc-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  z-index: 19;
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms var(--ease);
+  display: none; /* explicit display:none on desktop — the backdrop is
+                  * mobile-only chrome; reveal in the mobile media query */
+}
+
+/* TOC_DRAWER_BREAKPOINT — keep in sync with the constant of the same name in
+ * frontend/js/reader.js. Below this width the rail becomes an off-canvas
+ * drawer, the chapter-bar gains a hamburger, the reading column gets full
+ * width, and padding tightens for thumb-sized screens. Was previously 1200px
+ * (which forced drawer mode at iPad-landscape 1024px even though the rail
+ * fit comfortably); lowered to 900px so 1024px tablets get the persistent
+ * rail and only true mobile + small tablet portrait gets the drawer. */
+@media (max-width: 900px) {
+  .reader-stage { grid-template-columns: 1fr; }
+  .mobile-toc-toggle { display: inline-flex; }
+
+  /* TOC becomes a fixed slide-in drawer. Width caps at ~320px so it doesn't
+   * overlay the whole reading column on tablets; uses translateX so the
+   * transition is GPU-cheap. */
+  .toc-rail {
+    position: fixed;
+    top: 0; left: 0;
+    width: min(86vw, 320px);
+    height: 100vh; height: 100dvh; /* dvh so mobile browser chrome doesn't clip */
+    z-index: 20;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+    transform: translateX(-100%);
+    transition: transform 200ms var(--ease);
+  }
+  .reader-stage[data-toc="on"] .toc-rail { transform: translateX(0); }
+  /* When the rail is acting as a drawer the data-toc="off" rule above would
+   * still hide it via display:none, which kills the slide-out transition.
+   * Override: keep the rail rendered, let the transform handle visibility. */
+  .reader-stage[data-toc="off"] .toc-rail { display: flex; }
+  /* R7: HTML defaults data-toc="on" because desktop wants the rail visible
+   * at first paint. On mobile that would slide the drawer in over the
+   * chapter for one frame until reader.js's setMobileDefault() flipped it
+   * to "off". boot.js stamps html[data-toc-init="off"] synchronously in
+   * <head> before the stylesheet parses; this override suppresses the
+   * initial transform so the first paint stays closed. */
+  html[data-toc-init="off"] .reader-stage[data-toc="on"] .toc-rail {
+    transform: translateX(-100%);
+  }
+  html[data-toc-init="off"] .reader-stage[data-toc="on"] .toc-backdrop {
+    opacity: 0; pointer-events: none;
+  }
+
+  .toc-backdrop { display: block; }
+  /* Backdrop is a CHILD of .reader-stage in the markup, so use a descendant
+   * selector — `~` (general sibling) would silently never match. */
+  .reader-stage[data-toc="on"] .toc-backdrop {
+    opacity: 1; pointer-events: auto;
+  }
+
+  /* The "hide rail" button inside the drawer becomes the close action.
+   * Existing JS already flips data-toc to "off", which now slides the drawer
+   * back out via the transform rule above. */
+  .toc-foot #toc-toggle { font-size: 12.5px; }
+}
+
+/* Phone widths: the reader pane's 48/60/100 padding eats half a phone's
+ * screen. Tighten everything that sits between the chapter-bar and the body
+ * text — without this the chapter-bar wraps to 3-4 rows of buttons, then the
+ * pane has 48px top padding, then the seal+kicker block runs 54px, then the
+ * Chinese subtitle has 40px margin-bottom — total ~280px of chrome before the
+ * first line of the chapter shows up. */
+@media (max-width: 720px) {
+  /* --- Spine hide + grid reset (reader page only) ------------------------
+   * The 56px .ink-spine eats viewport width AND offsets the chapter right
+   * of the geometric center on phones (the column itself starts 56px from
+   * the left edge, so margin:auto within the column still leaves the
+   * chapter visually left-shifted). Hide the spine on phones for the
+   * reader page only — cross-page nav lives in the TOC drawer head
+   * (.toc-cross-nav above). Library / Glossary / Import keep the spine
+   * because they have no centered reading column to disrupt. */
+  body.reader-body { grid-template-columns: 1fr; }
+  body.reader-body .ink-spine { display: none; }
+
+  /* Reveal the cross-page nav row that lives in the TOC drawer head. */
+  .toc-cross-nav {
+    display: flex; gap: 4px;
+    margin-bottom: 10px;
+    font-family: var(--font-family-sans);
+    font-size: 11px;
+  }
+  .toc-cross-nav a {
+    flex: 1;
+    text-align: center;
+    padding: 8px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .toc-cross-nav a:hover { color: var(--fg); background: var(--bg-tint); }
+
+  /* Crumbs ("Library › Novel › Ch. —") are redundant with the hamburger and
+   * eat a row of screen height — hide them on phones. */
+  .reader-body .crumbs { display: none; }
+
+  .reader-pane {
+    padding: 16px 14px 80px;
+    /* Lift bottom padding above the home indicator so the last paragraph
+     * isn't clipped on notched iPhones. */
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+
+  /* The chapter-bar's 32px side padding squeezes the toolbar so the download
+   * menu and Add button overflow. Pull it in. Buttons get min-height 36 so
+   * they're closer to Apple HIG tap-target territory (44 would push the bar
+   * too tall for the second-tier action row). */
+  .chapter-bar {
+    padding: 8px 10px;
+    /* Sticky top — extend padding behind a notch when scrolling under it. */
+    padding-top: calc(8px + env(safe-area-inset-top));
+    gap: 6px;
+    font-size: 11.5px;
+  }
+  .chapter-bar .nav-group { gap: 6px; }
+  .chapter-bar .arrow { width: 36px; height: 36px; font-size: 16px; }
+  .chapter-bar .view-group .seg button,
+  .chapter-bar .view-group .icon-btn {
+    padding: 8px 10px; font-size: 12px; min-height: 36px;
+  }
+  .chapter-bar .util-group .icon-btn,
+  .chapter-bar .util-group .download-link {
+    padding: 8px 8px; font-size: 12px; min-height: 36px; min-width: 32px;
+  }
+  .chapter-bar .util-group a#append-chapters { font-size: 0; padding: 8px 10px; min-height: 36px; min-width: 36px; }
+  .chapter-bar .util-group a#append-chapters::before { content: "+"; font-size: 16px; line-height: 1; }
+  .mobile-toc-toggle { min-width: 36px; min-height: 36px; padding: 6px 10px; }
+  .download-menu > summary { padding: 8px 10px; min-height: 36px; }
+
+  /* Chinese subtitle had 40px bottom margin to give the body breathing room
+   * under the title block; that breathing room is excessive on phones. */
+  .ch-h1-zh { margin-bottom: 16px; font-size: 1.15rem; }
+  /* Translation loader's 16vh top margin was sized for desktop; on a phone
+   * that's the entire visible viewport above the spinner. */
+  .chapter-loader { margin: clamp(16px, 4vh, 40px) auto; padding: 24px 20px; }
+
+  /* End-of-chapter declutter: ornament is pure decoration; end-actions
+   * packs closer together. */
+  #end-block .ornament { display: none; }
+  .end-actions { gap: 12px; }
+  .end-actions .row { padding: 8px 0; }
+
+  /* Floating bottom-right buttons sit closer to the edge on phones, with
+   * safe-area-aware offsets so they don't collide with the home indicator. */
+  .shortcuts-btn { right: max(12px, env(safe-area-inset-right)); }
+  .reading-rail {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+  }
+}
+
+/* ===== TOC rail ===== */
+.toc-rail {
+  background: var(--pane-bg);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  height: 100vh;
+  position: sticky; top: 0;
+  overflow: hidden;
+}
+.toc-head {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+/* Cross-page nav row that lives in the TOC drawer head on phones (≤720px),
+ * where .ink-spine is hidden so the chapter centers in the viewport. Hidden
+ * on wider screens — the spine handles cross-page nav there. The phone
+ * styles for this row live inside the @media (max-width: 720px) block
+ * above. */
+.toc-cross-nav { display: none; }
+.toc-head .novel-name {
+  font-family: var(--font-family-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+.toc-head .novel-name-zh {
+  font-family: var(--font-family-han);
+  font-size: 12px;
+  color: var(--muted);
+}
+.toc-search { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.toc-search input {
+  width: 100%; background: var(--bg); padding: 5px 8px; font-size: 12px;
+}
+.toc-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.toc-row {
+  display: grid;
+  grid-template-columns: 1fr 14px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12.5px;
+  border-left: 2px solid transparent;
+}
+.toc-row .ti {
+  font-family: var(--font-family-display);
+  font-size: 13.5px;
+  line-height: 1.25;
+  text-wrap: balance;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toc-row:hover { background: var(--bg-tint); }
+.toc-row.active {
+  background: var(--bg-tint);
+  border-left-color: var(--accent);
+  font-weight: 500;
+}
+.toc-foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+/* TOC dot glyphs (color-blind safe). The active-row override below promotes
+ * the dot to a seal-mark so the active chapter reads as a brand cue. */
+.toc-row .st {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-family-sans);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.toc-row.done .st { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.toc-row.translating .st { background: var(--accent-soft); color: var(--accent-fg); border-color: var(--accent-soft); animation: pulse 1.4s ease-in-out infinite; }
+.toc-row.queued .st { background: transparent; color: var(--muted); border-color: var(--border); border-style: dashed; }
+.toc-row.error .st { background: var(--signal-error); color: var(--accent-fg); border-color: var(--signal-error); }
+/* 2026-05-25: per user feedback the status legend was deleted; with no
+   legend to explain them, `stale` and (default) `pending` dots become
+   visual noise. Hide them so the rail only marks states the user
+   actively cares about: done, queued/translating, error. */
+.toc-row.stale .st,
+.toc-row.pending .st { visibility: hidden; }
+.toc-row.active .st {
+  width: 14px; height: 14px;
+  border-radius: 2px;
+  transform: rotate(-3deg);
+  box-shadow: var(--shadow-seal);
+  animation: none;
+}
+
+/* × button that replaces the queued ⏳ glyph — same footprint as .toc-row .st
+   so the row layout doesn't shift when queue depth changes. Hidden until the
+   row is hovered or the button itself is focused, to keep the rail quiet. */
+.toc-row .toc-cancel {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.toc-row:hover .toc-cancel,
+.toc-row .toc-cancel:focus-visible { opacity: 1; }
+.toc-row .toc-cancel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.toc-row .toc-cancel:hover {
+  background: var(--signal-error);
+  border-color: var(--signal-error);
+  color: var(--accent-fg);
+  opacity: 1;
+}
+.toc-row .toc-cancel:disabled { cursor: default; opacity: 0.4; }
+
+/* "Clear" pill in the TOC footer stats line — sits inline with the queue count
+   so the affordance lives right next to the depth it acts on. */
+.toc-clear-queue {
+  margin-left: 4px;
+  padding: 1px 8px;
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.toc-clear-queue:hover {
+  color: var(--signal-error);
+  border-color: var(--signal-error);
+}
+.toc-clear-queue:disabled { opacity: 0.5; cursor: default; }
+
+/* TOC extras (jump-to-pending + error banner) */
+.toc-extras { border-top: 1px solid var(--border); }
+.toc-jump {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 6px 14px 10px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  text-align: left;
+}
+.toc-jump:hover { background: var(--bg-tint); color: var(--fg); }
+.toc-jump[hidden] { display: none; }
+
+/* TOC body-search snippet rows */
+.toc-row.toc-fts-row { flex-direction: column; align-items: flex-start; }
+.toc-row .toc-snippet {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  font-family: var(--font-family-serif);
+}
+.toc-row .toc-snippet mark {
+  background: rgba(var(--accent-rgb, 47, 106, 94), 0.18);
+  color: inherit;
+  padding: 0 2px;
+}
+
+/* ===== Reader column + chapter-bar ===== */
+.reader-col {
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.chapter-bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 32px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  position: sticky; top: 0; z-index: 5;
+  backdrop-filter: blur(8px);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+}
+.chapter-bar .nav-group,
+.chapter-bar .view-group,
+.chapter-bar .util-group {
+  display: flex; align-items: center; gap: 6px;
+}
+.chapter-bar .view-group { gap: 4px; }
+.chapter-bar .nav-group { gap: 10px; }
+.chapter-bar .id {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.chapter-bar .ti {
+  font-family: var(--font-family-display);
+  font-size: 15px;
+  font-weight: 600;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chapter-bar .ti-zh {
+  font-family: var(--font-family-han);
+  color: var(--muted);
+  font-size: 13px;
+}
+/* While the big <h1> chapter heading is on screen the toolbar title just
+ * duplicates it — keep the toolbar to "Ch. N" and reveal the title only
+ * once the reader has scrolled past the heading (.past-title set in JS). */
+.chapter-bar .ti,
+.chapter-bar .ti-zh { display: none; }
+.chapter-bar.past-title .ti,
+.chapter-bar.past-title .ti-zh { display: block; }
+
+/* Focus mode — html[data-focus-mode="1"] is set by the inline bootstrap in
+ * reader.html (before the stylesheet loads, to avoid a flash of the
+ * util-group/crumbs rendering then snapping away) and flipped by reader.js
+ * when the user toggles the Aa-dialog checkbox. Mirrors the .past-title
+ * visibility-toggle pattern in spirit. Hides the second-tier action chrome;
+ * reading-essential controls (prev/next, chapter ID, EN/bilingual/diff
+ * toggle, hamburger, floating Aa / ? / progress rail) stay visible. */
+html[data-focus-mode="1"] .reader-body .chapter-bar .util-group { display: none; }
+html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
+
+/* Focus-mode row inside the type-settings dialog: a label/checkbox pair
+ * matching the grid's label-then-control layout. Hint reads as a muted
+ * caption under the label. */
+.type-settings-grid .focus-mode-row { display: flex; flex-direction: column; gap: 2px; }
+.type-settings-grid .focus-mode-hint { font-size: 11px; }
+.chapter-bar .spacer { flex: 1; }
+.chapter-bar .arrow {
+  background: transparent; border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1;
+}
+.chapter-bar .arrow:hover { background: var(--bg-tint); }
+.chapter-bar .arrow:disabled { opacity: 0.35; cursor: not-allowed; }
+.chapter-bar select {
+  background: var(--pane-bg);
+  padding: 5px 8px;
+  font-size: 12.5px;
+}
+/* Utility buttons (download, retranslate, etc.): always second-tier.
+ * Icon-only by default with tooltips; the label appears on hover so the row
+ * stops shouting six equal-weight controls at once. */
+.chapter-bar .util-group .icon-btn,
+.chapter-bar .util-group .download-link {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--r-md);
+  border: none;
+  background: transparent;
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+.chapter-bar .util-group .icon-btn:hover,
+.chapter-bar .util-group .download-link:hover { color: var(--fg); background: var(--bg-tint); }
+
+/* QA dashboard (Initiative 1) — observations button with inline count badge.
+ * Stays hidden when the chapter has no undismissed observations; appears as
+ * a warn-toned chip once anything fires. */
+.chapter-bar .util-group .observations-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--warn-fg, #b56a16);
+}
+.chapter-bar .util-group .observations-btn:hover {
+  color: var(--warn-fg, #b56a16);
+  background: var(--warn-tint, rgba(181, 106, 22, 0.08));
+}
+.chapter-bar .util-group .observations-btn .observations-icon { font-size: 13px; }
+.chapter-bar .util-group .observations-btn .observations-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--warn-tint, rgba(181, 106, 22, 0.12));
+}
+
+/* QA dialog list — one row per observation, with kind chip + dismiss. */
+.observations-dialog { max-width: 640px; }
+.observations-dialog .observations-intro { font-size: 0.85em; margin: .2rem 0 .8rem; }
+.observations-dialog .observations-list { max-height: 60vh; overflow-y: auto; }
+.observations-dialog .observation-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.observations-dialog .observation-row:first-child { border-top: none; }
+.observations-dialog .observation-kind {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warn-fg, #b56a16);
+  background: var(--warn-tint, rgba(181, 106, 22, 0.12));
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+.observations-dialog .observation-excerpt {
+  font-size: 0.9em;
+  line-height: 1.45;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.observations-dialog .observation-dismiss {
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  align-self: start;
+}
+.observations-dialog .observation-dismiss:hover {
+  color: var(--fg);
+  background: var(--bg-tint);
+}
+.observations-dialog .observations-empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 1.5em 0;
+  text-align: center;
+}
+
+/* Bookmarks panel (Initiative 2). */
+.bookmarks-dialog { max-width: 640px; }
+.bookmarks-dialog .bookmarks-intro { font-size: 0.85em; margin: .2rem 0 .8rem; }
+.bookmarks-dialog .bookmarks-list { max-height: 60vh; overflow-y: auto; }
+.bookmarks-dialog .bookmark-group-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 10px 0 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.bookmarks-dialog .bookmark-group-head:first-child {
+  border-top: none; padding-top: 0; margin-top: 0;
+}
+.bookmarks-dialog .bookmark-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px 12px;
+  align-items: start;
+  padding: 8px 0;
+}
+.bookmarks-dialog .bookmark-row + .bookmark-row { border-top: 1px solid var(--border); }
+.bookmarks-dialog .bookmark-note {
+  font-size: 0.9em;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.bookmarks-dialog .bookmark-note.empty { color: var(--muted); font-style: italic; }
+.bookmarks-dialog .bookmark-paragraph {
+  font-size: 11px;
+  color: var(--muted);
+  align-self: center;
+}
+.bookmarks-dialog .bookmark-delete,
+.bookmarks-dialog .bookmark-jump {
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  align-self: center;
+  color: var(--muted);
+}
+.bookmarks-dialog .bookmark-jump:hover { color: var(--fg); background: var(--bg-tint); }
+.bookmarks-dialog .bookmark-delete:hover {
+  color: var(--err-fg, #b00);
+  border-color: var(--err-fg, #b00);
+}
+.bookmarks-dialog .bookmarks-empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 1.5em 0;
+  text-align: center;
+}
+
+/* Bookmark add-button "filled" state when this chapter has any bookmark. */
+.chapter-bar .util-group #bookmark-add.has-bookmark { color: var(--accent, var(--fg)); }
+
+/* Concordance dialog (Initiative 5). */
+.concordance-dialog { max-width: 720px; }
+.concordance-dialog .concordance-list { max-height: 60vh; overflow-y: auto; }
+.concordance-dialog .concordance-hit {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: start;
+}
+.concordance-dialog .concordance-hit:first-child { border-top: none; }
+.concordance-dialog .concordance-hit:hover { background: var(--bg-tint); }
+.concordance-dialog .concordance-chapter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.concordance-dialog .concordance-paragraph {
+  font-size: 11px;
+  color: var(--muted);
+  align-self: center;
+}
+.concordance-dialog .concordance-source {
+  font-family: var(--font-family-serif), serif;
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: pre-wrap;
+}
+.concordance-dialog .concordance-target {
+  font-family: var(--font-family-serif), serif;
+  font-size: 14px;
+  color: var(--fg);
+  margin-top: 2px;
+  white-space: pre-wrap;
+}
+.concordance-dialog .concordance-matched-side {
+  font-size: 10px;
+  background: var(--accent-tint, rgba(95, 184, 164, 0.15));
+  color: var(--accent, var(--fg));
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+}
+.concordance-dialog .concordance-empty {
+  color: var(--muted); font-style: italic;
+  padding: 1.5em 0; text-align: center;
+}
+.chapter-bar .util-group .download-group {
+  display: inline-flex; gap: 2px; align-items: center;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+  margin-left: 2px;
+}
+/* View-mode toggles get a segmented look so they read as the primary
+ * "what am I looking at" controls, distinct from the utility row. */
+.chapter-bar .view-group .icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: var(--r-md);
+  font-family: var(--font-family-sans);
+}
+.chapter-bar .view-group .icon-btn:hover { background: var(--bg-tint); }
+.chapter-bar .view-group .icon-btn.on {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* Demoted in the reader: breadcrumbs are background context here, not a
+ * primary control — kept small and faint, brightening on hover. */
+.reader-body .crumbs {
+  padding: 8px 32px 0;
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.55;
+  transition: opacity 120ms var(--ease);
+}
+.reader-body .crumbs:hover { opacity: 1; }
+
+/* ===== Reading pane (single + dual) ===== */
+.reader-pane {
+  padding: 48px 60px 100px;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  width: 100%;
+}
+.reader-stage[data-dual="on"] .reader-pane { max-width: var(--max-width-dual); }
+.dual-grid {
+  display: grid;
+  gap: 48px;
+  grid-template-columns: 1fr;
+}
+.reader-stage[data-dual="on"] .dual-grid { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1200px) {
+  .reader-stage[data-dual="on"] .dual-grid { grid-template-columns: 1fr; gap: 24px; }
+}
+
+.pane-label {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+.ch-h1 {
+  /* Set like the chapter body — same serif face, same size and line-height —
+     only bolder, so the title reads as the opening line, not a banner. */
+  font-family: var(--font-family-serif);
+  font-size: 1em;
+  font-weight: 700;
+  margin: 0 0 8px;
+  text-wrap: balance;
+}
+.ch-h1 em { font-style: italic; font-weight: 400; color: var(--accent); }
+.ch-h1-zh {
+  font-family: var(--font-family-han);
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: var(--fg-soft);
+  letter-spacing: 0.04em;
+  margin-bottom: 24px;
+}
+.pane-zh .ch-h1 { font-size: 1.6em; }
+
+.reader-col { position: relative; overflow-x: clip; }
+.pane-en { position: relative; }
+.pane-en > .ch-h1-zh,
+.pane-en > .body { position: relative; z-index: 1; }
+
+/* ============================================================
+ * Chapter masthead, compact-magazine layout (2026-05-27 redesign).
+ * Top utility row pairs breadcrumb with an equal-width prev/next nav.
+ * Hero row pairs an eyebrow (CHAPTER 0001 / 1424) with the H1 + Han so
+ * the chapter index is never orphaned. Jade progress bar runs along the
+ * bottom edge. The sticky `.chapter-bar` toolbar (mode toggle, util menu)
+ * is a separate concern and stays untouched.
+ * ============================================================ */
+.chapter-masthead {
+  position: relative;
+  background: var(--pane-hi);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: 22px 28px 24px;
+  margin: 0 0 26px;
+  /* Container-query anchor so the H1 below uses `cqi` units and sizes
+     itself to the actual masthead width. Without this, a fixed-size
+     title staircased into four lines in the bilingual half-width column. */
+  container-type: inline-size;
+}
+@media (max-width: 720px) {
+  .chapter-masthead { padding: 18px 18px 20px; }
+}
+
+.chapter-masthead .masthead-utility {
+  display: block;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.chapter-masthead .masthead-crumbs {
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin: 0;
+  min-width: 0;
+}
+.chapter-masthead .masthead-crumbs .crumb {
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chapter-masthead .masthead-crumbs .crumb:hover { color: var(--fg); }
+.chapter-masthead .masthead-crumbs .crumb-novel {
+  color: var(--fg);
+  font-weight: 500;
+}
+/* Pre-data state: the novel-name crumb hasn't been filled in yet. Hide
+   it and its preceding separator so the breadcrumb doesn't render as a
+   dangling "Library /". The :has() selector falsifies the moment
+   setupNovelMeta() writes textContent. */
+.chapter-masthead .masthead-crumbs .crumb-novel:empty { display: none; }
+.chapter-masthead .masthead-crumbs:has(.crumb-novel:empty) .crumb-sep {
+  display: none;
+}
+.chapter-masthead .masthead-crumbs .crumb-sep { opacity: 0.5; }
+
+.chapter-masthead .masthead-hero { padding-top: 24px; }
+
+.chapter-masthead .masthead-eyebrow {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 12px;
+  font-family: var(--font-family-sans);
+}
+.chapter-masthead .masthead-eyebrow .ch-tag {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+}
+.chapter-masthead .masthead-eyebrow .masthead-index {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  display: inline-flex; align-items: baseline; gap: 0;
+}
+.chapter-masthead .masthead-eyebrow .masthead-index .n {
+  color: var(--accent);
+  font-weight: 600;
+}
+.chapter-masthead .masthead-eyebrow .masthead-index .slash {
+  opacity: 0.45;
+  padding: 0 4px;
+}
+.chapter-masthead .masthead-eyebrow .masthead-index .tot { opacity: 0.85; }
+
+.chapter-masthead .ch-title-en-h1 {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: clamp(26px, 6cqi, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 0;
+  text-wrap: pretty;
+  hyphens: none;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.chapter-masthead .ch-title-en-h1 .pending-tag {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin-left: 6px;
+  white-space: nowrap;
+}
+.chapter-masthead .ch-title-zh-sub {
+  font-family: var(--font-family-han);
+  font-weight: 500;
+  font-size: clamp(15px, 2.6cqi, 19px);
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  color: var(--fg-soft);
+  margin: 8px 0 0;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+.chapter-masthead .ch-title-zh-sub:empty { display: none; }
+@media (max-width: 720px) {
+  .chapter-masthead .ch-title-en-h1 { font-size: clamp(24px, 7cqi, 30px); }
+  .chapter-masthead .ch-title-zh-sub { font-size: 16px; }
+}
+
+/* Jade progress underline along the masthead bottom edge.
+   .bar's width is set inline by updateMasthead() based on N/total. */
+.chapter-masthead .masthead-progress {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: var(--border-soft);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  overflow: hidden;
+  pointer-events: none;
+}
+.chapter-masthead .masthead-progress .bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 240ms var(--ease);
+}
+
+/* When the chapter scrolls so the masthead is off-screen, the sticky
+   .chapter-bar's `.past-title` class reveals its toolbar title (handled
+   by the existing IntersectionObserver — still observes #ch-h1-en). */
+
+/* ============================================================
+ * Pre-translation cockpit — design §2.
+ * Two-pane layout that replaces the old "Not yet queued for translation"
+ * single-line CTA. Left pane shows the raw Chinese with glossary terms
+ * underlined (locked = cinnabar, auto = jade, candidate = dashed gold).
+ * Right pane lists the terms that will fire on translate, grouped by
+ * source. Bottom CTA bar (dark spine-bg) holds the Translate button.
+ * ============================================================ */
+.cockpit {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+  margin: 0 0 18px;
+}
+@media (max-width: 900px) {
+  .cockpit { grid-template-columns: 1fr; }
+}
+.cockpit-pane {
+  background: var(--pane-hi);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+.cockpit-pane .pane-head {
+  padding: 12px 16px;
+  border-bottom: 1px dashed var(--border-soft);
+  display: flex; align-items: center; gap: 10px;
+  background: var(--pane-bg);
+  flex-wrap: wrap;
+}
+.cockpit-pane .pane-head .pin-han {
+  font-family: var(--font-family-han);
+  font-weight: 700; font-size: 12px;
+  background: var(--cinnabar); color: #f4ecd6;
+  padding: 2px 7px; border-radius: var(--r-xs);
+  letter-spacing: 0;
+}
+.cockpit-pane .pane-head .pin-han.jade { background: var(--accent); }
+.cockpit-pane .pane-head .t {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 16px;
+  letter-spacing: -0.005em; color: var(--fg);
+}
+.cockpit-pane .pane-head .t em {
+  font-style: italic;
+  color: var(--accent);
+  font-weight: 400;
+}
+.cockpit-pane .pane-head .spacer { flex: 1; }
+.cockpit-pane .pane-head .n {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cockpit-pane .pane-body {
+  padding: 16px 18px;
+  flex: 1;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 0;
+}
+
+/* Raw Chinese preview pane */
+.raw-preview {
+  font-family: var(--font-family-han);
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--fg-soft);
+  position: relative;
+  max-height: 320px;
+  overflow: hidden;
+}
+.raw-preview p { margin: 0 0 10px; }
+.raw-preview .gloss-hit {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom: 1.5px solid var(--jade-soft);
+  padding: 0 1px;
+  position: relative;
+}
+.raw-preview .gloss-hit.locked {
+  background: color-mix(in srgb, var(--cinnabar) 10%, transparent);
+  border-bottom-color: var(--cinnabar);
+}
+.raw-preview .gloss-hit.candidate {
+  background: color-mix(in srgb, var(--signal-stale) 18%, transparent);
+  border-bottom: 1.5px dashed var(--signal-stale);
+}
+.raw-preview .fade {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 60px;
+  background: linear-gradient(180deg, transparent 0%, var(--pane-hi) 90%);
+  pointer-events: none;
+}
+.preview-foot {
+  margin-top: 8px;
+  display: flex; align-items: center; gap: 14px;
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.preview-foot .legend {
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.preview-foot .legend .swatch {
+  width: 16px; height: 4px; border-radius: 2px;
+}
+.preview-foot .legend .swatch.locked { background: var(--cinnabar); }
+.preview-foot .legend .swatch.auto   { background: var(--jade-soft); }
+.preview-foot .legend .swatch.cand   {
+  background: var(--signal-stale);
+  background-image: linear-gradient(90deg,
+    var(--signal-stale) 0 4px, transparent 4px 8px);
+}
+
+/* Glossary preflight list (right pane) */
+.gloss-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+}
+.gloss-section-head {
+  font-family: var(--font-family-sans);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 8px 0 4px;
+  display: flex; align-items: center; gap: 8px;
+}
+.gloss-section-head:first-child { margin-top: 0; }
+.gloss-section-head .c {
+  font-family: var(--font-family-mono);
+  color: var(--fg);
+  font-size: 10px;
+  background: var(--pane-bg);
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+}
+.gloss-section-head.new .c {
+  background: color-mix(in srgb, var(--signal-stale) 25%, transparent);
+  color: #4d3d10;
+}
+.gloss-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  gap: 10px;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xs);
+  align-items: center;
+}
+.gloss-item .han-mini {
+  font-family: var(--font-family-han);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gloss-item .body { min-width: 0; }
+.gloss-item .body .en {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gloss-item .body .note {
+  font-family: var(--font-family-serif);
+  font-style: italic;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gloss-item .freq {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--fg-soft);
+  font-variant-numeric: tabular-nums;
+}
+.gloss-item .badge-mini {
+  font-family: var(--font-family-sans);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-soft);
+  color: var(--muted);
+  background: var(--pane-bg);
+}
+.gloss-item .badge-mini.locked {
+  background: color-mix(in srgb, var(--cinnabar) 10%, var(--pane-bg));
+  color: var(--cinnabar-deep);
+  border-color: color-mix(in srgb, var(--cinnabar) 28%, transparent);
+}
+.gloss-item .badge-mini.auto {
+  background: var(--term-bg);
+  color: var(--term-fg);
+  border-color: transparent;
+}
+.gloss-item .badge-mini.new {
+  background: color-mix(in srgb, var(--signal-stale) 18%, transparent);
+  color: #6b551a;
+  border-color: color-mix(in srgb, var(--signal-stale) 36%, transparent);
+}
+
+/* CTA bar at the bottom of the cockpit */
+.cockpit-cta {
+  margin: 0 0 18px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--spine);
+  color: var(--spine-fg);
+  border-radius: var(--r-md);
+}
+.cockpit-cta .left {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+.cockpit-cta .left .t {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--spine-fg);
+  letter-spacing: -0.005em;
+}
+.cockpit-cta .left .t em {
+  font-family: var(--font-family-han);
+  font-style: normal;
+  font-weight: 600;
+  color: var(--jade-soft);
+  font-size: 18px;
+  margin: 0 4px;
+}
+.cockpit-cta .right { display: flex; gap: 8px; flex-wrap: wrap; }
+.cockpit-cta .b-primary {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--cinnabar);
+  color: #f4ecd6;
+  border: 1px solid var(--cinnabar-deep);
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer;
+}
+.cockpit-cta .b-primary:disabled { opacity: 0.6; cursor: wait; }
+.cockpit-cta .b-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.cockpit-cta .b-primary .han {
+  font-family: var(--font-family-han);
+  font-weight: 700;
+}
+.cockpit-cta .b-ghost {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  background: transparent;
+  color: var(--spine-fg);
+  border: 1px solid rgba(231,230,227,0.25);
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-decoration: none;
+}
+.cockpit-cta .b-ghost:hover {
+  border-color: rgba(231,230,227,0.5);
+}
+
+
+.body p { margin: 0 0 1em; text-wrap: pretty; }
+.pane-zh .body {
+  font-family: var(--font-family-han);
+  font-size: 17px;
+  line-height: 2;
+}
+.pane-zh .ch-h1 {
+  font-family: var(--font-family-han);
+  font-size: 17px;
+  margin-bottom: 24px;
+}
+
+/* Quiet glossary mode: terms read as plain text with a subtle dotted
+ * underline; the highlight pill only appears on hover or while selected.
+ * Padding is kept constant so toggling the background causes no reflow.
+ *
+ * The chrome (color, underline, hover pill, pointer cursor) is scoped to
+ * EDIT mode only — in read mode terms render as plain prose so nothing
+ * pulls the reader's eye. Read-mode override is below. */
+.term {
+  color: var(--term-fg);
+  border-radius: var(--r-sm);
+  padding: 0 4px;
+  cursor: pointer;
+  border-bottom: 1px dotted color-mix(in srgb, var(--term-fg) 50%, transparent);
+  transition: background-color 110ms var(--ease);
+}
+.term.alt { color: var(--term-alt-fg); border-bottom-color: color-mix(in srgb, var(--term-alt-fg) 50%, transparent); }
+.term:hover, .term.selected { background: var(--term-bg); }
+.term.alt:hover, .term.alt.selected { background: var(--term-alt-bg); }
+
+/* Read mode: neutralize the term chrome so the prose reads cleanly. The
+ * spans are still in the DOM (and still wire up tooltips/popovers when
+ * the user explicitly clicks) but they look like plain text. */
+body[data-reader-mode="read"] .term,
+body[data-reader-mode="read"] .term.alt {
+  color: inherit;
+  border-bottom: none;
+  background: transparent;
+  padding: 0;
+  cursor: text;
+}
+body[data-reader-mode="read"] .term:hover,
+body[data-reader-mode="read"] .term.selected,
+body[data-reader-mode="read"] .term.alt:hover,
+body[data-reader-mode="read"] .term.alt.selected {
+  background: transparent;
+}
+
+/* Markdown emitted by the translator */
+.pane-en .body strong { font-weight: 700; }
+.pane-en .body em { font-style: italic; }
+.pane-en .body p { margin: 0 0 0.85em; }
+
+.ornament {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--muted);
+  margin: 36px 0;
+  font-family: var(--font-family-display);
+  font-size: 1.2em;
+}
+.ornament::before, .ornament::after {
+  content: ""; flex: 1; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+}
+.ornament .g { color: var(--accent); letter-spacing: 0.4em; }
+
+.end-actions {
+  margin-top: 56px;
+  padding: 24px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  display: grid;
+  gap: 18px;
+}
+.end-actions .row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.next-card {
+  background: var(--bg-tint);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 18px;
+  display: flex; align-items: center; gap: 14px;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease);
+}
+.next-card:hover { border-color: var(--accent); border-style: solid; }
+.next-card .label { font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.next-card .ti { font-family: var(--font-family-display); font-size: 16px; font-weight: 600; }
+.next-card.disabled { opacity: 0.55; cursor: not-allowed; }
+.next-card.disabled:hover { border-style: dashed; border-color: var(--border); }
+
+/* Floating reading-rail — kept ambient, not a badge: no border or shadow,
+ * faint until hovered, so progress + ETA stay peripheral while reading. */
+.reading-rail {
+  position: fixed;
+  /* See .shortcuts-btn — safe-area-aware right/bottom for notched iPhones. */
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 7px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  border: none;
+  padding: 5px 9px;
+  border-radius: var(--r-pill);
+  box-shadow: none;
+  z-index: 6;
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.5;
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+.reading-rail:hover { opacity: 1; }
+.reading-rail .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.65; }
+/* R10: while the chapter is pending or mid-translate, the rail would
+ * report a stale "0%" from the prior chapter — mildly confusing during
+ * slow loads. Hide it until the chapter status flips to done. */
+body[data-chapter-status="pending"] .reading-rail,
+body[data-chapter-status="translating"] .reading-rail,
+body[data-chapter-status="error"] .reading-rail {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Hide the rail while text is selected so it doesn't collide with the
+ * selection popover at bottom-right of the reader pane. */
+body.has-selection .reading-rail {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+/* ===== Selection popover ===== */
+.sel-pop {
+  background: #0f1114;
+  color: #e7e6e3;
+  border-radius: var(--r-popover);
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  box-shadow: var(--shadow-popover);
+  position: absolute;
+  z-index: 20;
+  white-space: nowrap;
+}
+.sel-pop button {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 5px 10px;
+  border-radius: var(--r-pill);
+  font: inherit;
+  font-size: 12.5px;
+}
+.sel-pop button:hover { background: rgba(255,255,255,0.1); }
+.sel-pop .sep { width: 1px; height: 16px; background: rgba(255,255,255,0.18); }
+.sel-pop-hint {
+  padding: 0 6px;
+  font-size: 12px;
+  color: rgba(231, 230, 227, 0.78);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sel-form {
+  position: absolute;
+  z-index: 21;
+  background: var(--pane-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  box-shadow: var(--shadow-modal);
+  display: flex; flex-direction: column; gap: 8px;
+  width: 320px;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.sel-form .row { display: flex; gap: 6px; align-items: center; }
+.sel-form input, .sel-form select { width: 100%; }
+.sel-form input[readonly] { color: var(--muted); background: var(--bg-tint); cursor: default; }
+.sel-form .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+.sel-form-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  border-radius: var(--r-pill);
+  background: var(--bg-tint);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* When the .sel-form lives inside a <dialog> instead of being a free-floating
+ * absolutely-positioned popup, neutralise its outer chrome — the dialog
+ * already provides padding, box-shadow, background, and centered modal
+ * positioning. */
+.dialog .sel-form {
+  position: static;
+  z-index: auto;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+  width: 100%;
+  background: transparent;
+}
+
+/* Source-paragraph reference panel inside the Add-glossary form. Shown when
+ * the user opens the form from a text selection — we look up the paragraph's
+ * partner side (EN→ZH or ZH→EN) and render it here so a non-native speaker
+ * can locate the corresponding span. Selecting text inside the panel fills
+ * the opposite input via showAddForm's mouseup handler. */
+.sel-form-source {
+  margin: 4px 0;
+  padding: 8px 10px;
+  background: var(--bg-tint);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  max-height: 160px;
+  overflow-y: auto;
+  user-select: text;
+  cursor: text;
+}
+.sel-form-source-label {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+  display: flex; gap: 8px; align-items: center;
+}
+.sel-form-source-label .hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-style: italic;
+  color: var(--muted);
+  margin-left: auto;
+  font-size: 10.5px;
+}
+.sel-form-source-body { font-size: 13.5px; line-height: 1.6; color: var(--fg); }
+.sel-form-source.src-zh .sel-form-source-body {
+  font-family: var(--font-family-han);
+  font-size: 14px;
+}
+.sel-form-source.src-en .sel-form-source-body {
+  font-family: var(--font-family-serif);
+}
+.sel-form-source.flash-fill { animation: source-fill-flash 0.5s ease-out; }
+@keyframes source-fill-flash {
+  0% { background: var(--accent); color: var(--accent-fg); }
+  100% { background: var(--bg-tint); color: var(--fg); }
+}
+
+/* Edit-mode discoverability banner. Shown once per user; sticky-dismissed
+ * via localStorage.editModeHintSeen. Lives at the top of the reading column
+ * inside the EN pane so it sits beside the masthead, not the toolbar. */
+.edit-mode-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--pane-hi);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-soft);
+  margin: 0 0 20px;
+}
+/* The dismiss × handler sets `hidden=true`, but the rule above defines an
+ * explicit `display: flex` that outweighs the UA `[hidden]` stylesheet at
+ * equal specificity. Without this override the × click does nothing visible. */
+.edit-mode-hint[hidden] { display: none; }
+.edit-mode-hint .hint-icon {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+.edit-mode-hint .hint-text { flex: 1; }
+.edit-mode-hint .hint-text strong { color: var(--fg); }
+.edit-mode-hint .hint-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 4px;
+  align-self: flex-start;
+}
+.edit-mode-hint .hint-dismiss:hover { color: var(--fg); }
+
+/* Top-level "+ Term" button in the chapter bar — short text label since the
+ * action isn't recognisable from a glyph alone. Inherits .icon-btn padding
+ * (7px 12px) so it sits flush with the other util-group buttons. */
+.chapter-bar .util-group .add-term-btn {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+}
+.chapter-bar .util-group .add-term-btn:hover {
+  background: var(--accent-tint, rgba(0, 0, 0, 0.04));
+  color: var(--accent-deep, var(--accent));
+}
+
+/* ===== Pre-flight saturation check card ===== */
+.saturation-card {
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-tint);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.saturation-card .ok { color: var(--accent, var(--fg)); }
+.saturation-card .sat-head { margin-bottom: 6px; }
+.saturation-card .sat-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 12px; }
+.saturation-card .sat-list li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.saturation-card .ocr-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  background: rgba(170, 70, 70, 0.14);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  color: var(--fg);
+}
+.saturation-card .sat-sep {
+  border: 0;
+  border-top: 1px dashed var(--border);
+  margin: 10px 0;
+}
+
+/* ===== Per-paragraph edit mode (style learning) ===== */
+.icon-btn#edit-mode.on { background: var(--accent, var(--fg)); color: var(--accent-fg, #fff); }
+.body.edit-mode p {
+  outline: 1px dashed transparent;
+  outline-offset: 4px;
+  border-radius: var(--r-sm);
+  transition: outline-color 0.15s;
+  cursor: text;
+}
+.body.edit-mode p:hover { outline-color: var(--border); }
+.body.edit-mode p:focus { outline-color: var(--accent, var(--fg)); }
+.body.edit-mode p.saving { opacity: 0.6; }
+.body.edit-mode p.saved-flash { background: rgba(60, 140, 75, 0.10); transition: background 0.6s; }
+.body.edit-mode p.save-failed { outline-color: #b14545; }
+
+/* ===== Chapter reader — in-progress loading screen ===== */
+/* Shown while translation is running for the active chapter. It is the only
+ * thing on screen: the reading column is hidden by JS. The bar is a pure-CSS
+ * indeterminate slide — there is no real progress to report — and JS only
+ * updates the honest "Ns elapsed" readout. */
+.chapter-loader {
+  margin: clamp(56px, 16vh, 160px) auto;
+  max-width: 460px;
+  padding: 36px 32px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  font-family: var(--font-family-sans);
+  text-align: center;
+}
+.chapter-loader.hidden { display: none; }
+.chapter-loader-label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 18px;
+  color: var(--fg);
+}
+.chapter-loader-bar {
+  position: relative;
+  height: 6px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+/* Indeterminate bar: a single segment slides across continuously. The
+   translator is one LLM call with no intermediate progress signal, so there
+   is no honest percentage to show — motion alone signals "working". */
+.chapter-loader-bar > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 38%;
+  border-radius: 4px;
+  background: var(--accent);
+  animation: loader-slide 1.15s var(--ease) infinite;
+}
+@keyframes loader-slide {
+  0%   { left: -38%; }
+  100% { left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chapter-loader-bar > span { animation-duration: 2.6s; }
+}
+.chapter-loader-meta {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chapter-loader-meta .dot { opacity: 0.5; }
+
+/* ===== Bilingual paragraph rows (legacy compat) ===== */
+.bilingual { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.bilingual-row { display: contents; }
+.col-zh { font-family: var(--font-family-han); line-height: 2; }
+
+/* ===== Sticky append banner with back link ===== */
+.append-banner-row {
+  position: sticky; top: 0; z-index: 4;
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 14px;
+}
+.append-banner-row .status { flex: 1; margin: 0; }
+.append-banner-row .back-link {
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--r-md);
+  background: var(--pane-bg);
+  white-space: nowrap;
+}
+.append-banner-row .back-link:hover { color: var(--fg); background: var(--bg-tint); }
+
+/* ===== Stale-chapter banner button ===== */
+#chapter-status .stale-action {
+  margin-left: 10px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--r-md);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+#chapter-status .stale-action:hover { background: var(--accent-deep); }
+
+/* ===== Quality banner: warning-orange variant of alert-banner ===== */
+/* Fires for translation_degraded — i.e. the chapter shipped via the
+ * translator's plain-text fallback. The banner asserts the invariant
+ * ("degraded never silently ships as canonical") alongside .chapter-degraded. */
+.alert-banner.quality-banner {
+  border-color: var(--signal-warning, #a85a0e);
+  background: color-mix(in srgb, var(--signal-warning, #a85a0e) 12%, var(--pane-bg));
+  color: var(--signal-warning, #a85a0e);
+}
+.alert-banner.quality-banner .retry {
+  background: var(--signal-warning, #a85a0e);
+}
+.chapter-degraded {
+  opacity: 0.88;
+  border-left: 3px solid var(--signal-warning, #a85a0e);
+  padding-left: 12px;
+}
+
+/* ===== Reader — overflow ⋯ menu (wireframes redesign) =====
+ * The 9 right-side chapter-bar buttons collapsed into a single ⋯ menu
+ * that follows the same <details>-based pattern as the download menu.
+ * Item ids are preserved so reader.js handlers bind unchanged. */
+.util-menu { position: relative; font-family: var(--font-family-sans); font-size: 12.5px; }
+.util-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px; height: 32px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  border: 1px solid transparent;
+  font-size: 16px;
+}
+.util-menu > summary:hover { color: var(--fg); background: var(--bg-tint); border-color: var(--border-soft); }
+.util-menu > summary::-webkit-details-marker { display: none; }
+.util-menu[open] > summary { color: var(--fg); background: var(--bg-tint); border-color: var(--border); }
+.util-menu .menu {
+  position: absolute;
+  right: 0; top: calc(100% + 6px);
+  z-index: 6;
+  min-width: 240px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-popover);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.util-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; box-sizing: border-box;
+  padding: 7px 10px;
+  border: none; background: transparent;
+  text-align: left;
+  font-family: inherit; font-size: 13px;
+  color: var(--fg);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-decoration: none;
+}
+.util-menu-item:hover { background: var(--bg-tint); }
+.util-menu-item .ico {
+  width: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.util-menu-item:hover .ico { color: var(--fg); }
+.util-menu-divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 6px;
+}
+/* R2: the static <div class="util-menu-divider"> sits between edit-only
+   items (retranslate / edit paragraphs / style note / …) and the always-
+   visible downloads. In read mode the edit-only items collapse to
+   display:none so the divider would hang at the top of the menu with
+   nothing above it. Read mode is the common case, so hide the divider
+   there. */
+body[data-reader-mode="read"] .util-menu-divider { display: none; }
+/* The append-chapters anchor was an <a> with "＋ Add" text in the old bar.
+ * Inside the menu it should look like every other item — strip the inline
+ * styles the old #append-chapters relied on. */
+#append-chapters.util-menu-item { color: var(--fg); }
+
+/* ===== Reader — Download details menu (legacy, retained for restore) ===== */
+.download-menu { position: relative; font-family: var(--font-family-sans); font-size: 12px; }
+.download-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  padding: 5px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+}
+.download-menu > summary:hover { color: var(--fg); background: var(--bg-tint); }
+.download-menu > summary::-webkit-details-marker { display: none; }
+.download-menu[open] > summary { color: var(--fg); border-color: var(--border); }
+.download-menu .menu {
+  position: absolute;
+  right: 0; top: calc(100% + 4px);
+  z-index: 6;
+  min-width: 220px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-popover);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.download-menu .menu a {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  font-size: 12.5px;
+}
+.download-menu .menu a:hover { background: var(--bg-tint); }
+.download-menu .menu .menu-section {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.download-menu .menu .menu-section + .menu-section,
+.download-menu .menu a + .menu-section {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* ===== Reader — retranslate spinner state ===== */
+.spinning {
+  display: inline-block;
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ===== Floating shortcuts (?) + type-settings (Aa) buttons ===== */
+.shortcuts-btn {
+  position: fixed;
+  /* max(...) so the offset respects the iPhone home indicator / right-side
+   * safe area when viewport-fit=cover is set. On non-notched devices
+   * env(safe-area-inset-*) is 0 and the fallback 24px wins. */
+  right: max(24px, env(safe-area-inset-right));
+  bottom: 76px;
+  z-index: 6;
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  font-family: var(--font-family-sans);
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+.shortcuts-btn:hover { color: var(--fg); background: var(--bg-tint); }
+/* The Aa button sits just above the ? button, sharing its visual style. */
+.type-settings-btn { bottom: 116px; font-size: 13px; }
+
+/* Reading-type dialog: two sliders with inline readouts. */
+.dialog .type-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px 0;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  min-width: 260px;
+}
+.dialog .type-settings-grid label { display: flex; justify-content: space-between; }
+.dialog .type-settings-grid input[type="range"] { width: 100%; margin: 0 0 10px; }
+
+/* Shortcuts cheat-sheet */
+.dialog .shortcuts-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.dialog .shortcuts-grid .key-cell { display: flex; gap: 4px; }
+
+/* Glossary mini-form when hosted in a <dialog> (term popover) */
+.dialog.glossary-mini-dialog {
+  max-width: 360px;
+  padding: 16px 18px;
+}
+.dialog.glossary-mini-dialog .form-row {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 0 0 10px;
+  font-family: var(--font-family-sans);
+}
+.dialog.glossary-mini-dialog .form-row label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.dialog.glossary-mini-dialog .form-row input,
+.dialog.glossary-mini-dialog .form-row select { width: 100%; }
+.dialog.glossary-mini-dialog .actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 6px;
+}
+
+/* ===== Full-error disclosure inside the reader's status banner ===== */
+/* The summary line uses the existing `.status.err` styling; the body is a
+ * code block that wraps long stack traces without overflowing the column. */
+/* Error banner gets a flex layout so the dismiss × pins to the right.
+ * The [hidden] override is load-bearing: without it, `.status.err`'s
+ * `display: flex` (specificity 0,2,0) wins over `[hidden]`'s default
+ * `display: none` (specificity 0,1,0), so the dismiss × silently fails. */
+.status.err { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.status[hidden] { display: none; }
+.status.err .msg { flex: 1; min-width: 0; }
+.status.err .error-full { flex-basis: 100%; }
+.status .status-dismiss {
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: .7;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: auto;
+  align-self: flex-start;
+}
+.status .status-dismiss:hover { opacity: 1; }
+.status .error-full { margin-top: 6px; font-size: 12px; }
+.status .error-full summary {
+  cursor: pointer;
+  font-family: var(--font-family-sans);
+  color: var(--muted);
+  user-select: none;
+}
+.status .error-full-text {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
+}
+
+/* ===== Print: strip the reader chrome and reflow the chapter for paper / PDF ===== */
+/* Browser print dialogs are the no-build "export to PDF" path. Without this
+ * block the reader prints with header, TOC rail, reading rail, theme buttons,
+ * and dark backgrounds — wasteful and unreadable. */
+@media print {
+  /* Force a clean light background regardless of the active theme; dark themes
+   * print as solid ink-coloured blocks. */
+  :root, [data-theme] {
+    --bg: #ffffff;
+    --bg-tint: #ffffff;
+    --pane-bg: #ffffff;
+    --fg: #000000;
+    --muted: #444;
+    --border: #ccc;
+  }
+  body, body.reader-body { background: #fff; color: #000; }
+
+  /* Spine + main go single-column for print. */
+  body { display: block !important; }
+
+  /* Chrome we never want on paper. */
+  header,
+  .ink-spine,
+  .crumbs,
+  .toc-rail,
+  .chapter-bar,
+  .reading-rail,
+  .shortcuts-btn,
+  .type-settings-btn,
+  #end-block,
+  .alert-banner,
+  .toolbar-error,
+  .pane-label,
+  .lib-toolbar,
+  dialog {
+    display: none !important;
+  }
+
+  /* Single-pane reading column at full width; let content size to the page. */
+  main, .full-bleed, .reader-stage, .reader-col, .reader-pane,
+  .dual-grid, .pane-en, .pane-zh {
+    display: block !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #fff !important;
+  }
+
+  /* In bilingual mode, stack ZH above EN — side-by-side wastes paper width. */
+  .pane-zh.hidden { display: none !important; }
+  .pane-zh, .pane-en { width: 100%; }
+
+  .body, .ch-h1 { color: #000 !important; }
+  .body { font-size: 12pt; line-height: 1.55; }
+  .body p { orphans: 3; widows: 3; }
+  a { color: inherit; text-decoration: none; }
+}
+
+/* ============================================================================
+ * Reader v2: two-way view mode polish (Classic / Bilingual)
+ *
+ * Gated on #reader-stage[data-view-mode]. Storage values stay "english" /
+ * "bilingual" — UI labels say Classic / Bilingual. The existing
+ * single-column / dual-grid mechanic is unchanged; these rules only add the
+ * v2 typographic polish on top of it. (Focus mode was removed 2026-05-26.)
+ * ===========================================================================*/
+
+/* ----- Classic mode: center-aligned banner title. ----- */
+#reader-stage[data-view-mode="english"] .pane-en .ch-title-en-h1 {
+  text-align: center;
+  margin: 0.2em 0 0.1em;
+}
+#reader-stage[data-view-mode="english"] .pane-en .ch-title-zh-sub {
+  text-align: center;
+}
+#reader-stage[data-view-mode="english"] .pane-en > .ch-h1-zh {
+  font-family: var(--font-family-han);
+  font-size: 1.05rem;
+  text-align: center;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  margin-bottom: 36px;
+}
+
+/* ----- Bilingual mode: provider attribution + refinement chip. ----- */
+.pane-label .prov-name {
+  font-family: var(--font-family-sans);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-soft);
+  font-weight: 600;
+}
+.pane-label .refinement-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: var(--accent-wash, color-mix(in srgb, var(--accent) 14%, transparent));
+  color: var(--accent-deep, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  font-family: var(--font-family-sans);
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+/* ===========================================================================
+   Read/Edit mode (2026-05-25)
+   --------------------------------------------------------------------------
+   Single source of truth: body[data-reader-mode]. Edit-only chrome is
+   marked with the .edit-only class — read mode hides those nodes via
+   display:none, edit mode reveals them via display:revert.
+   See also: project_read_edit_mode.md memory note.
+   ========================================================================= */
+
+/* Default: hide all edit-only chrome (we boot into read mode if no
+   localStorage entry exists; the JS sets data-reader-mode before paint to
+   avoid a flash, but this is the belt-and-suspenders fallback). */
+.edit-only {
+  display: none;
+}
+
+body[data-reader-mode="edit"] .edit-only {
+  display: revert;
+}
+
+/* Special-case: nodes that already use `display: none` for their own
+   "currently hidden" logic via the `hidden` attribute (e.g. the
+   observations-btn before any observations land) should not get
+   display:revert in edit mode while their `hidden` attribute is set.
+   The HTML5 `hidden` attribute beats CSS display anyway, so this
+   works out cleanly without extra rules. */
+
+/* Toggle styling — visually distinct from the view-mode segmented
+   picker so the user notices the mode change. Uses the accent color
+   for the active pressed state. */
+.chapter-bar .reader-mode-toggle {
+  margin-right: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.chapter-bar .reader-mode-toggle button {
+  background: transparent;
+  border: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 80ms var(--ease), color 80ms var(--ease);
+}
+
+.chapter-bar .reader-mode-toggle button:hover {
+  background: var(--bg-tint);
+  color: var(--fg);
+}
+
+.chapter-bar .reader-mode-toggle button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* In edit mode the view-mode picker is disabled (forced bilingual).
+   Visually fade it so the disabled state reads cleanly. */
+body[data-reader-mode="edit"] .chapter-bar .view-group .seg#toggle-dual {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* 2026-05-25: error banner in the TOC rail. Visible in both Read and
+   Edit modes (a failed translation is a state the reader cares about
+   regardless of mode). Hidden via [hidden] when error count is 0. */
+.toc-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 6px 8px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--signal-error) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--signal-error) 36%, var(--border));
+  color: var(--text);
+  font-size: 12px;
+}
+
+.toc-error-banner .toc-error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-fg);
+  background: var(--signal-error);
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.toc-error-banner #toc-error-count {
+  flex: 1 1 auto;
+}
+
+.toc-error-banner button {
+  padding: 2px 8px;
+  font-size: 11px;
+}

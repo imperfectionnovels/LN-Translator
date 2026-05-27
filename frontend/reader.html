@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Reader · LN Translator</title>
+<!-- Canonical FOUC bootstrap. See frontend/js/boot.js (also handles
+     readerFocusMode + mobile TOC default to avoid a flash). -->
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/reader.css?v=1">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/lib/marked.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js" defer></script>
+</head>
+<body class="reader-body">
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main class="full-bleed" id="main" tabindex="-1">
+  <div class="reader-stage" id="reader-stage" data-toc="on" data-dual="off">
+    <aside class="toc-rail" id="toc-rail">
+      <div class="toc-head">
+        <!-- Cross-page nav for mobile (≤720px). On phones the .ink-spine
+             sidebar is hidden so the chapter centers properly; these links
+             are the way back to Library / Import / Glossary from the reader.
+             Hidden on desktop via CSS — the spine handles cross-page nav
+             there. -->
+        <nav class="toc-cross-nav" aria-label="Sections">
+          <a href="/library">Library</a>
+          <a href="/">Import</a>
+          <a href="#" id="toc-glossary-link">Glossary</a>
+        </nav>
+        <h3 class="novel-name" id="toc-novel-name">…</h3>
+        <div class="novel-name-zh" id="toc-novel-meta"></div>
+      </div>
+      <div class="toc-search">
+        <input id="toc-search-input" placeholder="Search chapters…" aria-label="Search chapters">
+      </div>
+      <div class="toc-list" id="toc-list" aria-busy="true">
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+        <div class="skeleton-toc-row"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short" style="width:12px;"></div></div>
+      </div>
+      <div class="toc-foot">
+        <span id="toc-foot-stats">…</span>
+        <button class="btn-ghost" id="toc-toggle">hide rail</button>
+      </div>
+      <div class="toc-extras">
+        <button type="button" class="toc-jump" id="toc-jump-pending" hidden>Jump to next pending →</button>
+        <!-- Error banner: visible in both Read and Edit mode. Hidden via
+             [hidden] when no chapters are in `error` state. The status
+             legend was removed (user feedback: cryptic icons cluttered
+             the rail; just done/queued/error are visually meaningful). -->
+        <div class="toc-error-banner" id="toc-error-banner" hidden>
+          <span class="toc-error-icon" aria-hidden="true">!</span>
+          <span id="toc-error-count">0 failed</span>
+          <button type="button" class="btn-ghost" id="toc-retry-failed">Retry all</button>
+        </div>
+      </div>
+    </aside>
+    <!-- Tap-to-dismiss backdrop for the mobile TOC drawer. Sits inside the
+         stage so the drawer's z-index ordering stays predictable. Hidden on
+         desktop entirely via CSS; on mobile it fades in when data-toc="on". -->
+    <div class="toc-backdrop" id="toc-backdrop" hidden></div>
+
+    <div class="reader-col">
+      <div class="chapter-bar">
+        <div class="nav-group">
+          <!-- Mobile-only TOC opener. On wide screens the rail is always
+               visible and this button is hidden via CSS. On narrow screens the
+               rail is an off-canvas drawer and this is the only way back in. -->
+          <button class="icon-btn mobile-toc-toggle" id="mobile-toc-toggle" title="Chapter list" aria-label="Open chapter list">☰</button>
+          <button class="arrow" id="prev-ch" title="Previous chapter" aria-label="Previous chapter">‹</button>
+          <span class="id" id="ch-id">Ch. …</span>
+          <span class="ti" id="ch-title">…</span>
+          <span class="ti-zh" id="ch-title-zh"></span>
+        </div>
+        <span class="spacer"></span>
+        <div class="view-group">
+          <!-- 2026-05-25: Read/Edit mode toggle. Read = clean reading view;
+               Edit = translator's workbench (all editing/observability/glossary
+               tooling visible via .edit-only CSS scope). Edit mode forces
+               bilingual layout so the source is visible while editing. -->
+          <div class="seg reader-mode-toggle" id="reader-mode-toggle" role="group" aria-label="Reader mode">
+            <button type="button" data-reader-mode="read" aria-pressed="true" title="Clean reading view">Read</button>
+            <button type="button" data-reader-mode="edit" aria-pressed="false" title="Translator's workbench (all editing tools visible)">Edit</button>
+          </div>
+          <div class="seg" id="toggle-dual" role="group" aria-label="View mode">
+            <button type="button" data-mode="english" aria-pressed="true">Classic</button>
+            <button type="button" data-mode="bilingual" aria-pressed="false">Bilingual</button>
+          </div>
+          <!-- 2026-05-27: Translation source toggle. Reveals only when the
+               current chapter has BOTH a polished translation (translated_text
+               or refined_text) AND an OPUS-MT free draft (free_draft_text).
+               Click handler + visibility live in reader.js. -->
+          <div class="seg" id="toggle-source" role="group" aria-label="Translation source" hidden>
+            <button type="button" data-source="polished" aria-pressed="true">Polished</button>
+            <button type="button" data-source="free_draft" aria-pressed="false">Free draft</button>
+          </div>
+        </div>
+        <div class="util-group">
+          <button class="icon-btn add-term-btn edit-only" id="add-term-btn" title="Add a glossary term. Opens the Add form with both fields empty. (Or just select any phrase in either pane to add from context.)" aria-label="Add glossary term">
+            <span aria-hidden="true">+ Term</span>
+          </button>
+          <button class="icon-btn observations-btn edit-only" id="observations-btn" title="Open the QA panel for translation issues the system noticed for this chapter" aria-label="Translation issues" hidden>
+            <span class="observations-icon">⚠</span>
+            <span class="observations-count" id="observations-count">0</span>
+          </button>
+          <!-- Wireframes redesign: 9 right-side buttons collapsed into one ⋯
+               overflow menu. The buttons themselves keep their original ids
+               so every reader.js handler binds without changes. -->
+          <details class="util-menu" id="util-menu">
+            <summary class="icon-btn" title="More chapter actions" aria-label="More chapter actions">⋯</summary>
+            <div class="menu">
+              <button class="util-menu-item" id="bookmark-add" title="Bookmark the paragraph at the current scroll position" aria-label="Add bookmark here"><span class="ico">☆</span>Add bookmark</button>
+              <button class="util-menu-item" id="bookmarks-open" title="Open the bookmarks panel for this novel" aria-label="Show bookmarks"><span class="ico">☰♡</span>Bookmarks</button>
+              <button class="util-menu-item edit-only" id="retranslate" title="Re-translate this chapter with the current glossary" aria-label="Re-translate this chapter"><span class="ico">⟲</span>Retranslate chapter</button>
+              <button class="util-menu-item" id="copy-chapter" title="Copy this chapter's English text to the clipboard" aria-label="Copy chapter"><span class="ico">⧉</span>Copy chapter</button>
+              <button class="util-menu-item edit-only" id="edit-mode" title="Edit paragraphs so your rewrites teach the translator your preferred style" aria-label="Edit paragraphs"><span class="ico">✎</span>Edit paragraphs</button>
+              <a class="util-menu-item" id="append-chapters" href="#" title="Append more raw chapters to this novel" aria-label="Append more chapters"><span class="ico">＋</span>Append chapters</a>
+              <button class="util-menu-item edit-only" id="style-note-btn" title="Edit per-novel style note (voice anchor for translations)" aria-label="Style note"><span class="ico">✒</span>Style note</button>
+              <!-- F22 (2026-05-25): edit-mode diagnostics. See the actual
+                   prompt the LLM received and the per-attempt status. -->
+              <button class="util-menu-item edit-only" id="view-last-prompt" title="Show the resolved prompt that was sent to the LLM for this chapter" aria-label="View last prompt"><span class="ico">⌥</span>View last prompt</button>
+              <button class="util-menu-item edit-only" id="view-attempts" title="Show this chapter's translation attempts (parse errors, retries, timestamps)" aria-label="View translation attempts"><span class="ico">⎘</span>View translation attempts</button>
+              <div class="util-menu-divider"></div>
+              <a class="util-menu-item" id="download-txt" href="#" download><span class="ico">↧</span>Whole novel · .txt</a>
+              <a class="util-menu-item" id="download-md" href="#" download><span class="ico">↧</span>Whole novel · .md</a>
+              <a class="util-menu-item" id="download-epub" href="#" download><span class="ico">↧</span>Whole novel · .epub</a>
+            </div>
+          </details>
+        </div>
+        <button class="arrow" id="next-ch" title="Next chapter" aria-label="Next chapter">›</button>
+      </div>
+
+      <div class="reader-pane">
+        <article id="chapter-status" class="status"></article>
+        <div id="chapter-loader" class="chapter-loader hidden" role="status" aria-live="polite">
+          <div class="chapter-loader-label" id="chapter-loader-label">Translating chapter…</div>
+          <div class="chapter-loader-bar"><span></span></div>
+          <div class="chapter-loader-meta">
+            <span id="chapter-loader-elapsed">0s elapsed</span>
+          </div>
+        </div>
+        <div class="dual-grid" id="dual-grid">
+          <section class="pane-zh hidden" id="pane-zh">
+            <div class="pane-label">中文 · Chinese</div>
+            <h1 class="ch-h1" id="ch-h1-zh"></h1>
+            <div class="body" id="body-zh"></div>
+          </section>
+          <section class="pane-en" id="pane-en">
+            <div class="pane-label hidden" id="pane-en-label">English</div>
+            <!-- Chapter masthead (compact magazine layout).
+                 Top utility row: just the breadcrumb (Library / Novel). The
+                 sticky .chapter-bar above already carries prev/next arrows;
+                 the end-of-chapter next-card carries forward navigation.
+                 Hero row: eyebrow "Chapter [N] / [Total]" paired with the H1
+                 + Han subtitle so the index is never orphaned. Jade progress
+                 underline anchored to the bottom. -->
+            <header class="chapter-masthead" id="chapter-masthead">
+              <div class="masthead-utility">
+                <nav class="masthead-crumbs" aria-label="Chapter breadcrumb">
+                  <a href="/library" class="crumb">Library</a>
+                  <span class="crumb-sep" aria-hidden="true">/</span>
+                  <a id="crumb-novel" class="crumb crumb-novel" href="#"></a>
+                </nav>
+              </div>
+              <div class="masthead-hero">
+                <div class="masthead-eyebrow">
+                  <span class="ch-tag">Chapter</span>
+                  <span class="masthead-index" id="masthead-index" aria-label="Chapter">
+                    <b class="n" id="masthead-index-n">…</b>
+                    <span class="slash" aria-hidden="true">/</span>
+                    <span class="tot" id="masthead-index-tot">…</span>
+                  </span>
+                </div>
+                <h1 class="ch-title-en-h1" id="ch-h1-en"></h1>
+                <div class="ch-title-zh-sub" id="ch-h1-zh-sub" lang="zh"></div>
+              </div>
+              <div class="masthead-progress" id="masthead-progress"
+                   role="progressbar" aria-valuemin="1" aria-valuenow="1" aria-valuemax="1">
+                <div class="bar" id="masthead-progress-bar"></div>
+              </div>
+            </header>
+            <!-- One-time hint shown the first time the user enters Edit mode.
+                 Sticks via localStorage.editModeHintSeen='1' once dismissed,
+                 so returning users don't see it on every load. Visibility is
+                 managed purely via the [hidden] attribute from reader.js
+                 (no .edit-only class — that uses `display: revert` which
+                 would clobber our flex layout in edit mode). -->
+            <div class="edit-mode-hint" id="edit-mode-hint" hidden>
+              <span class="hint-icon" aria-hidden="true">＋</span>
+              <span class="hint-text">In Edit mode: <strong>select any phrase</strong> in either pane → an <strong>Add to glossary</strong> toolbar appears. Use <em>Edit paragraphs</em> only when you want to rewrite prose for style learning.</span>
+              <button type="button" class="hint-dismiss" id="edit-mode-hint-dismiss" aria-label="Dismiss hint">×</button>
+            </div>
+            <div class="body" id="body-en"></div>
+
+            <div id="end-block" class="hidden">
+            <div class="ornament"><span class="g">❖ ❖ ❖</span></div>
+
+            <div class="end-actions">
+              <div class="row">
+                <span class="muted" id="end-stat">End of chapter</span>
+                <span class="spacer"></span>
+                <button class="icon-btn bare" id="reread">↺ Reread</button>
+              </div>
+              <div class="next-card" id="next-card">
+                <div>
+                  <div class="label">Next chapter</div>
+                  <div class="ti" id="next-title">…</div>
+                </div>
+                <span class="spacer"></span>
+                <span class="muted" id="next-status"></span>
+                <button class="btn-primary" id="next-go">Read →</button>
+              </div>
+            </div>
+            </div><!-- /#end-block -->
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="reading-rail" id="reading-rail">
+    <span class="dot"></span>
+    <span id="read-pct">0%</span>
+    <span class="muted">·</span>
+    <span id="read-eta"></span>
+  </div>
+
+  <button type="button" class="shortcuts-btn" id="shortcuts-btn" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">?</button>
+  <button type="button" class="shortcuts-btn type-settings-btn" id="type-settings-btn" title="Reading type size" aria-label="Reading type size">Aa</button>
+
+  <dialog id="type-settings-dialog" class="dialog" aria-labelledby="type-settings-title">
+    <h3 id="type-settings-title">Reading type</h3>
+    <div class="type-settings-grid">
+      <label for="fs-body-slider">Font size <span id="fs-body-readout" class="muted"></span></label>
+      <input id="fs-body-slider" type="range" min="13" max="24" step="1">
+      <label for="fs-lh-slider">Line height <span id="fs-lh-readout" class="muted"></span></label>
+      <input id="fs-lh-slider" type="range" min="1.3" max="2.1" step="0.05">
+      <label for="focus-mode-toggle" class="focus-mode-row">
+        <span>Focus mode</span>
+        <span class="focus-mode-hint muted">Hide utility buttons &amp; breadcrumbs while reading</span>
+      </label>
+      <input id="focus-mode-toggle" type="checkbox">
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="type-settings-reset">Reset</button>
+      <button type="button" class="btn-primary" id="type-settings-close">Done</button>
+    </div>
+  </dialog>
+
+  <dialog id="glossary-mini-dialog" class="dialog glossary-mini-dialog" aria-label="Glossary entry"></dialog>
+
+  <!-- QA panel (Initiative 1). One <dialog> for all observation kinds — the
+       deterministic detect_* hits the queue worker stored in
+       chapter_observations, plus the implicit translation_degraded and
+       glossary_merge_error rows. Dismissals are soft (POST .../dismiss)
+       and DON'T survive a chapter retranslate (the worker DELETEs all rows
+       for the chapter inside the success-commit transaction). -->
+  <!-- Bookmarks panel (Initiative 2). Lists every bookmark in this novel,
+       grouped by chapter, with delete per row and click-to-jump. -->
+  <dialog id="bookmarks-dialog" class="dialog bookmarks-dialog" aria-labelledby="bookmarks-dialog-title">
+    <h3 id="bookmarks-dialog-title">Bookmarks</h3>
+    <p class="bookmarks-intro muted">Click a bookmark to jump there. Delete removes it permanently.</p>
+    <div class="bookmarks-list" id="bookmarks-list" aria-live="polite">
+      <p class="muted">Loading…</p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="bookmarks-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Add-bookmark dialog. Opened by the ☆ button; collects an optional
+       note + the paragraph index near the current scroll position. -->
+  <dialog id="bookmark-add-dialog" class="dialog" aria-labelledby="bookmark-add-title">
+    <h3 id="bookmark-add-title">Add bookmark</h3>
+    <p class="muted" id="bookmark-add-context">…</p>
+    <label for="bookmark-add-note">Note (optional)</label>
+    <textarea id="bookmark-add-note" rows="3" maxlength="2000" placeholder="e.g. 'cool fight scene', 'foreshadowing about the elder'"></textarea>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="bookmark-add-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="bookmark-add-save">Save bookmark</button>
+    </div>
+  </dialog>
+
+  <!-- Concordance panel (Initiative 5). Opens from the floating
+       "Concordance" button that appears next to a text selection. Lists
+       every TM-indexed paragraph in this novel that contains the selected
+       phrase, source or target side, with click-to-jump. -->
+  <dialog id="concordance-dialog" class="dialog concordance-dialog" aria-labelledby="concordance-dialog-title">
+    <h3 id="concordance-dialog-title">Concordance</h3>
+    <p class="muted" style="font-size:.85em;margin:.2rem 0 .8rem;">
+      Every TM-indexed paragraph in this novel matching the selected phrase.
+      Click a hit to jump there.
+    </p>
+    <div class="concordance-query" id="concordance-query" style="font-size:.9em;margin-bottom:.5rem;"></div>
+    <div class="concordance-list" id="concordance-list" aria-live="polite">
+      <p class="muted">Loading…</p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="concordance-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- The standalone concordance-trigger was retired in the wireframes
+       redesign; concordance is now an action inside the unified .sel-pop
+       contextual toolbar (see showPopoverForSelection in reader.js). -->
+  <button type="button" id="concordance-trigger" hidden aria-hidden="true" style="display:none"></button>
+
+  <dialog id="observations-dialog" class="dialog observations-dialog" aria-labelledby="observations-dialog-title">
+    <h3 id="observations-dialog-title">Translation issues</h3>
+    <p class="observations-intro muted">Things the post-translation observers noticed. Logged for your review; no automatic re-translation.</p>
+    <div class="observations-list" id="observations-list" aria-live="polite">
+      <p class="muted">Loading…</p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="observations-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="shortcuts-dialog" class="dialog" aria-labelledby="shortcuts-dialog-title">
+    <h3 id="shortcuts-dialog-title">Keyboard shortcuts</h3>
+    <div class="shortcuts-grid">
+      <div class="key-cell"><span class="kbd">←</span> <span class="kbd">h</span> <span class="kbd">k</span></div><div>Previous chapter</div>
+      <div class="key-cell"><span class="kbd">→</span> <span class="kbd">l</span> <span class="kbd">j</span></div><div>Next chapter</div>
+      <div class="key-cell"><span class="kbd">b</span></div><div>Toggle bilingual view</div>
+      <div class="key-cell"><span class="kbd">g</span></div><div>Open glossary</div>
+      <div class="key-cell"><span class="kbd">/</span></div><div>Focus chapter search</div>
+      <div class="key-cell"><span class="kbd">?</span></div><div>Show this help</div>
+      <div class="key-cell"><span class="kbd">Esc</span></div><div>Close dialogs / clear selection</div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="shortcuts-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Generic confirm dialog (mirror of library.html's confirm-dialog) so the
+       reader's "Clear queue" prompt can use the same focus-trapped <dialog>
+       UX as everything else, instead of the native confirm() which is
+       throttled by some browsers and doesn't pick up theme styling. -->
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+    <h3 id="confirm-dialog-title">Confirm</h3>
+    <div id="confirm-dialog-body"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+      <button type="button" class="btn-primary" data-act="ok">Confirm</button>
+    </div>
+  </dialog>
+
+  <!-- Per-novel style note dialog. The brief gets injected into every
+       chapter-translation prompt as a voice anchor; the translator reads it
+       as a voice instruction. Hand-edited via this dialog (PATCH /api/novels/{id}). -->
+  <dialog id="style-note-dialog" class="dialog" aria-labelledby="style-note-title">
+    <h3 id="style-note-title">Per-novel style note</h3>
+    <p style="font-size:.9em;color:var(--muted);margin:.4rem 0 .6rem">
+      A voice brief injected into every chapter-translation prompt for this novel. The translator reads it as a voice instruction. (For genre-level guidance, edit the novel's <em>custom style brief</em> in Library → Settings instead.)
+    </p>
+    <textarea id="style-note-text" rows="14" style="width:100%;font-family:var(--font-family-serif,serif);font-size:14px;padding:.6rem;box-sizing:border-box;" placeholder="(no style note yet · write one here to anchor the translator's voice)"></textarea>
+    <div id="style-note-status" style="font-size:.85em;color:var(--muted);margin-top:.4rem;min-height:1.2em;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="style-note-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="style-note-save">Save</button>
+    </div>
+  </dialog>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<!-- utils.js is shared across pages. Deferred so the document-order rule
+     puts it ahead of reader.js (also deferred) without a defer/non-defer
+     race with the deferred CDN marked / DOMPurify tags. -->
+<script src="/static/js/utils.js" defer></script>
+<!--
+  `defer` keeps reader.js in document order behind the deferred marked /
+  DOMPurify CDN tags at the top of <head>. Without it, reader.js's boot
+  IIFE ran before those globals existed and renderEnglishMarkdownWithTerms
+  fell back to escaped paragraphs on the first chapter view.
+-->
+<!-- F22 (2026-05-25): translation attempts + last-prompt diagnostic
+     dialogs. Edit-mode-only via the util-menu items. -->
+<dialog id="last-prompt-dialog" class="dialog edit-only" aria-labelledby="last-prompt-title">
+  <h3 id="last-prompt-title">Last prompt sent to the LLM</h3>
+  <p class="muted" style="margin: 4px 0 8px; font-size: 12px;">The actual user prompt the translator received for this chapter. Useful for diagnosing mistranslations against the context that produced them.</p>
+  <pre id="last-prompt-body" style="max-height: 60vh; overflow:auto; background: var(--bg-tint); padding: 10px; border-radius: 4px; font-size: 12px; white-space: pre-wrap;"></pre>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Close</button>
+    <button type="button" class="btn-ghost" id="last-prompt-copy">Copy</button>
+  </div>
+</dialog>
+
+<dialog id="attempts-dialog" class="dialog edit-only" aria-labelledby="attempts-title">
+  <h3 id="attempts-title">Translation attempts</h3>
+  <p class="muted" style="margin: 4px 0 8px; font-size: 12px;">Recent translation runs for this chapter. Parse errors and retry counts surface here.</p>
+  <div id="attempts-body" style="max-height: 60vh; overflow:auto;"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Close</button>
+  </div>
+</dialog>
+
+<script src="/static/js/reader.js" defer></script>
+</body>
+</html>

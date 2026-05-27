@@ -1,0 +1,237 @@
+/* Design v2 Phase E2 — Queue Stack page.
+ *
+ * Three-column kanban: Now translating · Up next · Recent. Reuses the
+ * shared chrome + tokens from base.css. Column widths bias towards the
+ * Now and Recent columns since the queued list is usually shortest.
+ */
+
+.queue-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.qs-col {
+  background: var(--pane-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl, 8px);
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+}
+.qs-col-head {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-soft);
+}
+.qs-col-eyebrow {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.qs-col-count {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-tint);
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-variant-numeric: tabular-nums;
+}
+.qs-col-body {
+  padding: 10px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qs-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-style: italic;
+  font-size: 13px;
+}
+
+/* ----- Now translating: the centerpiece card ----- */
+.qs-active-card {
+  background: var(--pane-hi);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 14px;
+  align-items: flex-start;
+  position: relative;
+  overflow: hidden;
+}
+.qs-active-card::before {
+  /* Subtle accent wash so the card reads as "current" without shouting */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 6%, transparent) 0%, transparent 60%);
+  pointer-events: none;
+}
+.qs-motif {
+  width: 44px; height: 56px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font-family-han);
+  font-size: 26px; font-weight: 600;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  box-shadow: var(--shadow-seal);
+}
+.qs-active-body { min-width: 0; }
+.qs-active-eyebrow {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.qs-active-title {
+  font-family: var(--font-family-display);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.25;
+  margin: 4px 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qs-stage-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.qs-stage {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-tint);
+}
+.qs-stage.done   { background: var(--accent); }
+.qs-stage.active {
+  background: var(--cinnabar, #c8423a);
+  animation: qs-pulse 1.6s ease-in-out infinite;
+}
+@keyframes qs-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.qs-active-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--muted);
+}
+.qs-pulse {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--cinnabar, #c8423a);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cinnabar, #c8423a) 25%, transparent);
+  animation: qs-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.qs-link {
+  margin-left: auto;
+  color: var(--accent-deep, var(--accent));
+  text-decoration: none;
+  font-size: 11.5px;
+  border-bottom: 1px dotted currentColor;
+}
+
+/* ----- Queued / Recent rows ----- */
+.qs-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--pane);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  transition: border-color 120ms var(--ease);
+}
+.qs-row:hover { border-color: var(--border); }
+.qs-row.is-error { background: color-mix(in srgb, var(--signal-error, #7a3030) 5%, var(--pane)); }
+.qs-row-motif {
+  width: 32px; height: 40px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-tint));
+  color: var(--accent-deep, var(--accent));
+  font-family: var(--font-family-han);
+  font-size: 18px; font-weight: 600;
+  display: grid; place-items: center;
+  border-radius: 3px;
+}
+.qs-row-body { min-width: 0; }
+.qs-row-title {
+  font-family: var(--font-family-display);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qs-row-sub {
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qs-row-error {
+  margin-top: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--signal-error, #7a3030);
+  background: color-mix(in srgb, var(--signal-error, #7a3030) 8%, transparent);
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qs-status {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-weight: 600;
+}
+.qs-status.is-ok  { background: color-mix(in srgb, var(--signal-ok, #3f7a64) 14%, transparent); color: var(--signal-ok, #3f7a64); }
+.qs-status.is-err { background: color-mix(in srgb, var(--signal-error, #7a3030) 12%, transparent); color: var(--signal-error, #7a3030); }
+.qs-when { font-variant-numeric: tabular-nums; }
+.qs-row-actions {
+  display: flex;
+  gap: 4px;
+}
+.qs-row-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.qs-row-btn:hover { color: var(--fg); background: var(--bg-tint); }
+
+@media (max-width: 1100px) {
+  .queue-stack { grid-template-columns: 1fr; }
+}

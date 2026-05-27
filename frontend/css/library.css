@@ -1,0 +1,1297 @@
+/* Library page — shelf, novel cards, queue badges. Loaded by library.html
+ * alongside base.css. */
+
+/* ===== Library masthead inventory ledger =====
+ * 4-cell horizontal row replacing the italic "X novels · Y translating ·
+ * Z translated chapters" footnote. Each cell pairs a display-face numeral
+ * with a quiet sans label so the page reports its inventory the moment
+ * you land. The cells stay on one row at desktop widths; on narrow viewports
+ * they wrap and the separators sit between rows. */
+.inventory {
+  display: flex; flex-wrap: wrap; align-items: stretch;
+  margin-top: 14px;
+  font-family: var(--font-family-sans);
+  max-width: 56ch;
+}
+.inv-cell {
+  padding: 6px 20px 4px 0;
+  border-right: 1px solid var(--border-soft);
+}
+.inv-cell + .inv-cell { padding-left: 20px; }
+.inv-cell:last-child { border-right: none; }
+.inv-cell .v {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 26px; line-height: 1; letter-spacing: -0.01em;
+  color: var(--ink, var(--fg));
+  display: flex; align-items: baseline; gap: 4px;
+}
+.inv-cell .v .han {
+  font-family: var(--font-family-han);
+  font-size: 14px; font-weight: 700;
+  color: var(--cinnabar, var(--accent));
+  margin-left: 2px;
+}
+.inv-cell .v small {
+  font-family: var(--font-family-serif);
+  font-style: italic; font-weight: 400;
+  font-size: 13px; color: var(--muted);
+  margin-left: 4px;
+}
+.inv-cell .lbl {
+  font-size: 10px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Per-chip count — small mono numeral inside the chip, dimmed when the
+ * chip isn't selected so the label still reads as the primary content. */
+.tag-chip .chip-count {
+  font-family: var(--font-family-mono, var(--font-family-sans));
+  font-size: 10.5px;
+  margin-left: 4px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.tag-chip.on .chip-count { opacity: 0.85; }
+
+
+/* ===== Library — continue-reading hero strip =====
+ * Single rich hero card showing the most-recently-read novel — cover on
+ * the left, eyebrow/title/excerpt/resume on the right, a cinnabar accent
+ * strip on the far right edge marking it as "the one you were in". The
+ * older two-column layout (hero + compact column) is gone. */
+.continue-strip {
+  display: block;
+  margin: 0 0 36px;
+}
+
+/* Hero card layout — cover (140px) + body column, with cinnabar edge */
+.continue-card.hero {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 28px;
+  padding: 24px 28px 22px;
+  align-items: center;
+  position: relative;
+}
+.continue-card.hero::before {
+  /* Cinnabar accent strip down the far-right edge — the single visual
+   * anchor that says "this is the one you were in". */
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; right: 0; width: 4px;
+  background: linear-gradient(180deg, var(--cinnabar) 0%, var(--cinnabar-deep) 100%);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+}
+.continue-card.hero .hero-cover {
+  width: 140px; height: 200px;
+  border-radius: 3px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.18), 2px 4px 14px rgba(0,0,0,0.22);
+  position: relative;
+  overflow: hidden;
+}
+.continue-card.hero .hero-cover-art {
+  background-size: cover;
+  background-position: center;
+  background-color: var(--paper-deep);
+}
+.continue-card.hero .hero-cover-gen {
+  display: grid; place-items: center;
+}
+.continue-card.hero .hero-cover-gen .han {
+  font-family: var(--font-family-han);
+  font-weight: 600;
+  font-size: 56px;
+  color: rgba(255,255,255,0.94);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.continue-card.hero .hero-body {
+  min-width: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.continue-card.hero .continue-title {
+  font-size: 1.8em;
+  line-height: 1.08;
+  -webkit-line-clamp: 2;
+  margin: 0;
+}
+.continue-card.hero .last-line {
+  font-style: italic;
+  font-size: 15px;
+  color: rgba(243,234,216,0.86);
+  line-height: 1.5;
+  padding-left: 14px;
+  border-left: 2px solid var(--accent-soft);
+  margin: 4px 0 2px;
+  max-width: 58ch;
+}
+.continue-card.hero .last-line::before {
+  content: "“";
+  font-family: var(--font-family-display);
+  font-size: 20px;
+  color: var(--accent-soft);
+  margin-right: 2px;
+}
+.continue-card.hero .last-line::after {
+  content: "”";
+  font-family: var(--font-family-display);
+  font-size: 20px;
+  color: var(--accent-soft);
+  margin-left: 1px;
+}
+.continue-card.hero .continue-actions {
+  margin-top: 6px;
+}
+
+@media (max-width: 720px) {
+  .continue-card.hero {
+    grid-template-columns: 96px 1fr;
+    gap: 18px;
+    padding: 18px 20px 16px;
+  }
+  .continue-card.hero .hero-cover { width: 96px; height: 144px; }
+  .continue-card.hero .hero-cover-gen .han { font-size: 40px; }
+  .continue-card.hero .continue-title { font-size: 1.4em; }
+}
+
+.continue-card {
+  position: relative;
+  background: var(--pane-bg);
+  border-radius: var(--r-lg);
+  padding: 22px 22px 18px;
+  display: flex; flex-direction: column; gap: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+.continue-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
+/* L1: the hero card used a fixed dark gradient (#0f1114 → #232830), which
+   read as the inkstone theme jammed onto any of the three light themes.
+   var(--spine) / var(--spine-fg) is the page's dark anchor in every theme;
+   reusing it keeps the hero distinct without breaking rice / vellum /
+   celadon contrast. Single tone, not diagonal — the gradient was noise. */
+.continue-card.primary {
+  background: var(--spine);
+  color: var(--spine-fg);
+}
+.continue-eyebrow {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-weight: 600;
+  opacity: 0.55;
+}
+.continue-card.primary .continue-eyebrow { color: var(--accent-soft); opacity: 1; }
+.continue-title {
+  font-family: var(--font-family-display);
+  font-size: 1.5em;
+  line-height: 1.2;
+  margin: 0;
+  position: relative;
+  z-index: 1;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.continue-card.primary .continue-title {
+  font-size: 1.7em;
+  -webkit-line-clamp: 3;
+}
+.continue-meta {
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex; gap: 14px; flex-wrap: wrap;
+  position: relative; z-index: 1;
+}
+.continue-card.primary .continue-meta { color: color-mix(in srgb, var(--spine-fg) 70%, transparent); }
+.continue-meta span { display: inline-flex; align-items: center; }
+.continue-meta span + span::before { content: "·"; margin-right: 14px; opacity: 0.6; }
+.mini-prog {
+  height: 5px;
+  background: color-mix(in srgb, var(--border) 65%, var(--fg) 25%);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative; z-index: 1;
+}
+.continue-card.primary .mini-prog { background: color-mix(in srgb, var(--spine-fg) 18%, transparent); }
+.mini-prog .fill { height: 100%; background: var(--accent); transition: width 200ms var(--ease); }
+.continue-card.primary .mini-prog .fill { background: var(--accent-soft); }
+.continue-actions {
+  display: flex; align-items: center; gap: 10px;
+  position: relative; z-index: 1;
+  margin-top: auto;
+}
+
+.btn-resume {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  padding: 8px 18px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.continue-card.primary .btn-resume { background: var(--accent-soft); color: var(--spine); }
+.btn-resume:hover { filter: brightness(1.05); }
+.last-line {
+  font-family: var(--font-family-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.5;
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+  margin: 0;
+  position: relative; z-index: 1;
+}
+.continue-card.primary .last-line {
+  color: rgba(243,234,216,0.85);
+  border-color: var(--accent-soft);
+}
+
+/* Continue-reading empty state */
+.continue-empty {
+  background: var(--pane-bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+  padding: 28px 24px;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  grid-column: 1 / -1;
+}
+
+/* ===== Library toolbar ===== */
+.lib-toolbar {
+  display: flex; align-items: center; gap: 14px;
+  margin: 0 0 18px;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.lib-search input {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--pane-bg);
+  color: var(--fg);
+  min-width: 180px;
+}
+.lib-search input:focus {
+  outline: none;
+  border-color: var(--accent, var(--fg));
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.seg button {
+  background: transparent;
+  border: none;
+  padding: 6px 12px;
+  font: inherit;
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.seg button.on { background: var(--accent); color: var(--accent-fg); }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag-chip {
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.tag-chip:hover { color: var(--fg); }
+.tag-chip.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+/* ===== Library — cover-forward cards (wireframes redesign) =====
+ * Horizontal card: 116px cover on the left, meta column on the right.
+ * Status moves to a thin top-edge ribbon (no more corner seal that
+ * covers the title). All cards share a fixed min-height so a row with
+ * mixed cover / no-cover novels reads as one rhythm. */
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 22px;
+}
+.book-card {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 3px 7px 4px 8px / 5px 4px 7px 4px;
+  position: relative;
+  cursor: pointer;
+  transition: transform 160ms var(--ease), box-shadow 160ms var(--ease);
+  display: flex; flex-direction: column;
+  min-height: 240px;
+  padding: 14px;
+}
+.book-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
+/* Status ribbon — top edge of the card, inset from the corners so the
+ * border still reads. The single-class color modifier is set in JS. */
+.book-card .status-ribbon {
+  position: absolute; left: 14px; right: 14px; top: -1px;
+  height: 3px;
+  border-radius: 1px;
+}
+.book-card .status-ribbon.translating { background: var(--cinnabar); }
+.book-card .status-ribbon.reading     { background: var(--jade); }
+.book-card .status-ribbon.finished    { background: var(--ink); }
+.book-card .status-ribbon.pending     { background: var(--border); }
+
+.book-card .card-body {
+  display: flex; gap: 14px; align-items: stretch; flex: 1;
+}
+
+/* Cover area — uploaded image. Two binding stitches on the left edge
+ * carry the thread-bound DNA from the wireframe. */
+.book-card .cover-art,
+.book-card .cover-fallback {
+  position: relative;
+  width: 116px; flex-shrink: 0;
+  aspect-ratio: 2 / 3;
+  border: 1px solid var(--ink);
+  border-radius: 2px 4px 3px 2px;
+  overflow: hidden;
+  background-color: var(--paper-deep);
+}
+.book-card .cover-art {
+  background-size: cover;
+  background-position: center;
+}
+.book-card .cover-art::after {
+  /* Subtle weave overlay so placeholder/blank covers still read as
+   * "an image", not a flat color. */
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(135deg,
+    rgba(255,255,255,0.04) 0 6px,
+    rgba(0,0,0,0.04) 6px 7px);
+}
+.book-card .stitch {
+  position: absolute; left: -4px;
+  width: 4px; height: 8px;
+  background: var(--ink);
+  border-radius: 1px;
+}
+.book-card .stitch.top { top: 22px; }
+.book-card .stitch.bot { bottom: 22px; }
+
+/* Source pip — sits in the bottom-left of the cover, names the
+ * ingestion path. Only shown when cover_source is non-null. */
+.book-card .cover-pip {
+  position: absolute; left: 5px; bottom: 5px;
+  font-family: var(--font-family-sans);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #f4ecd6;
+  background: rgba(0, 0, 0, 0.42);
+  padding: 1px 6px;
+  border-radius: 2px;
+  z-index: 1;
+}
+
+/* Generated cover palettes — hash-tinted gradient backdrops used wherever
+ * a novel lacks a real cover (book cards, hero continue card, sample
+ * shelf). Three palettes rotate by `n.id % 3` so the shelf reads with
+ * rhythm rather than a wall of identical fallbacks. Palettes are
+ * unscoped so the same `.cover-gen.{jade|indigo|ochre}` selector can be
+ * dropped on any element. */
+.cover-gen.jade   { background: linear-gradient(160deg, #2f6a5e 0%, #1d4a40 100%); }
+.cover-gen.indigo { background: linear-gradient(160deg, #2a3a50 0%, #14202c 100%); }
+.cover-gen.ochre  { background: linear-gradient(160deg, #8a6a2a 0%, #4f3a16 100%); }
+
+.book-card .cover-gen {
+  position: relative;
+  display: grid; place-items: center;
+  width: 116px; flex-shrink: 0;
+  aspect-ratio: 2 / 3;
+  border: 1px solid var(--ink);
+  border-radius: 2px 4px 3px 2px;
+  overflow: hidden;
+}
+.book-card .cover-gen::before {
+  /* Subtle weave/highlight overlay so the gradient doesn't read as flat. */
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.16), transparent 60%),
+    repeating-linear-gradient(135deg, rgba(0,0,0,0.05) 0 2px, transparent 2px 6px);
+  pointer-events: none;
+}
+.book-card .cover-gen .han-glyph {
+  font-family: var(--font-family-han);
+  font-weight: 600;
+  font-size: 44px;
+  color: rgba(255,255,255,0.94);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  line-height: 1;
+  position: relative;
+  z-index: 1;
+}
+
+/* Hero card's generated cover uses the same overlay. */
+.continue-card.hero .hero-cover-gen::before {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.16), transparent 60%),
+    repeating-linear-gradient(135deg, rgba(0,0,0,0.05) 0 2px, transparent 2px 6px);
+  pointer-events: none;
+}
+.continue-card.hero .hero-cover-gen .han { position: relative; z-index: 1; }
+
+/* Meta column — title, author, status, chapters, progress thread, CTA. */
+.book-card .meta {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  padding-top: 2px;
+}
+.book-card .meta-title {
+  font-family: var(--font-family-display);
+  font-size: 16px; font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.book-card .meta-han {
+  font-family: var(--font-family-han);
+  font-size: 13px; font-weight: 500;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.book-card .meta-author {
+  font-family: var(--font-family-serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.book-card .meta-rule {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 8px 0 6px;
+}
+.book-card .meta-status {
+  display: flex; align-items: center; gap: 8px;
+}
+.book-card .meta-status .status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+}
+.book-card .meta-status .status-dot.translating {
+  background: var(--cinnabar);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cinnabar) 22%, transparent);
+}
+.book-card .meta-status .status-dot.reading  { background: var(--jade); }
+.book-card .meta-status .status-dot.finished { background: var(--ink); }
+.book-card .meta-status .status-dot.pending  { background: var(--border); }
+.book-card .meta-status .status-label {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.book-card .meta-chapters {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+.book-card .meta-progress {
+  position: relative;
+  height: 6px;
+  margin-top: 8px;
+}
+.book-card .meta-progress .thread-dash {
+  position: absolute; inset: 0;
+  border-bottom: 1px dashed var(--border);
+}
+.book-card .meta-progress .thread-fill {
+  position: absolute; left: 0; top: 2px;
+  height: 2px;
+  transition: width 200ms var(--ease);
+}
+.book-card .meta-progress .thread-fill.translating { background: var(--cinnabar); }
+.book-card .meta-progress .thread-fill.reading     { background: var(--jade); }
+.book-card .meta-progress .thread-fill.finished    { background: var(--ink); }
+.book-card .meta-progress .thread-fill.pending     { background: var(--muted); }
+.book-card .meta-queue,
+.book-card .meta-observations {
+  margin-top: 6px;
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+/* 2026-05-26 resumable-import badge. Surfaces in-progress + paused
+   imports so a 60-minute scrape isn't indistinguishable from a stalled
+   novel. Two visual modes share the same .meta-import row. */
+.book-card .meta-import {
+  margin-top: 6px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.book-card .meta-import .ind-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.book-card .meta-import.is-fetching .ind-dot {
+  background: var(--jade, #2f6a5e);
+  box-shadow: 0 0 0 0 rgba(47, 106, 94, 0.45);
+  animation: lnimport-pulse 1.6s ease-out infinite;
+}
+.book-card .meta-import.is-paused .ind-dot {
+  background: var(--cinnabar, #c8423a);
+}
+.book-card .meta-import .ind-label { flex: 1; min-width: 0; }
+.book-card .meta-import .ind-label strong { color: var(--ink); }
+.book-card .meta-import .ind-btn {
+  font: inherit;
+  padding: 2px 8px;
+  border: 1px solid var(--rule, var(--border));
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.book-card .meta-import .ind-btn:hover { background: var(--bg-tint, #eee); }
+.book-card .meta-import .ind-btn.primary {
+  background: var(--accent, var(--jade));
+  border-color: var(--accent, var(--jade));
+  color: var(--paper);
+}
+.book-card .meta-import .ind-btn[disabled] {
+  opacity: 0.55; cursor: not-allowed;
+}
+@keyframes lnimport-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(47, 106, 94, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(47, 106, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 106, 94, 0); }
+}
+.book-card .meta-spacer { flex: 1; }
+.book-card .meta-cta {
+  align-self: flex-end;
+  margin-top: 4px;
+  font-family: var(--font-family-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.book-card:hover .meta-cta { color: var(--ink); }
+/* Initiative 2 — novel settings dialog cover preview. */
+.ns-cover-row {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.ns-cover-preview {
+  width: 90px;
+  height: 135px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  background-size: cover;
+  background-position: center;
+  background-color: var(--bg-tint);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  font-size: 22px;
+  overflow: hidden;
+}
+.ns-cover-actions { display: flex; flex-direction: column; gap: 6px; }
+
+/* Initiative 2 — series group heading in covers view. Now nested inside
+ * the new shelf-group state buckets, so the spacing is tightened. */
+.series-group-head {
+  grid-column: 1 / -1;
+  font-family: var(--font-family-display, var(--font-family-serif));
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 6px;
+}
+.series-group-head:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+/* When a series heading immediately follows a shelf-group state header,
+ * suppress its border + top margin so the two headers don't double up. */
+.shelf-group + .series-group-head { border-top: none; padding-top: 0; margin-top: 0; }
+
+/* State-group header — outer bucket label for Reading / Finished, used
+ * only on the "All" tab. Spans the full grid width so it sits flush
+ * across the shelf. */
+.shelf-group {
+  grid-column: 1 / -1;
+  display: flex; align-items: baseline; gap: 14px;
+  margin: 22px 0 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.shelf-group:first-child { margin-top: 6px; }
+.shelf-group .han {
+  font-family: var(--font-family-han);
+  color: var(--cinnabar);
+  font-size: 18px;
+  font-weight: 700;
+}
+.shelf-group .t {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 18px;
+  letter-spacing: -0.005em;
+  color: var(--ink, var(--fg));
+}
+.shelf-group .c {
+  font-family: var(--font-family-mono, var(--font-family-sans));
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* QA observations badge (Initiative 1) — shared across views. */
+.obs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn-fg, #b56a16);
+  background: var(--warn-tint, rgba(181, 106, 22, 0.12));
+  padding: 1px 7px;
+  border-radius: var(--r-pill, 999px);
+  font-family: var(--font-family-sans);
+}
+.badge-mini {
+  background: var(--term-bg); color: var(--term-fg);
+  padding: 1px 7px; border-radius: var(--r-pill); font-weight: 500;
+  font-family: var(--font-family-sans); font-size: 11.5px;
+}
+.badge-mini.warn { background: var(--signal-stale-bg); color: var(--signal-stale-fg); }
+.badge-mini.processing { background: var(--accent-soft); color: var(--accent-fg); }
+.badge-mini.done { background: var(--accent); color: var(--accent-fg); }
+.badge-mini.shelved { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.badge-mini.queue { background: var(--accent-soft); color: var(--accent-fg); }
+
+.book-actions {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-soft);
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+}
+.book-actions .row-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: 11px;
+}
+.book-actions .row-btn:hover { color: var(--fg); background: var(--bg-tint); }
+.book-actions .row-btn.danger:hover { color: var(--signal-error); border-color: var(--signal-error); }
+.book-actions .row-btn.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.book-actions .row-btn.primary:hover { background: var(--accent); filter: brightness(1.05); color: var(--accent-fg); }
+
+/* Cover gradients: a mix of cool ink-wash and warm cinnabar/gold/plum so
+ * the shelf has rhythm rather than reading as eight monochrome slate panels. */
+.cover-c1 { background: linear-gradient(160deg, #0f1417 0%, #2a3540 100%); }
+.cover-c2 { background: linear-gradient(160deg, #1d3a34 0%, #2f6a5e 100%); }
+.cover-c3 { background: linear-gradient(160deg, #2a1414 0%, #6e2a28 100%); } /* cinnabar */
+.cover-c4 { background: linear-gradient(160deg, #232830 0%, #3d4654 100%); }
+.cover-c5 { background: linear-gradient(160deg, #1f1810 0%, #5a4520 100%); } /* aged gold */
+.cover-c6 { background: linear-gradient(160deg, #14181a 0%, #2a2e33 100%); }
+.cover-c7 { background: linear-gradient(160deg, #2c1b22 0%, #5a3a4a 100%); } /* dusky plum */
+.cover-c8 { background: linear-gradient(160deg, #18241f 0%, #3a5a4f 100%); }
+
+/* ===== Library — onboarding empty state =====
+ * Replaces the old "No novels here. Import one." line. Two-column layout:
+ * left pane teaches the four import paths anchored by a ghost 藏 glyph;
+ * right pane shows a sample shelf so the user can see what populated will
+ * look like before they import. */
+.onboard {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  min-height: 540px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.onboard .left {
+  padding: 44px 44px 36px;
+  background: linear-gradient(180deg, var(--pane-bg) 0%, var(--bg) 100%);
+  position: relative;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.onboard .left::after {
+  /* Giant ghost 藏 glyph anchored to the bottom-left corner. Sits behind
+   * everything else; opacity tuned so it reads as paper texture, not chrome. */
+  content: "藏";
+  position: absolute;
+  bottom: -32px; left: -28px;
+  font-family: var(--font-family-han);
+  font-size: 320px;
+  color: var(--bg-deep, var(--border));
+  opacity: 0.42;
+  line-height: 1;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 0;
+}
+.onboard .left > * { position: relative; z-index: 1; }
+.onboard .left .eyebrow {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.24em; text-transform: uppercase;
+  color: var(--muted);
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.onboard .left .eyebrow .h {
+  font-family: var(--font-family-han);
+  font-size: 13px; color: var(--cinnabar); letter-spacing: 0;
+}
+.onboard .left h2 {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 42px; line-height: 1.06;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+  max-width: 14ch;
+}
+.onboard .left h2 em {
+  font-style: italic; color: var(--accent); font-weight: 400;
+}
+.onboard .left .onboard-sub {
+  font-family: var(--font-family-serif);
+  font-style: italic;
+  color: var(--muted);
+  font-size: 15px; line-height: 1.55;
+  max-width: 38ch; margin: 0 0 22px;
+}
+
+.import-paths {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  max-width: 440px;
+}
+.import-paths .path {
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  align-items: center;
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+.import-paths .path:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+.import-paths .path .han {
+  font-family: var(--font-family-han);
+  font-weight: 700; font-size: 14px;
+  color: var(--cinnabar);
+  background: color-mix(in srgb, var(--cinnabar) 12%, transparent);
+  width: 28px; height: 28px;
+  border-radius: 3px;
+  display: grid; place-items: center;
+}
+.import-paths .path .han.jade {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.import-paths .path .ti {
+  font-family: var(--font-family-display);
+  font-size: 14px; font-weight: 500;
+  color: var(--fg);
+  letter-spacing: -0.005em;
+}
+.import-paths .path .sub {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  margin-top: 1px;
+}
+
+.onboard .or-row {
+  font-family: var(--font-family-sans);
+  font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--muted);
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px 0 10px;
+  max-width: 440px;
+}
+.onboard .or-row::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
+}
+
+/* Right pane — sample shelf */
+.onboard .right {
+  background: var(--bg-tint, var(--bg));
+  padding: 32px 36px;
+}
+.onboard .right .lbl {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--muted);
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.onboard .right .lbl .h {
+  font-family: var(--font-family-han);
+  color: var(--cinnabar); font-size: 13px; letter-spacing: 0;
+}
+.onboard .book-stack {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 12px;
+}
+.onboard .sample-book {
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0;
+}
+.onboard .sample-cover {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  border-radius: 2px;
+  border: 1px solid var(--ink);
+  display: grid; place-items: center;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.10), 2px 3px 8px rgba(0,0,0,0.10);
+  filter: saturate(0.9);
+}
+.onboard .sample-cover .han-glyph {
+  font-family: var(--font-family-han);
+  font-weight: 600;
+  font-size: 32px;
+  color: rgba(255,255,255,0.94);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  position: relative; z-index: 1;
+}
+.onboard .sample-cover::before {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.16), transparent 60%),
+    repeating-linear-gradient(135deg, rgba(0,0,0,0.05) 0 2px, transparent 2px 6px);
+}
+.onboard .sample-meta { min-width: 0; line-height: 1.2; }
+.onboard .sample-ti {
+  font-family: var(--font-family-display);
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.onboard .sample-zh {
+  font-family: var(--font-family-han);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.onboard .tip {
+  margin-top: 22px;
+  padding: 14px 16px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  font-family: var(--font-family-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--fg-soft, var(--fg));
+  position: relative;
+}
+.onboard .tip strong {
+  font-style: normal; color: var(--fg); font-weight: 600;
+}
+.onboard .tip::before {
+  content: "提";
+  position: absolute;
+  top: -10px; left: 14px;
+  font-family: var(--font-family-han);
+  font-weight: 700;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+@media (max-width: 900px) {
+  .onboard { grid-template-columns: 1fr; min-height: auto; }
+  .onboard .left { padding: 32px 28px 28px; }
+  .onboard .left::after { font-size: 220px; bottom: -16px; left: -16px; }
+  .onboard .left h2 { font-size: 32px; }
+  .onboard .right { padding: 24px 28px 28px; }
+}
+
+/* ===== Library — Spines view (bookshelf) ===== */
+.lib-spines {
+  display: flex; align-items: flex-end; gap: 6px;
+  padding: 30px 2px 20px;
+  border-bottom: 2px solid var(--fg);
+  position: relative;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.lib-spine-book {
+  position: relative;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: space-between;
+  width: 58px; min-width: 58px; height: var(--bh, 260px);
+  padding: 15px 4px 17px;
+  cursor: pointer;
+  transition: transform 240ms var(--ease), filter 240ms var(--ease);
+}
+.lib-spine-book:hover { transform: translateY(-10px); filter: brightness(1.08); }
+.lib-spine-book .spine-face {
+  position: absolute; inset: 0; border-radius: 2px;
+  background-image: linear-gradient(180deg, var(--c1, #2a3540) 0%, var(--c2, #1a2630) 100%);
+  box-shadow: 0 12px 22px -10px rgba(0,0,0,0.5);
+}
+.lib-spine-book .spine-face::after {
+  content: ""; position: absolute; inset: 0; border-radius: 2px;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,0.34) 0, transparent 6px,
+      transparent calc(100% - 6px), rgba(0,0,0,0.24) 100%),
+    linear-gradient(180deg, rgba(255,255,255,0.07), transparent 32%);
+}
+.lib-spine-book .seal-cap {
+  position: relative; z-index: 1;
+  width: 28px; height: 28px;
+  background: var(--c-accent, var(--accent)); color: #15110c;
+  font-family: var(--font-family-display); font-weight: 700; font-size: 14px;
+  display: grid; place-items: center;
+  border-radius: 2px; transform: rotate(-3deg);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.25);
+}
+.lib-spine-book .seal-cap .pulse-dot { position: absolute; top: -3px; right: -3px; }
+.lib-spine-book .spine-title {
+  position: relative; z-index: 1;
+  writing-mode: vertical-rl; text-orientation: upright;
+  font-family: var(--font-family-han); font-weight: 600;
+  font-size: 22px; letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.96);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  max-height: calc(100% - 96px);
+  overflow: hidden; white-space: nowrap;
+}
+.lib-spine-book .spine-num {
+  position: relative; z-index: 1;
+  writing-mode: vertical-rl;
+  font-family: var(--font-family-sans); font-size: 9px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+}
+.lib-spine-book .ring {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 8px; width: 30px; height: 4px;
+  border-radius: 2px; background: rgba(0,0,0,0.34);
+  z-index: 1; overflow: hidden;
+}
+.lib-spine-book .ring::after {
+  content: ""; position: absolute; inset: 0 auto 0 0;
+  width: var(--pct, 0%); background: var(--c-accent, var(--accent));
+}
+
+/* ===== Library — Ledger view (table) ===== */
+.lib-ledger { display: flex; flex-direction: column; }
+/* Design v2 Phase C — Workbench: 7 columns. Provider and Last-read are
+ * the new ones; the existing 5 (han / title / progress / status / actions)
+ * keep their relative weights. */
+.lib-ledger .lib-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.7fr) 150px auto;
+  gap: 16px; align-items: center;
+  padding: 14px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: background 120ms var(--ease);
+}
+.lib-ledger .lib-row:hover { background: var(--pane-bg); }
+/* Translating rows get a subtle accent wash so the eye finds active work
+ * in a long list. The pulse-dot stays as the redundant, color-blind-safe
+ * indicator. */
+.lib-ledger .lib-row.is-translating {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.lib-row .l-provider {
+  display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--font-family-sans); font-size: 12px;
+  min-width: 0; line-height: 1.3;
+}
+.lib-row .l-provider .prov-primary {
+  color: var(--fg-soft); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lib-row .l-provider .prov-refine {
+  color: var(--accent-deep, var(--accent)); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lib-row .l-provider .prov-default { font-style: italic; }
+.lib-row .l-last-read {
+  display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--font-family-sans); font-size: 12px;
+  min-width: 0; line-height: 1.3;
+}
+.lib-row .l-last-read .last-read-ch {
+  color: var(--fg-soft); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.lib-row .l-last-read .last-read-when { font-size: 10.5px; }
+.lib-ledger .lib-row.head {
+  cursor: default;
+  border-bottom: 1px solid var(--fg);
+  font-family: var(--font-family-sans); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
+  padding: 8px 6px;
+}
+.lib-ledger .lib-row.head:hover { background: transparent; }
+.lib-row .han {
+  font-family: var(--font-family-han); font-size: 24px; font-weight: 600;
+  color: var(--accent); text-align: center; line-height: 1;
+}
+.lib-row .l-title {
+  font-family: var(--font-family-display); font-size: 21px; font-weight: 500;
+  line-height: 1.2; min-width: 0;
+}
+.lib-row .l-title small {
+  display: block;
+  font-family: var(--font-family-sans); font-size: 11px;
+  color: var(--muted); margin-top: 3px;
+}
+.lib-row .pcell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.lib-row .pcell .num {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-family-sans); font-size: 11px; color: var(--muted);
+}
+.lib-row .pbar { height: 2px; background: var(--bg-tint); position: relative; }
+.lib-row .pbar .f { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.lib-row .l-status { display: flex; gap: 6px; flex-wrap: wrap; }
+.lib-row .l-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.lib-row .l-actions .row-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 4px 9px; border-radius: var(--r-md);
+  color: var(--muted); font-family: var(--font-family-sans); font-size: 11px;
+}
+.lib-row .l-actions .row-btn:hover { color: var(--fg); background: var(--bg-tint); }
+.lib-row .l-actions .row-btn.primary {
+  color: var(--accent-fg); background: var(--accent); border-color: var(--accent);
+}
+.lib-row .l-actions .row-btn.danger:hover { color: var(--signal-error); border-color: var(--signal-error); }
+@media (max-width: 900px) {
+  .lib-ledger .lib-row {
+    grid-template-columns: 36px 1fr auto;
+    row-gap: 8px;
+  }
+  .lib-ledger .lib-row .pcell,
+  .lib-ledger .lib-row .l-provider,
+  .lib-ledger .lib-row .l-last-read,
+  .lib-ledger .lib-row.head { grid-column: 1 / -1; }
+  .lib-row .l-status { grid-column: 2 / -1; }
+  /* On mobile the head row's column labels stop matching their cells once
+   * the grid collapses to 3 columns, so hide the header entirely; the row
+   * content stays self-describing. */
+  .lib-ledger .lib-row.head { display: none; }
+}
+
+/* ===== Library — last-synced indicator + toolbar error chip ===== */
+.last-sync {
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.toolbar-error {
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--signal-error) 18%, transparent);
+  color: var(--signal-error);
+}
+
+/* ===== Library — pulsing in-flight dot beside title ===== */
+.pulse-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  margin-left: 8px;
+  vertical-align: 2px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ===== Library — progress bars (Translation + optional Polish) ===== */
+.dual-progress {
+  display: flex; flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin: 4px 0 2px;
+}
+.dual-progress .row { display: flex; align-items: center; gap: 6px; }
+.dual-progress .lbl {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  width: 64px;
+  flex-shrink: 0;
+}
+.dual-progress .bar {
+  flex: 1; height: 4px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.dual-progress .bar .fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 220ms var(--ease);
+}
+.dual-progress .bar .fill.alt { background: var(--accent-soft); }
+.dual-progress .pct { font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+
+/* ============================================================================
+ * Design v2 Phase C — Per-novel pipeline preview sidecar.
+ *
+ * Renders alongside the per-novel settings form fields, showing what each
+ * lever does as a five-stage flow: Source → Genre/Brief → Translator →
+ * Refinement → Saved. Updates live as the user changes form values.
+ * ===========================================================================*/
+
+.ns-pipeline-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 4px;
+}
+.ns-pipeline-fields { min-width: 0; }
+.ns-pipeline-preview {
+  position: sticky;
+  top: 0;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl, 8px);
+  background: var(--pane-bg, var(--pane));
+  font-family: var(--font-family-sans);
+}
+.ns-pipeline-preview .pp-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.ns-pipeline-preview .pp-stages {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  counter-reset: ppstage;
+}
+.ns-pipeline-preview .pp-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--r-md, 4px);
+  background: var(--bg-tint, transparent);
+}
+.ns-pipeline-preview .pp-stage.is-muted { opacity: 0.55; }
+.ns-pipeline-preview .pp-stage + .pp-stage::before {
+  content: "";
+  position: absolute;
+  left: 21px; top: -6px;
+  width: 1px; height: 6px;
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.ns-pipeline-preview .pp-num {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-family-mono, monospace);
+}
+.ns-pipeline-preview .pp-stage.is-muted .pp-num {
+  background: var(--border);
+  color: var(--muted);
+}
+.ns-pipeline-preview .pp-body { min-width: 0; }
+.ns-pipeline-preview .pp-stage-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.ns-pipeline-preview .pp-stage-value {
+  font-size: 13px;
+  color: var(--fg-soft);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+.ns-pipeline-preview .pp-stage-badge {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-deep, var(--accent));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 99px;
+}
+@media (max-width: 720px) {
+  .ns-pipeline-block { grid-template-columns: 1fr; }
+  .ns-pipeline-preview { position: static; }
+}

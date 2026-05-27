@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.env
+# All of data/ is user-mutable runtime state (novels.db, llm_cache, runtime
+# files written by Claude Agent's system-prompt cache). Bundled prompts live
+# under backend/prompts/ (tracked normally) so the EXE build can ship them
+# inside sys._MEIPASS while data/ stays purely per-user.
+data/*
+*.db
+.pytest_cache/
+tmp/
+# Per-novel canonical-edits manuscripts live at the project root as .docx;
+# they're the user's personal edited work and don't belong in the public repo.
+*.docx
+.claude/settings.local.json
+.claude/*.lock
+.DS_Store
+# PyInstaller build artifacts. Rebuilt by scripts/smoke-exe.ps1 from
+# LN-Translator.spec; keeping them out of the repo prevents 100+ MB
+# binary diffs and stale-bundle confusion.
+build/
+dist/
+# Working directories for parallel agents — never represent committed state.
+.codex-temp/
+# Per-run migration-check scratch dirs (random suffix per run).
+ln-migration-check-*/
+# Design tooling scratch (Figma exports, mockups, etc.) — not part of source.
+.design-bundle/
+# Local PyInstaller release zips. Built artifacts belong on the GitHub
+# release page, not in git.
+LN-Translator-*.zip
+# Scratch dir for release-asset shuffling (OPUS-MT tarball mirroring etc).
+.release-tmp/

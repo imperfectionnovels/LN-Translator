@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>App Settings · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/library.css?v=1">
+<link rel="stylesheet" href="/static/css/settings.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span aria-hidden="true">›</span>
+    <span class="here">App Settings</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">設</span><span>App Settings</span></div>
+      <h1 class="h-title">App Settings</h1>
+      <div class="h-sub">App-wide preferences only. Per-novel state (genre, source language, translator override, metadata) lives on each novel's own page.</div>
+    </div>
+  </div>
+
+  <div class="settings-shell">
+    <aside class="settings-toc" aria-label="On this page">
+      <div class="toc-eyebrow"><span class="han">綱</span><span>On this page</span></div>
+      <nav class="toc-list" id="settings-toc-list">
+        <a href="#sec-providers" data-sec="providers" class="on">
+          <span class="han">譯</span><span class="lbl">Providers</span><span class="cnt" data-cnt="providers"></span>
+        </a>
+        <a href="#sec-opus-mt" data-sec="opus-mt">
+          <span class="han">免</span><span class="lbl">Free tier</span>
+        </a>
+        <a href="#sec-themes" data-sec="themes">
+          <span class="han">易</span><span class="lbl">Themes</span><span class="cnt" data-cnt="themes"></span>
+        </a>
+        <a href="#sec-keyboard" data-sec="keyboard">
+          <span class="han">鍵</span><span class="lbl">Keyboard</span>
+        </a>
+        <a href="#sec-about" data-sec="about">
+          <span class="han">記</span><span class="lbl">About</span>
+        </a>
+      </nav>
+      <div class="toc-foot">
+        <div>Move with <span class="kbd">J</span> <span class="kbd">K</span> · jump with <span class="kbd">⏎</span></div>
+        <div>Or scroll · the rail follows.</div>
+      </div>
+    </aside>
+
+    <div class="settings-body">
+      <section class="settings-section" id="sec-providers">
+        <header class="section-head">
+          <h2><span class="han">譯</span>Providers</h2>
+          <p class="sub">Each provider points at one AI backend with a specific model. Per-novel settings pick which provider translates each novel; the default handles novels with no override.</p>
+        </header>
+        <div id="provider-list">
+          <div class="empty-state">Loading providers…</div>
+        </div>
+        <div class="add-card" id="add-provider-card">
+          <div class="han-plus">＋</div>
+          <div class="info">
+            <div class="t">Add a provider</div>
+            <div class="s">Useful for A/B testing: route one novel through Gemini, another through DeepSeek, and compare. The default still handles novels without an override.</div>
+          </div>
+          <button type="button" class="btn-primary" id="add-provider-btn">＋ Add provider</button>
+        </div>
+      </section>
+
+      <section class="settings-section" id="sec-opus-mt">
+        <header class="section-head">
+          <h2><span class="han">免</span>Free tier (OPUS-MT)</h2>
+          <p class="sub">Offline rough-draft translator. Per-language models live under your data dir; download what you need, remove what you don't. When a model is installed, opening a chapter automatically fills a free draft; your LLM provider then PEMT-merges that draft into the polished translation.</p>
+        </header>
+        <div id="opus-mt-pairs">
+          <div class="empty-state">Loading language pairs…</div>
+        </div>
+      </section>
+
+      <section class="settings-section" id="sec-themes">
+        <header class="section-head">
+          <h2><span class="han">易</span>Themes</h2>
+          <p class="sub">Click a card to switch. Each card renders the theme as a miniature of the live app chrome (masthead, body line, chips, button) so you see exactly what changes.</p>
+        </header>
+        <div class="themes-list" id="themes-list"></div>
+      </section>
+
+      <section class="settings-section" id="sec-keyboard">
+        <header class="section-head">
+          <h2><span class="han">鍵</span>Keyboard</h2>
+          <p class="sub">All shortcuts in one place. Press <code class="k">?</code> anywhere to open the command palette.</p>
+        </header>
+        <div class="kref" id="keyboard-ref"></div>
+      </section>
+
+      <section class="settings-section" id="sec-about">
+        <header class="section-head">
+          <h2><span class="han">記</span>About</h2>
+          <p class="sub">Version, paths, diagnostics. Useful when something feels off, or for telling the maintainer what broke.</p>
+        </header>
+        <div class="about-list" id="about-list">
+          <div class="empty-state">Loading diagnostics…</div>
+        </div>
+        <div class="about-acts">
+          <button type="button" class="btn-tiny" id="about-copy-btn">Copy diagnostics</button>
+          <button type="button" class="btn-tiny" id="about-log-btn">Open log folder</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- Transient toast (used by secret-storage + diagnostics actions). -->
+<div class="settings-toast" id="settings-toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="provider-dialog" class="dialog" aria-labelledby="provider-dialog-title">
+  <h3 id="provider-dialog-title">Add provider</h3>
+  <form id="provider-form" method="dialog">
+    <input type="hidden" id="provider-id">
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="provider-name">Name</label>
+        <input type="text" id="provider-name" required placeholder="e.g. Claude Opus 4.7" maxlength="100">
+      </div>
+      <div class="form-row">
+        <label for="provider-type">Type</label>
+        <select id="provider-type" required>
+          <!-- Populated at runtime from /api/providers/catalog. The
+               settings.js handler groups entries into <optgroup>s. -->
+        </select>
+        <span class="secret-hint" id="provider-type-hint" hidden></span>
+      </div>
+      <!-- Subscription / local auth callout. Shown only when the selected
+           type's auth shape is "subscription" or "none" — these don't
+           take an API key in this form; auth happens out-of-band (a CLI
+           login, a local server, etc.). settings.js fills the copy from
+           the catalog's install_hint + a per-type login command. -->
+      <div class="form-row auth-callout" id="provider-auth-callout" hidden>
+        <div class="ac-icon" aria-hidden="true"></div>
+        <div class="ac-body">
+          <div class="ac-title" id="provider-auth-title">No API key needed</div>
+          <div class="ac-text" id="provider-auth-text"></div>
+          <pre class="ac-cmd" id="provider-auth-cmd" hidden></pre>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="provider-model-select">Model</label>
+        <select id="provider-model-select" required>
+          <!-- Populated at runtime when Type changes. Always includes an
+               "Other (custom ID)…" option that reveals the free-text input
+               below. -->
+        </select>
+      </div>
+      <div class="form-row" id="provider-model-id-row" hidden>
+        <label for="provider-model-id">Model ID <span class="secret-hint">(paste the exact ID the provider expects)</span></label>
+        <input type="text" id="provider-model-id" placeholder="e.g. claude-opus-4-7" maxlength="100">
+      </div>
+      <div class="form-row" id="provider-base-url-row">
+        <label for="provider-base-url">Base URL <span class="secret-hint">(auto-filled from the catalog; override only if your endpoint is custom)</span></label>
+        <input type="url" id="provider-base-url" placeholder="https://api.example.com/v1" maxlength="500">
+      </div>
+      <div class="form-row" id="provider-secret-ref-row">
+        <label for="provider-secret-ref">Secret env var <span class="secret-hint">(used as the keychain lookup name; leave blank for subscription / local auth)</span></label>
+        <input type="text" id="provider-secret-ref" placeholder="OPENAI_API_KEY" maxlength="100">
+      </div>
+      <div class="form-row" id="provider-secret-value-row" hidden>
+        <label for="provider-secret-value">API key <span class="secret-hint">(stored in OS keychain; never written to the database)</span></label>
+        <input type="password" id="provider-secret-value" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="500" placeholder="paste your key here">
+      </div>
+      <!-- S3: "Default for new novels" used to be reachable here AND via
+           the per-card "Set default" button on the provider list. Two
+           paths for the same operation that didn't share state — set in
+           the form, the list wouldn't update until refresh. Dropped the
+           checkbox; the list-level button is the single source of truth. -->
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="secret-dialog" class="dialog" aria-labelledby="secret-dialog-title">
+  <h3 id="secret-dialog-title">Set API key</h3>
+  <form id="secret-form" method="dialog">
+    <input type="hidden" id="secret-provider-id">
+    <p class="lead" id="secret-explainer"></p>
+    <div class="form-row">
+      <label for="secret-value">API key</label>
+      <input type="password" id="secret-value" autocomplete="off" required
+             spellcheck="false" autocapitalize="off">
+      <span class="secret-hint">Stored in the OS keychain. Never written to the database or returned in API responses.</span>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+  <h3 id="confirm-dialog-title">Confirm</h3>
+  <div class="dialog-body" id="confirm-dialog-body"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+    <button type="button" class="btn-primary" data-act="ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/settings.js"></script>
+</body>
+</html>

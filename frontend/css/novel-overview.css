@@ -1,0 +1,268 @@
+/* Per-novel overview page (2026-05-25). Surfaces metadata + genres +
+   source-language + pipeline + summary cards. Designed as a stack of
+   .no-card blocks below a header strip with cover + CTAs. */
+
+.no-header {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 18px;
+  margin: 16px 0 24px;
+  align-items: start;
+}
+
+.no-cover {
+  width: 140px;
+  height: 200px;
+  background: var(--bg-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.no-cover-placeholder {
+  font-family: var(--font-family-serif, serif);
+  font-size: 48px;
+  color: var(--muted);
+}
+
+.no-header-body { display: flex; flex-direction: column; gap: 6px; }
+
+.no-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.no-sub { display: flex; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.no-sub > * { color: var(--muted); }
+
+.no-progress { font-size: 13px; }
+
+.no-cta { display: flex; gap: 8px; margin-top: 8px; }
+
+.no-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+  margin: 12px 0;
+  background: var(--bg);
+}
+
+.no-card h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.no-card .lead {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
+/* Genre chip styling. Primary is bolder + has a small mark; secondary
+   are lighter and each carries a Make-primary + Remove pair. */
+.no-genre-chips {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;
+}
+
+.no-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 13px;
+  background: var(--bg-tint);
+}
+
+.no-chip.is-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.no-chip.is-primary .no-chip-mark { font-size: 10px; opacity: 0.8; }
+
+.no-chip button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.75;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.no-chip button:hover { opacity: 1; }
+
+.no-chip .no-chip-action { font-size: 11px; }
+
+.no-add-genre {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.no-add-genre select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.no-inline-edit {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.no-inline-edit select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.no-pipeline-grid, .no-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.no-pipeline-grid .form-row, .no-meta-grid .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.no-pipeline-grid .form-row.no-wide,
+.no-meta-grid .form-row.no-wide {
+  grid-column: 1 / -1;
+}
+
+.no-pipeline-grid label, .no-meta-grid label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.no-pipeline-grid input,
+.no-pipeline-grid select,
+.no-pipeline-grid textarea,
+.no-meta-grid input,
+.no-meta-grid select,
+.no-meta-grid textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.no-pipeline-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.no-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.no-stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.no-stat-row:last-of-type { border-bottom: 0; }
+.no-stat-row .lbl { color: var(--muted); }
+.no-stat-row .val { font-weight: 500; }
+
+@media (max-width: 700px) {
+  .no-header { grid-template-columns: 100px 1fr; }
+  .no-cover { width: 100px; height: 142px; }
+  .no-pipeline-grid, .no-meta-grid, .no-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Danger zone — Archive card at the bottom of the novel page. Subtle red
+ * tint + border so the destructive action reads as separate from the
+ * benign cards above it without screaming. */
+.no-danger-zone {
+  border-color: color-mix(in srgb, var(--signal-error) 50%, var(--border));
+  background: color-mix(in srgb, var(--signal-error) 4%, var(--pane-bg));
+  /* N2: hard rule above the danger zone so the user can't scroll past the
+     form sections and mis-click Archive without seeing the visual break. */
+  margin-top: 24px;
+  position: relative;
+}
+.no-danger-zone::before {
+  content: "";
+  position: absolute;
+  top: -13px; left: 0; right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--signal-error) 35%, var(--border));
+}
+.no-danger-zone h2 {
+  color: var(--signal-error);
+}
+.no-danger-zone .btn-danger {
+  background: var(--signal-error);
+  color: #fbeedc;
+  border: 1px solid var(--signal-error);
+  padding: 8px 18px;
+  border-radius: var(--r-md);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.no-danger-zone .btn-danger:hover { filter: brightness(1.06); }
+.no-danger-zone .btn-danger:disabled { opacity: 0.55; cursor: default; }
+.no-danger-zone #no-archive-status { margin-left: 12px; }
+
+/* Local archive confirmation dialog (replaces what used to live in
+ * the library page's confirm-dialog for this action). */
+#archive-confirm[open] {
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 22px 24px;
+  max-width: 460px;
+  color: var(--fg);
+}
+#archive-confirm .dialog-body { font-size: 14px; line-height: 1.55; }
+#archive-confirm .dialog-body p:first-child { margin-top: 0; }
+#archive-confirm .dialog-actions {
+  display: flex; gap: 10px; justify-content: flex-end;
+  margin-top: 14px;
+}
+#archive-confirm .btn-danger {
+  background: var(--signal-error);
+  color: #fbeedc;
+  border: 1px solid var(--signal-error);
+  padding: 7px 14px;
+  border-radius: var(--r-md);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}

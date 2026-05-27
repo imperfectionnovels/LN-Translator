@@ -1,0 +1,78 @@
+/* Page-specific layout for find-replace.html — form/preview shape used
+   nowhere else, kept off base.css and glossary.css. */
+
+.fr-form { display: grid; gap: 12px; max-width: 720px; margin-bottom: 24px; }
+.fr-form label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.fr-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fr-form .row.full { grid-template-columns: 1fr; }
+
+.fr-form input[type=text], .fr-form textarea, .fr-form select {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-family-sans); font-size: 14px;
+}
+
+.fr-form .toggles {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+}
+
+.fr-form .toggle { display: inline-flex; gap: 6px; align-items: center; }
+
+.fr-actions { display: flex; gap: 12px; margin-top: 12px; }
+
+.fr-preview {
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 16px; margin-top: 18px;
+}
+
+.fr-preview h3 { margin: 0 0 8px; font-size: 15px; }
+.fr-preview .summary { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+
+.fr-preview .row {
+  border-top: 1px solid var(--border); padding: 8px 0;
+}
+
+.fr-preview .row:first-of-type { border-top: none; }
+.fr-preview .row .chapter { font-weight: 600; }
+.fr-preview .row .counts { color: var(--muted); font-size: 12px; margin-left: 8px; }
+
+.fr-preview .sample {
+  background: var(--bg-tint); padding: 6px 10px; border-radius: 4px;
+  margin: 4px 0; font-size: 13px; white-space: pre-wrap;
+  font-family: var(--font-family-mono, monospace);
+}
+
+.fr-preview .truncated {
+  background: var(--warn-tint, rgba(181,106,22,0.12)); color: var(--warn-fg, #b56a16);
+  padding: 6px 10px; border-radius: 4px; font-size: 12px; margin-bottom: 10px;
+}
+
+/* I4: client-side regex validation feedback */
+.fr-form .fr-regex-error {
+  color: var(--warn-fg, #b56a16);
+  font-size: 12px;
+  margin-top: 4px;
+  min-height: 16px;
+}
+
+.fr-form input[type=text].invalid {
+  border-color: var(--warn-fg, #b56a16);
+}
+
+/* F1: post-commit undo bar. Surfaces the existing restoreFrSnapshot
+ * endpoint as a 10-minute "Undo this batch" affordance, hidden by
+ * default and shown only after a single-novel commit succeeds. */
+.fr-undo-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 6%, var(--pane-bg));
+  margin: 12px 0 24px;
+  font-size: 13px;
+}
+.fr-undo-bar .fr-undo-msg { flex: 1; min-width: 0; }
+.fr-undo-bar .btn-ghost { font-size: 12.5px; }

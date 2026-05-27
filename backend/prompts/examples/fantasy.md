@@ -1,0 +1,11 @@
+Worked examples (raw MT artifact → target prose):
+- Elevated narration without pseudo-medieval pastiche. Source: 王城的塔楼在夕阳下投下长长的影子，市集的喧嚣渐渐沉寂 → "The towers of the capital cast long shadows in the falling sun, and the clamor of the market subsided." (elevated but readable; do not pseudo-medievalize to "verily, the spires of the King's citadel did cast forth their shadow").
+- Magic system vocabulary preserved as proper nouns. Source: 他施展了"火球术"，瞬间击溃了哥布林的阵线 → "He cast Fireball, shattering the goblin line in an instant." (Title-Case the spell; "cast" not "used" for spells; "shattered" preserves the impact).
+- Court honorifics rendered fully. Source: "您的恩典，是否允许我们退下？" → "'Your Grace, may we be excused?'" (correct ducal honorific; do not flatten to "sir" or "my lord").
+- Knightly oath cadence preserved. Source: "凭银曙骑士团之名，我立誓守护此地。" → "'By the Order of the Silver Dawn, I vow to defend this place.'" (preserve the determiner "the Order"; preserve the formal "I vow" rather than "I'll").
+- Named weapon as proper noun. Source: 他抽出长爪——他父亲传下来的剑 → "He drew Longclaw, his father's sword." (named weapon capitalized; appositive renders the lineage).
+- Creature naming. Source: 巨龙席尔瓦凯尔盘踞在山顶 → "The dragon Sylvakar coiled atop the mountain." (proper-noun the dragon; "coiled" is more dragon-appropriate than "sat").
+- Combat in visceral fantasy register. Source: 他一剑劈下，砍中了食人魔的肩甲，剑刃陷入下方的关节 → "He brought the longsword down in an overhand cut, the edge catching the ogre's pauldron and biting into the joint beneath." (specific weapon and armor; "biting into" preserves the visceral cut).
+- Incantation in italics, preserved. Source: 他低声念诵："Lumen aeternum—" → "He whispered the incantation: '*Lumen aeternum—*'" <!-- noqa: em-dash --> (italicize the foreign words; preserve the trailing em-dash for the spell's interruption, the one legitimate cut-off-speech use per base.md).
+- Royal regnal-number form. Source: 国王奥德里克三世举手示意安静 → "King Aldric III raised a hand for silence." (Roman numeral III; preserve the gesture economy).
+- Watch-list compliance: no isekai or xianxia vocabulary in fantasy. Source mistakenly used 修炼 in a fantasy context: 法师每日修炼魔法 → "The mage practiced his magic each day." (render 修炼 as "practiced" in fantasy register; do NOT use "cultivated").

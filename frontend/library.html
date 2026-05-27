@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Library · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/library.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <span class="here">Library</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">籍</span><span>Library</span></div>
+      <h1 class="h-title">Your <em>shelf</em></h1>
+      <div class="inventory" id="library-summary" aria-live="polite">
+        <div class="inv-cell"><div class="v"><span class="num" data-cell="novels">…</span><span class="han">本</span></div><div class="lbl">novels</div></div>
+        <div class="inv-cell"><div class="v"><span class="num" data-cell="chapters">…</span><small>chapters</small></div><div class="lbl">translated</div></div>
+        <div class="inv-cell"><div class="v"><span class="num" data-cell="reading">…</span><small>in progress</small></div><div class="lbl">reading now</div></div>
+        <div class="inv-cell"><div class="v"><span class="num" data-cell="archive">…</span><small>set aside</small></div><div class="lbl">archive</div></div>
+      </div>
+    </div>
+    <div class="h-actions">
+      <label class="muted" for="sort-by">Sort</label>
+      <select id="sort-by">
+        <option value="last_read">By read date (newest first)</option>
+        <option value="title">By title (A → Z)</option>
+        <option value="progress">By translation progress (most done first)</option>
+        <option value="id">By import date (newest first)</option>
+      </select>
+      <a href="/stats" class="btn-ghost" title="Project dashboard for coverage, cost, throughput, glossary, TM">Stats</a>
+      <a href="/find-replace" class="btn-ghost" title="Project-wide find and replace across translated chapters">Find &amp; Replace</a>
+      <a href="/" class="btn-primary">＋ Import novel</a>
+    </div>
+  </div>
+
+  <div id="continue-strip" class="continue-strip"></div>
+
+  <div class="lib-toolbar">
+    <div class="chip-row" id="status-chips">
+      <button class="tag-chip on" data-status="all">All <span class="chip-count" data-count="all">…</span></button>
+      <button class="tag-chip" data-status="reading">Reading <span class="chip-count" data-count="reading">…</span></button>
+      <button class="tag-chip" data-status="finished">Finished <span class="chip-count" data-count="finished">…</span></button>
+      <!-- F11 (2026-05-25): Archive tab. Soft-deleted novels live here
+           with Restore + Purge actions. -->
+      <button class="tag-chip" data-status="archived">Archive <span class="chip-count" data-count="archived">…</span></button>
+    </div>
+    <label class="lib-search" for="library-search">
+      <input id="library-search" type="search" placeholder="Search title…" aria-label="Search novels by title">
+    </label>
+    <span class="spacer"></span>
+    <span class="last-sync" id="last-sync" aria-live="polite"></span>
+    <span class="toolbar-error hidden" id="poll-error" role="status"></span>
+  </div>
+
+  <div id="novel-list" class="skeleton-grid" aria-busy="true">
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div></div>
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short"></div></div>
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div></div>
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short"></div></div>
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line long"></div><div class="skeleton skeleton-line short"></div></div>
+    <div class="skeleton-card"><div class="skeleton skeleton-cover"></div><div class="skeleton skeleton-line med"></div><div class="skeleton skeleton-line short"></div></div>
+  </div>
+</main>
+
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+  <h3 id="confirm-dialog-title">Confirm</h3>
+  <div class="dialog-body" id="confirm-dialog-body"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-ghost" value="cancel" data-act="cancel">Cancel</button>
+    <button type="button" class="btn-primary" value="ok" data-act="ok">Confirm</button>
+  </div>
+</dialog>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/library.js"></script>
+</body>
+</html>

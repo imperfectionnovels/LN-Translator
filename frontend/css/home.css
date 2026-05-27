@@ -1,0 +1,258 @@
+/* Home / import page — tabs, drop zone, recent list. Loaded by index.html
+ * alongside base.css. */
+
+/* ===== Tabs (import page) =====
+ * Wireframes redesign: underline-on-active treatment instead of the old
+ * filled-pill look. Active tab is anchored by a cinnabar underline that
+ * extends across the tab row's bottom border, matching the Settings
+ * section-nav rhythm in the same redesign. */
+.import-tabs {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  margin-bottom: 22px;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.import-tabs button {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 8px 4px 10px;
+  font-family: var(--font-family-sans);
+  font-size: 14px; font-weight: 500;
+  color: var(--muted);
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.import-tabs button:hover { color: var(--ink); }
+.import-tabs button.on, .import-tabs button.active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--cinnabar);
+}
+.import-tabs button .tab-han {
+  font-family: var(--font-family-han);
+  font-size: 18px; font-weight: 500;
+  color: var(--muted);
+  line-height: 1;
+  transition: color 140ms var(--ease);
+}
+.import-tabs button.on .tab-han, .import-tabs button.active .tab-han {
+  color: var(--cinnabar);
+}
+/* Tab pip — small jade-on-soft-jade chip on the URL tab announcing the
+ * scrape-cover behavior. Visible regardless of active state so a user
+ * scanning the tab row sees the feature without needing to hover. */
+.import-tabs button .tab-pip {
+  font-family: var(--font-family-sans);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--jade);
+  background: color-mix(in srgb, var(--jade) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--jade) 28%, transparent);
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  text-transform: lowercase;
+  margin-left: 4px;
+}
+
+/* Paste-scroll treatment — the textarea wears curled left/right paper
+ * edges so it reads as an unfurled scroll rather than a plain box. The
+ * edges are decorative; the textarea handles all interaction. */
+.paste-scroll {
+  position: relative;
+  display: block;
+}
+.paste-scroll textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--paper-deep);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  padding: 20px 26px;
+  font-family: var(--font-family-han);
+  font-size: 14.5px;
+  line-height: 1.85;
+  color: var(--ink);
+  resize: vertical;
+}
+.paste-scroll .paste-scroll-edge {
+  position: absolute; top: 0; bottom: 0;
+  width: 12px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--ink) 18%, transparent),
+    color-mix(in srgb, var(--ink) 5%, transparent) 50%,
+    transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.paste-scroll .paste-scroll-edge.left {
+  left: -12px;
+  border-radius: 8px 0 0 8px / 50% 0 0 50%;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--ink) 22%, var(--paper-deep)),
+    var(--paper-deep));
+  box-shadow: inset -1px 0 0 rgba(0,0,0,0.08);
+}
+.paste-scroll .paste-scroll-edge.right {
+  right: -12px;
+  border-radius: 0 8px 8px 0 / 0 50% 50% 0;
+  background: linear-gradient(270deg,
+    color-mix(in srgb, var(--ink) 22%, var(--paper-deep)),
+    var(--paper-deep));
+  box-shadow: inset 1px 0 0 rgba(0,0,0,0.08);
+}
+
+.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 7px 14px;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  color: var(--muted);
+}
+.tab.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.tab-panel { display: flex; flex-direction: column; gap: 10px; }
+.title-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+
+/* Drop zone (import) */
+.drop-zone {
+  background: var(--pane-bg);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-lg);
+  padding: 56px 28px;
+  text-align: center;
+  font-family: var(--font-family-sans);
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+.drop-zone.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--pane-bg)); }
+.drop-zone .glyph {
+  font-family: var(--font-family-han);
+  font-size: 84px;
+  font-weight: 600;
+  color: var(--accent);
+  opacity: 0.34;
+  display: block;
+  line-height: 1;
+  margin-bottom: 14px;
+}
+.drop-zone h3 { margin: 0 0 4px; font-family: var(--font-family-display); font-weight: 600; font-size: 1.3em; }
+.drop-zone .sub { color: var(--muted); font-size: 13px; }
+.drop-zone .or { display: block; margin: 16px 0 12px; color: var(--muted); font-size: 12px; }
+.drop-zone .file-row { margin-top: 14px; font-size: 12.5px; color: var(--muted); }
+
+.import-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 28px;
+}
+@media (max-width: 900px) { .import-grid { grid-template-columns: 1fr; } }
+.import-tip {
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px;
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.import-tip h4 {
+  margin: 0 0 8px;
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--fg);
+}
+.recent-list { font-family: var(--font-family-sans); font-size: 13px; margin-top: 8px; }
+.recent-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.recent-row:first-child { border-top: none; }
+.recent-row .ti { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-row .id { font-variant-numeric: tabular-nums; color: var(--muted); width: 42px; font-size: 11px; }
+.recent-row .st {
+  font-size: 10.5px; padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--term-bg); color: var(--term-fg); font-weight: 500;
+}
+.recent-row .st.warn { background: var(--signal-stale-bg); color: var(--signal-stale-fg); }
+.recent-row .st.err { background: color-mix(in srgb, var(--signal-error) 20%, var(--pane-bg)); color: var(--signal-error); }
+
+/* F09 (2026-05-25): visual differentiation of append mode. When the
+   user opens /?novel=N to append chapters to an existing novel, this
+   banner sits above the import tabs to make the context unmistakable. */
+.append-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border-radius: var(--r-md);
+}
+
+.append-banner-row p {
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.append-banner-row .back-link {
+  font-size: 12.5px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.append-banner-row .back-link:hover {
+  text-decoration: underline;
+}
+
+
+/* 2026-05-26: background scrape-job progress widget. Renders inside the
+   existing #status element on /. Shown while a recipe URL crawl is
+   in flight; replaced by a success/error class on completion. */
+.scrape-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scrape-progress-head {
+  font-size: 14px;
+}
+
+.scrape-progress-step {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.scrape-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background: var(--bg-tint, rgba(0,0,0,0.06));
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.scrape-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease-out;
+}
+
+.scrape-progress-hint {
+  font-size: 11px;
+  margin-top: 2px;
+}
+

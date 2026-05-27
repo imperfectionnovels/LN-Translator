@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Stats · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/stats.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span class="sep">›</span>
+    <span class="here">Stats</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">數</span><span>Stats</span></div>
+      <h1 class="h-title">Project dashboard</h1>
+      <div class="h-sub">
+        Throughput, cost, coverage, glossary and TM stats. Cost rows with
+        no recorded usage stay as "unknown" rather than counting as $0.
+      </div>
+    </div>
+    <div class="h-actions">
+      <label for="stats-novel" class="muted">View</label>
+      <select id="stats-novel">
+        <option value="">All novels (global)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ST1: skeleton blocks matching the eventual layout, so a slow
+       /api/stats response doesn't leave the user staring at a single
+       "Loading…" line with no hint of what's coming. JS replaces the
+       innerHTML on first successful render. -->
+  <div class="stats-grid" id="stats-grid" aria-busy="true">
+    <div class="stats-card skeleton">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line med"></div>
+    </div>
+    <div class="stats-card skeleton">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line long"></div>
+      <div class="skeleton-line med"></div>
+    </div>
+    <div class="stats-card skeleton">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line med"></div>
+    </div>
+    <div class="stats-card skeleton">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line long"></div>
+      <div class="skeleton-line med"></div>
+    </div>
+    <div class="stats-card skeleton">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line med"></div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/stats.js"></script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+/* Design v2 Phase G — Welcome wizard.
+ *
+ * Single-screen, three-step flow. No spine nav (this is pre-app — the
+ * user hasn't committed yet). The page sits on a centered card to feel
+ * like an opening, not a settings dump.
+ */
+
+.onboarding-body {
+  /* Override the global body grid (which assumes the spine nav). */
+  display: block !important;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.ob-shell {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.ob-header {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 36px;
+}
+.ob-seal {
+  width: 64px; height: 64px;
+  background: var(--cinnabar, #c8423a);
+  color: #fff8ef;
+  font-family: var(--font-family-han);
+  font-size: 36px; font-weight: 600;
+  display: grid; place-items: center;
+  border-radius: 5px;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
+  transform: rotate(-3deg);
+}
+.ob-title {
+  font-family: var(--font-family-display);
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 4px 0 8px;
+}
+.ob-sub {
+  font-family: var(--font-family-serif);
+  font-size: 16px;
+  color: var(--fg-soft);
+  margin: 0;
+  max-width: 60ch;
+  line-height: 1.55;
+}
+.ob-skip {
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  transition: border-color 120ms var(--ease), color 120ms var(--ease);
+}
+.ob-skip:hover { color: var(--fg); border-color: var(--border-soft); }
+
+.ob-steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 0 0 32px;
+  padding: 0;
+  list-style: none;
+}
+.ob-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 2px solid var(--border-soft);
+  transition: color 120ms var(--ease), border-color 120ms var(--ease);
+}
+.ob-step.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+.ob-step.is-done { color: var(--fg-soft); border-bottom-color: var(--accent); }
+.ob-step-num {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: var(--bg-tint);
+  border-radius: 50%;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+.ob-step.is-active .ob-step-num,
+.ob-step.is-done .ob-step-num {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.ob-panel {
+  display: none;
+  background: var(--pane);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-xl, 8px);
+  padding: 28px 32px;
+}
+.ob-panel.is-active { display: block; }
+.ob-h2 {
+  font-family: var(--font-family-display);
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+.ob-lead {
+  font-family: var(--font-family-serif);
+  color: var(--fg-soft);
+  margin: 0 0 22px;
+  max-width: 60ch;
+  line-height: 1.55;
+}
+
+/* ----- Step 1: provider grid ----- */
+.ob-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.ob-provider {
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px 10px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+.ob-provider:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.ob-provider.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+.ob-prov-icon {
+  width: 36px; height: 36px;
+  background: var(--prov-hue, var(--accent));
+  color: #fff8ef;
+  font-family: var(--font-family-mono);
+  font-weight: 700;
+  font-size: 16px;
+  display: grid; place-items: center;
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);
+}
+.ob-prov-name {
+  font-family: var(--font-family-display);
+  font-weight: 600;
+  font-size: 15px;
+  align-self: end;
+}
+.ob-prov-meta {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  color: var(--muted);
+  grid-column: 2;
+  margin-top: 1px;
+}
+.ob-prov-note {
+  grid-column: 1 / -1;
+  font-family: var(--font-family-serif);
+  font-size: 12.5px;
+  color: var(--fg-soft);
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+/* ----- Step 2: key form ----- */
+.ob-form { margin-bottom: 14px; }
+.ob-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.ob-form-row label {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+.ob-form-row input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  font-family: var(--font-family-mono);
+}
+.ob-form-row input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.ob-form-row input:disabled { color: var(--muted); background: var(--bg-tint); cursor: not-allowed; }
+.ob-form-hint {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.ob-form-hint a { color: var(--accent-deep, var(--accent)); }
+.ob-key-status {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+}
+.ob-key-status.ok  { background: color-mix(in srgb, var(--signal-ok, #3f7a64) 12%, transparent); color: var(--signal-ok, #3f7a64); }
+.ob-key-status.err { background: color-mix(in srgb, var(--signal-error, #7a3030) 12%, transparent); color: var(--signal-error, #7a3030); }
+.ob-key-status.hidden { display: none; }
+
+/* ----- Step 3: summary + CTAs ----- */
+.ob-summary {
+  margin-bottom: 24px;
+}
+.ob-sum-card {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+}
+.ob-sum-card .ob-prov-icon { width: 44px; height: 44px; font-size: 20px; }
+.ob-sum-title {
+  font-family: var(--font-family-display);
+  font-weight: 600;
+  font-size: 16px;
+}
+.ob-sum-sub {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.ob-cta-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.ob-cta-card {
+  display: block;
+  padding: 18px 20px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+.ob-cta-card:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+.ob-cta-eyebrow {
+  font-family: var(--font-family-sans);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.ob-cta-title {
+  font-family: var(--font-family-display);
+  font-size: 22px;
+  font-weight: 500;
+  margin: 6px 0 4px;
+}
+.ob-cta-sub {
+  font-family: var(--font-family-serif);
+  color: var(--fg-soft);
+  font-size: 13px;
+}
+
+/* ----- shared button row at the bottom of each panel ----- */
+.ob-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+.ob-actions .spacer { flex: 1; }
+
+@media (max-width: 720px) {
+  .ob-shell { padding: 32px 16px 64px; }
+  .ob-header { grid-template-columns: 48px 1fr; }
+  .ob-seal { width: 48px; height: 48px; font-size: 26px; }
+  .ob-title { font-size: 32px; }
+  .ob-skip { grid-column: 2; justify-self: end; margin-top: 8px; }
+  .ob-steps { font-size: 12px; flex-wrap: wrap; }
+  .ob-cta-row { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,10 @@
+Worked examples (raw MT artifact → target prose):
+- System message preserved with brackets, bolding, line break. Source: 【关卡完成！获得 1250 EXP，掉落：寒霜之剑 (稀有)】 → "**【Stage Complete! Gained 1250 EXP, Drop: Frostbite Sword (Rare)】**" (Title-Case fields; preserve 【】; numerals stay; rarity tier capitalized).
+- Stat window kept as aligned block. Source: HP 1850/2000, MP 320/500, ATK 245, DEF 180 → "HP 1850 / 2000  ·  MP 320 / 500  ·  ATK 245  ·  DEF 180" (numerals preserved verbatim; do not spell out; bullet separators acceptable when source uses commas).
+- Skill use rendered with proper-noun skill name. Source: 我立刻发动了【火球术】 → "I immediately triggered Fireball." (skill name Title-Cased; "triggered" or "cast" both fine per glossary; do not paraphrase to "I created a ball of fire").
+- Critical-hit notification preserved ALL-CAPS. Source: 暴击！造成 8420 点伤害！ → "**CRITICAL HIT! Dealt 8420 damage!**" (preserve the caps for emphasis; numerals literal).
+- Cooldown thinking in interior. Source: *火球还有 12 秒 CD，先用 Mana Bolt 顶一波。* → "*Fireball still has 12 seconds on CD; use Mana Bolt to hold the line first.*" (italics for interior; CD abbreviation preserved; tactical-calculation voice).
+- Party-roles vocabulary preserved. Source: "我当主T，你来 OT，治疗站后面" → "'I'll main tank, you off-tank, healer stays in the back.'" (MT/OT vocabulary preserved as in-genre; do not "translate" to plain English).
+- Drop-rate / RNG honesty. Source: 这把剑掉率 0.1%，我刷了 800 次才出。 → "This sword has a 0.1% drop rate; I farmed it 800 runs before it dropped." (preserve "drop rate," "farmed," "runs"; do not soften to "I tried many times before I got lucky").
+- Level-up beat. Source: 叮——升级了！等级 23 → 24 → "*Ding...* **【Level Up! Lv. 23 → Lv. 24】**" (ding sound effect italicized in interior or rendered as audio cue; level-up notification bolded with brackets).
+- Quest log block. Source: 任务：寒霜遗迹的秘密。状态：进行中 (3/5 探索点已发现) → "**Quest: Secret of the Frostbite Ruins  ·  Status: In Progress (3/5 exploration points discovered)**" (multi-field quest line preserved with the slash-fraction; bold for the block).

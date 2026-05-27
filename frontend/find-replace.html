@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Find &amp; Replace · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/glossary.css?v=1">
+<link rel="stylesheet" href="/static/css/find-replace.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span class="sep">›</span>
+    <span class="here">Find &amp; Replace</span>
+  </nav>
+  <div class="screen-head">
+    <div>
+      <div class="eyebrow"><span class="h">尋</span><span>Find &amp; Replace</span></div>
+      <h1 class="h-title">Project-wide find and replace</h1>
+      <div class="h-sub">
+        Scan translated chapters across one novel or your whole library,
+        preview every match, then commit the substitution. Original source
+        text is never touched.
+      </div>
+    </div>
+  </div>
+
+  <form class="fr-form" id="fr-form">
+    <div class="row full">
+      <div>
+        <label for="fr-find">Find</label>
+        <input type="text" id="fr-find" required placeholder="text to search for">
+      </div>
+    </div>
+    <div class="row full">
+      <div>
+        <label for="fr-replace">Replace with</label>
+        <input type="text" id="fr-replace" placeholder="replacement text (empty = delete the match)">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="fr-scope-kind">Scope</label>
+        <select id="fr-scope-kind">
+          <option value="all">All novels</option>
+          <option value="novel">One specific novel</option>
+        </select>
+      </div>
+      <div>
+        <label for="fr-novel">Novel (when scope = one)</label>
+        <select id="fr-novel" disabled>
+          <option value="">Loading…</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="fr-target">Target text</label>
+        <select id="fr-target">
+          <option value="both" selected>Both draft + refined</option>
+          <option value="translated_text">Translator draft only</option>
+          <option value="refined_text">Refined polish only</option>
+        </select>
+      </div>
+      <div class="toggles" style="align-self:end;padding-bottom:4px;">
+        <label class="toggle"><input type="checkbox" id="fr-regex"> Regex</label>
+        <label class="toggle"><input type="checkbox" id="fr-case" checked> Case-sensitive</label>
+        <label class="toggle"><input type="checkbox" id="fr-word-boundary"> Word boundaries</label>
+      </div>
+    </div>
+    <div class="fr-actions">
+      <button type="submit" class="btn-primary" id="fr-preview-btn">Preview matches</button>
+      <button type="button" class="btn-ghost" id="fr-clear-btn">Reset</button>
+    </div>
+  </form>
+
+  <div id="toast" class="status" aria-live="polite" role="status"></div>
+
+  <!-- F1: post-commit undo. Visible after a single-novel commit succeeds.
+       Hidden after the 10-minute window or after the undo runs. Cross-
+       novel commits write one snapshot per novel; there isn't a single
+       "this batch" to roll back, so the button stays hidden for them. -->
+  <div id="fr-undo-bar" class="fr-undo-bar" hidden role="status" aria-live="polite">
+    <span class="fr-undo-msg" id="fr-undo-msg"></span>
+    <button type="button" class="btn-ghost" id="fr-undo-btn">↺ Undo this batch</button>
+    <span class="muted" id="fr-undo-timer"></span>
+  </div>
+
+  <section class="fr-preview" id="fr-preview" hidden>
+    <h3>Preview</h3>
+    <div class="summary" id="fr-preview-summary"></div>
+    <div id="fr-preview-truncated"></div>
+    <div id="fr-preview-rows"></div>
+    <div class="fr-actions">
+      <button type="button" class="btn-primary" id="fr-commit-btn">Apply changes</button>
+      <button type="button" class="btn-ghost" id="fr-cancel-btn">Cancel</button>
+    </div>
+  </section>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/find-replace.js"></script>
+</body>
+</html>

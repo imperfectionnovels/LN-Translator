@@ -1,0 +1,650 @@
+"""Shared translator scaffolding.
+
+`BaseTranslator` owns the prompt structure, JSON parsing, retry-then-fallback
+orchestration, and plain-text fallback. Backends only have to implement two
+hooks — `_complete_json` for the structured call and `_complete_plain` for the
+last-ditch plain-text retry — so the per-backend code is just "how do I run an
+LLM call." The system instruction, glossary formatting, and response schema
+stay identical across backends so a switch doesn't change translation behavior.
+
+System instructions are GENRE-AWARE. The text is composed per call from
+three files under `backend/prompts/`:
+- `base.md` — universal literary translator rules (always present).
+- `genres/<genre>.md` — genre-specific overlay (xianxia, wuxia, modern-romance,
+  isekai, slice-of-life, mystery, generic).
+- `examples/<genre>.md` — worked examples for that genre.
+
+`build_system_instruction(genre, custom_brief)` does the composition with an
+LRU cache. The cache key in `llm_cache.translation_key` must include the
+result of this call so different-genre translations don't collide.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+from abc import ABC, abstractmethod
+from functools import lru_cache
+
+from pydantic import ValidationError
+
+from backend.config import DEFAULT_GENRE, MAX_LLM_CALLS_PER_CHAPTER, PROJECT_ROOT
+from backend.genres import resolve_genre
+from backend.models import GlossaryEntry, NewTerm, TokenUsage, TranslationResult
+from backend.services import llm_cache
+from backend.services.glossary import dedupe_against_locked, filter_glossary_for_chapter
+
+logger = logging.getLogger(__name__)
+
+# Backoff schedule shared by every backend's transient-error retry.
+BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
+
+# Bumped per Phase 2 refactor: prompt content moved from
+# data/the-translator-fiction.md to backend/prompts/*.md AND the WORKED_EXAMPLES
+# constant was removed. The hashed prompt contents go into the cache key via
+# self.system_instruction, but bumping this constant lets us force-invalidate
+# existing entries that were cached under the old monolithic prompt.
+#
+# 2026-05-26 bump: build_prompt now accepts an optional ``free_draft`` kwarg
+# and inserts a REFERENCE TRANSLATION section when it's set. The free-draft
+# text itself is part of the cached prompt body via build_prompt's output,
+# so the cache key tracks it automatically; the version bump force-misses
+# any pre-PEMT cached translation so a re-run picks up the new prompt shape.
+PROMPT_TEMPLATE_VERSION = "phase3-pemt"
+
+# Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
+# split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
+# data/ stays purely user-mutable runtime state.
+_PROMPTS_ROOT = PROJECT_ROOT / "backend" / "prompts"
+_BASE_PROMPT_PATH = _PROMPTS_ROOT / "base.md"
+_GENRES_DIR = _PROMPTS_ROOT / "genres"
+_EXAMPLES_DIR = _PROMPTS_ROOT / "examples"
+
+
+def _read_required(path) -> str:
+    if not path.is_file():
+        raise RuntimeError(
+            f"Prompt file not found at {path}. Restore it from version "
+            "control before starting the server."
+        )
+    return path.read_text(encoding="utf-8")
+
+
+def get_genre_overlay(genre: str) -> str:
+    """Read the genre-specific overlay file. Falls back to 'generic' if the
+    named overlay is missing — defensive against a genre key landing in the
+    DB before its overlay file ships."""
+    resolved = resolve_genre(genre, DEFAULT_GENRE)
+    path = _GENRES_DIR / f"{resolved}.md"
+    if not path.is_file() and resolved != "generic":
+        logger.warning(
+            "genre overlay %s.md missing; falling back to generic.md", resolved,
+        )
+        path = _GENRES_DIR / "generic.md"
+    return _read_required(path)
+
+
+def get_worked_examples(genre: str) -> str:
+    """Read the genre-specific worked-examples file. Used by both base.py's
+    system-instruction builder and (for DeepSeek) the revise prompts so both
+    stages see the same examples for the same novel."""
+    resolved = resolve_genre(genre, DEFAULT_GENRE)
+    path = _EXAMPLES_DIR / f"{resolved}.md"
+    if not path.is_file() and resolved != "generic":
+        logger.warning(
+            "genre examples %s.md missing; falling back to generic.md", resolved,
+        )
+        path = _EXAMPLES_DIR / "generic.md"
+    return _read_required(path)
+
+
+@lru_cache(maxsize=64)
+def _build_system_instruction_cached(
+    genre: str, custom_brief_hash: str, custom_brief: str | None,
+) -> str:
+    """LRU-cached composer. Keyed by (genre, hash) because the cache must be
+    a stable function of the inputs — but we still need the full brief text
+    to compose, hence it's a third (non-cache-key) parameter. We accept the
+    duplication: callers go through `build_system_instruction` which derives
+    the hash and passes the brief alongside it."""
+    base = _read_required(_BASE_PROMPT_PATH)
+    overlay = get_genre_overlay(genre)
+    examples = get_worked_examples(genre)
+    parts = [base, "GENRE OVERLAY:", overlay, examples]
+    if custom_brief:
+        parts.extend([
+            "CUSTOM STYLE BRIEF — user-supplied directive for THIS novel. "
+            "Appended after the genre overlay; takes precedence when it "
+            "explicitly contradicts a genre rule:",
+            custom_brief.strip(),
+        ])
+    return "\n\n".join(parts)
+
+
+def build_system_instruction(
+    genre: str | None, custom_brief: str | None = None,
+) -> str:
+    """Compose the system instruction for a chapter translation.
+
+    Layering: base.md (universal) + genres/<genre>.md (genre overlay) +
+    examples/<genre>.md (worked examples) + optional appended custom brief.
+
+    NULL genre resolves to DEFAULT_GENRE via the registry; unknown genres
+    fall back to 'generic' inside the loader so a bad DB value cannot
+    crash the translator. Whitespace-only briefs are normalized to None
+    so the cache key matches the no-brief case (UI/PATCH layers also
+    normalize, but this is the load-bearing check — it owns the contract).
+    """
+    resolved = resolve_genre(genre, DEFAULT_GENRE)
+    if custom_brief is not None and not custom_brief.strip():
+        custom_brief = None
+    brief_hash = hashlib.sha256(
+        custom_brief.encode("utf-8")
+    ).hexdigest()[:16] if custom_brief else ""
+    return _build_system_instruction_cached(resolved, brief_hash, custom_brief)
+
+
+# Delimiter in the plain-text fallback prompt. Picked to be extremely unlikely
+# to appear in real Chinese-novel English translations.
+_FALLBACK_BODY_DELIMITER = "=====BODY====="
+
+# Matches a fenced code block. We use finditer (not anchored match) so backends
+# that prepend prose like "Here's the JSON:\n```json\n{...}\n```" still get
+# the fence stripped. Tolerates an optional language tag and missing trailing
+# newline before the closing fence (some backends emit ```json{...}``` on a
+# single line). Picks the LAST balanced pair on purpose — when an LLM emits a
+# schema example fence before the real answer, the answer is the trailing
+# fence; picking the first would parse the example as the response.
+_CODE_FENCE_RE = re.compile(
+    r"```[a-zA-Z0-9_-]*[ \t]*\n?(?P<body>.*?)\n?```",
+    re.DOTALL,
+)
+
+
+def _strip_code_fence(raw: str) -> str:
+    raw = raw.strip()
+    last: re.Match[str] | None = None
+    for m in _CODE_FENCE_RE.finditer(raw):
+        last = m
+    if last is not None:
+        return last.group("body").strip()
+    return raw
+
+
+class TransientTranslatorError(Exception):
+    """Raised after every retry attempt has been exhausted on a transient
+    upstream failure, or when a backend hits a usage cap that retrying won't
+    immediately fix. The chapter is marked error and the user is told it's a
+    service issue (not a content issue) so they know to retry later."""
+
+
+def _scope_marker(g: GlossaryEntry) -> str:
+    """Initiative 3 scope label for the prompt-glossary line.
+
+    Renders as `[novel-locked]` / `[novel-auto]` / `[global]` so the
+    translator can see precedence directly. Empty string when scope info
+    isn't useful (older callers that don't set scope still work — the
+    GlossaryEntry default is "novel" which combines with `locked` to give
+    [novel-locked] or [novel-auto]).
+    """
+    scope = getattr(g, "scope", "novel")
+    if scope == "global":
+        return "[global]"
+    return "[novel-locked]" if getattr(g, "locked", False) else "[novel-auto]"
+
+
+def format_glossary(
+    glossary: list[GlossaryEntry],
+    empty_label: str = "(empty — extract terms as needed)",
+) -> str:
+    if not glossary:
+        return empty_label
+    by_cat: dict[str, list[GlossaryEntry]] = {}
+    for g in glossary:
+        by_cat.setdefault(g.category, []).append(g)
+    lines: list[str] = []
+    for cat in ("character", "place", "technique", "item", "other", "idiom"):
+        entries = by_cat.get(cat, [])
+        if not entries:
+            continue
+        lines.append(f"[{cat}]")
+        # Longest-term-first inside each category so the LLM matches compound
+        # terms before their substrings. Stable secondary sort by term_zh.
+        for g in sorted(entries, key=lambda e: (-len(e.term_zh), e.term_zh)):
+            # Scope tag right after the term so the precedence is visible
+            # without scanning to the end of the line.
+            base = f"  {g.term_zh} → {g.term_en}  {_scope_marker(g)}"
+            usage = getattr(g, "usage_note", None)
+            if usage and usage.strip():
+                base += f"  [usage: {usage.strip()}]"
+            lines.append(base)
+    return "\n".join(lines)
+
+
+def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
+    """Render captured user paragraph edits as a "preferred rewrites" block.
+
+    Each tuple is (before_text, after_text). Examples are truncated to keep
+    the prompt manageable: a few hundred chars per side is enough to convey
+    the rewriting pattern."""
+    if not style_edits:
+        return ""
+    lines: list[str] = []
+    for i, (before, after) in enumerate(style_edits, start=1):
+        b = (before or "").strip().replace("\n", " ")[:400]
+        a = (after or "").strip().replace("\n", " ")[:400]
+        if not b or not a:
+            continue
+        lines.append(f"Example {i}:\n  BEFORE: {b}\n  AFTER:  {a}")
+    if not lines:
+        return ""
+    return (
+        "USER STYLE PREFERENCES (paragraph rewrites the user made on prior chapters — "
+        "treat as voice / phrasing guidance, not as text to reproduce literally):\n"
+        + "\n\n".join(lines)
+        + "\n\n"
+    )
+
+
+# Single output mode: raw-body delimited envelope across ALL backends. The
+# chapter body rides outside any JSON-escaped string so prose quality is not
+# taxed by escape-rule optimization; the small TERMS block stays as a JSON
+# array because it is machine-readable shape, not literary prose.
+_DELIMITED_BODY_DELIMITER = "=====BODY====="
+_DELIMITED_TERMS_DELIMITER = "=====TERMS====="
+DELIMITED_OUTPUT_INSTRUCTION = f"""Return the translation in EXACTLY this delimited format and nothing else — no JSON wrapper, no markdown code fences, no commentary:
+
+TITLE_EN: <the English chapter title on one line>
+{_DELIMITED_BODY_DELIMITER}
+<the full English translation of the chapter body, with normal paragraph breaks>
+{_DELIMITED_TERMS_DELIMITER}
+<a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...] — categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
+
+
+def build_prompt(
+    chapter_zh: str,
+    title_zh: str | None,
+    glossary: list[GlossaryEntry],
+    previous_context: str | None = None,
+    style_edits: list[tuple[str, str]] | None = None,
+    output_instruction: str | None = None,
+    style_note: str | None = None,
+    free_draft: str | None = None,
+) -> str:
+    # Both locked (user-curated) and unlocked (auto-detected) entries are
+    # filtered to ones whose `term_zh` appears in this chapter — terms absent
+    # from the chapter can't be mistranslated, so sending them just burns
+    # input tokens. Trades the byte-stable-prefix property (which mattered
+    # for upstream implicit caching) for a smaller per-call prompt.
+    # Drop auto-detected entries already covered by a locked alias row (e.g.
+    # unlocked 筑基 alongside locked 筑基 / 築基) so the prompt carries one
+    # authoritative rendering per term.
+    glossary = dedupe_against_locked(glossary)
+    locked_all = [g for g in glossary if g.locked]
+    unlocked = [g for g in glossary if not g.locked]
+    locked = filter_glossary_for_chapter(locked_all, chapter_zh)
+    unlocked_in_chapter = filter_glossary_for_chapter(unlocked, chapter_zh)
+
+    master_block = format_glossary(locked, empty_label="(none yet)")
+    chapter_block = format_glossary(
+        unlocked_in_chapter, empty_label="(none in this chapter)"
+    )
+    title_line = f"CHAPTER TITLE (Chinese): {title_zh}\n" if title_zh else ""
+    # Tonal-continuity reference. Labelled DO NOT TRANSLATE so the model
+    # treats it as a voice anchor rather than source text to render.
+    context_block = ""
+    if previous_context and previous_context.strip():
+        context_block = (
+            "PREVIOUS CHAPTER TAIL (English — tone / voice reference, DO NOT TRANSLATE OR REPEAT):\n"
+            f"{previous_context.strip()}\n\n"
+        )
+    style_block = format_style_edits(style_edits or [])
+    style_note_block = ""
+    if style_note and style_note.strip():
+        style_note_block = (
+            "STYLE NOTE — this novel's English voice (read as a voice instruction, "
+            "match this prose):\n"
+            f"{style_note.strip()}\n\n"
+        )
+    # PEMT: REFERENCE TRANSLATION block. Inserted only when a non-empty
+    # OPUS-MT free draft is available. The instruction frames the draft as
+    # a fidelity anchor — NMT preserves event order and named entities more
+    # literally than LLMs do — while telling the LLM to produce its own
+    # natural prose. "DO NOT TRANSLATE OR COPY VERBATIM" guards against the
+    # LLM either re-translating the draft or echoing its awkward phrasings.
+    free_draft_block = ""
+    if free_draft and free_draft.strip():
+        free_draft_block = (
+            "REFERENCE TRANSLATION (mechanical NMT — for fidelity comparison only, "
+            "DO NOT TRANSLATE OR COPY VERBATIM):\n"
+            f"{free_draft.strip()}\n\n"
+            "This reference was produced offline by a machine-translation model. "
+            "It tends to be more literal than necessary and may sound awkward, but "
+            "it preserves event order, named entities, and quantities faithfully. "
+            "As you translate the Chinese source, consult this reference: where "
+            "its phrasing is more accurate than yours, prefer its meaning; where "
+            "its phrasing is awkward, use your own. Produce a single, fluent, "
+            "faithful English translation that combines the best parts of each. "
+            "The output is YOUR translation — not a copy of the reference, not a "
+            "simple polish of the reference.\n\n"
+        )
+    instruction = (
+        output_instruction if output_instruction is not None
+        else DELIMITED_OUTPUT_INSTRUCTION
+    )
+    return f"""{style_note_block}GLOSSARY — MASTER (locked terms, preserve exactly across all chapters):
+{master_block}
+
+GLOSSARY — THIS CHAPTER (auto-detected terms appearing here):
+{chapter_block}
+
+{style_block}{context_block}{free_draft_block}{title_line}CHAPTER (Chinese):
+{chapter_zh}
+
+{instruction}
+"""
+
+
+def _unwrap_outer_fence(text: str) -> str:
+    """Strip a code fence only when it wraps the whole response.
+
+    Do not use `_strip_code_fence` on the full delimited envelope: if the
+    model fences only the TERMS JSON, taking the last fence would discard the
+    title and chapter body. This mirrors the DeepSeek parser's behavior.
+    """
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    first_nl = t.find("\n")
+    if first_nl != -1:
+        t = t[first_nl + 1 :]
+    t = t.rstrip()
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
+
+def _parse_new_terms_block(raw: str) -> list[NewTerm]:
+    """Best-effort parse for the small TERMS JSON array in delimited mode."""
+    raw = _strip_code_fence(raw.strip())
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("dropping malformed TERMS block from delimited response")
+        return []
+    if not isinstance(data, list):
+        return []
+    terms: list[NewTerm] = []
+    for t in data:
+        if not (isinstance(t, dict) and t.get("zh") and t.get("en")):
+            continue
+        try:
+            terms.append(NewTerm(**t))
+        except ValidationError:
+            logger.warning("dropping malformed new_term: %r", t)
+    return terms
+
+
+def parse_delimited_response(raw: str) -> TranslationResult:
+    """Parse the raw-body translator envelope into a TranslationResult."""
+    text = _unwrap_outer_fence(raw)
+    if _DELIMITED_BODY_DELIMITER not in text:
+        raise ValueError("translation response missing BODY delimiter")
+    head, _, rest = text.partition(_DELIMITED_BODY_DELIMITER)
+    title_match = re.search(
+        r"TITLE_EN\s*:\s*(.+?)\s*$", head.strip(), re.MULTILINE
+    )
+    title_en = (title_match.group(1).strip() if title_match else "") or "(untitled)"
+    if _DELIMITED_TERMS_DELIMITER in rest:
+        body, _, terms_raw = rest.partition(_DELIMITED_TERMS_DELIMITER)
+    else:
+        body, terms_raw = rest, ""
+    body = body.strip()
+    if not body:
+        raise ValueError("translation response missing body text")
+    return TranslationResult(
+        title_en=title_en,
+        translated_text=body,
+        new_terms=_parse_new_terms_block(terms_raw),
+    )
+
+
+def _parse_titled_fallback(raw: str) -> tuple[str | None, str]:
+    """Split the "TITLE_EN: X\n=====BODY=====\n..." plain-text fallback format.
+
+    Returns (title_en, body). If the structure isn't present, returns
+    (None, raw) so the caller can fall back to using the Chinese title."""
+    if _FALLBACK_BODY_DELIMITER not in raw:
+        return None, raw
+    head, _, body = raw.partition(_FALLBACK_BODY_DELIMITER)
+    match = re.search(r"TITLE_EN\s*:\s*(.+?)\s*$", head.strip(), re.MULTILINE)
+    if not match:
+        return None, body.strip()
+    return match.group(1).strip(), body.strip()
+
+
+class BaseTranslator(ABC):
+    """Shared orchestration: retry once on malformed primary output, then fall
+    back to a plain-text translation. Subclasses just plug in how to run the
+    underlying LLM call for each of the two modes."""
+
+    name: str = "base"
+    # Upstream model identifier (e.g. "claude-opus-4-5"). Subclasses set this
+    # so the LLM response cache key includes the model — a model swap then
+    # invalidates entries instead of returning a result from the old model.
+    model_id: str = ""
+    # How many chapters this backend can safely translate in parallel. Routes
+    # read this to size their semaphore. Subclasses override for stricter
+    # serialization (Claude CLI subscription) or wider concurrency.
+    max_parallel: int = 1
+    # System instruction for the current call. Populated per-call by
+    # translate_chapter from the resolved (genre, custom_brief) before any
+    # backend hook runs. Backends read self.system_instruction, so genre
+    # changes propagate without modifying _complete signatures.
+    # Process-global queue lock keeps this single-writer; do not parallelize.
+    system_instruction: str = ""
+
+    # Per-chapter call counter. Reset at the start of translate_chapter;
+    # _check_call_budget increments and raises if exhausted. Process-global
+    # queue lock keeps this single-writer.
+    _llm_call_count: int = 0
+    # Per-chapter token usage accumulator. Reset at the start of
+    # translate_chapter; backends call _emit_usage(...) after each
+    # successful _complete / _complete_plain to add to the totals, and the
+    # final TranslationResult carries the summed counts so the queue
+    # worker can persist them + compute cost.
+    _usage_accumulator: TokenUsage | None = None
+
+    def cache_identity(self) -> str:
+        """Stable backend identifier used as part of the LLM cache key."""
+        return f"{self.name}:{self.model_id}:{PROMPT_TEMPLATE_VERSION}"
+
+    def _emit_usage(
+        self,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+    ) -> None:
+        """Backends call this after each LLM round-trip to record token
+        usage from the SDK response. Multiple calls accumulate (e.g. one
+        translate_chapter that does parse-retry + fallback should sum
+        usage across all calls). Counts coerce to int and floor at 0 to
+        defang SDKs that occasionally hand back None or a negative."""
+        if self._usage_accumulator is None:
+            self._usage_accumulator = TokenUsage()
+        self._usage_accumulator.input_tokens += max(int(input_tokens or 0), 0)
+        self._usage_accumulator.output_tokens += max(int(output_tokens or 0), 0)
+        self._usage_accumulator.cached_input_tokens += max(
+            int(cached_input_tokens or 0), 0
+        )
+
+    def _check_call_budget(self) -> None:
+        """Raise if this chapter has already burned MAX_LLM_CALLS_PER_CHAPTER
+        LLM completions. Counted at the BaseTranslator orchestration layer
+        (each _complete + _complete_plain ticks one), not inside an SDK's
+        own transient-retry loop.
+        """
+        if self._llm_call_count >= MAX_LLM_CALLS_PER_CHAPTER:
+            raise RuntimeError(
+                f"{self.name} translator exceeded the "
+                f"{MAX_LLM_CALLS_PER_CHAPTER}-call per-chapter budget — "
+                f"refusing further LLM calls. Raise MAX_LLM_CALLS_PER_CHAPTER "
+                f"if this is an unusually long retry path you expected."
+            )
+        self._llm_call_count += 1
+
+    async def translate_chapter(
+        self,
+        chapter_zh: str,
+        title_zh: str | None,
+        glossary: list[GlossaryEntry],
+        previous_context: str | None = None,
+        style_edits: list[tuple[str, str]] | None = None,
+        use_cache: bool = True,
+        style_note: str | None = None,
+        genre: str | None = None,
+        custom_brief: str | None = None,
+        free_draft: str | None = None,
+        source_language: str | None = None,
+    ) -> TranslationResult:
+        # ``source_language`` is accepted by the BaseTranslator surface so
+        # downstream backends (notably OpusMTTranslator) can validate it
+        # against the configured pair. LLM backends ignore it — they read
+        # the language implicitly from the source text. ``free_draft`` is
+        # the optional OPUS-MT reference layer threaded into build_prompt
+        # for PEMT mode.
+
+        # Reset the per-chapter LLM call counter + usage accumulator at
+        # the start of each translate_chapter. _check_call_budget() ticks
+        # the counter once per _complete / _complete_plain invocation;
+        # _emit_usage() adds to the accumulator after each successful call.
+        self._llm_call_count = 0
+        self._usage_accumulator = TokenUsage()
+        # Build the genre-aware system instruction BEFORE the cache key, so
+        # the key folds in the prompt content. Stash on self so backend
+        # _complete hooks pick it up without signature changes.
+        self.system_instruction = build_system_instruction(genre, custom_brief)
+        prompt = build_prompt(
+            chapter_zh, title_zh, glossary, previous_context, style_edits,
+            style_note=style_note,
+            free_draft=free_draft,
+        )
+        cache_key = llm_cache.translation_key(
+            backend_id=self.cache_identity(),
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+        )
+        if use_cache:
+            cached = llm_cache.load_translation(cache_key)
+            if cached is not None:
+                logger.info(
+                    "%s translator cache HIT (key %s…)", self.name, cache_key[:12]
+                )
+                return cached
+            # Pair with the HIT log so `grep "translator cache" server.log
+            # | awk` can produce a hit-rate stat without extra plumbing.
+            logger.info(
+                "%s translator cache MISS (key %s…)", self.name, cache_key[:12]
+            )
+        else:
+            logger.info(
+                "%s translator cache SKIP (force_retranslate, key %s…)",
+                self.name, cache_key[:12],
+            )
+        for attempt in range(2):
+            self._check_call_budget()
+            try:
+                raw = await self._complete(prompt)
+                result = parse_delimited_response(raw)
+                # Cache the structured result WITHOUT usage so future
+                # cache hits don't replay token counts from the original
+                # call (the cache hit itself burns no tokens). Usage
+                # rides back to the caller via _attach_usage so the queue
+                # worker can persist it on this specific commit.
+                llm_cache.store_translation(cache_key, result)
+                return self._attach_usage(result)
+            except (ValueError, ValidationError) as e:
+                logger.warning(
+                    "%s response parse failed (attempt %d): %s",
+                    self.name, attempt + 1, e,
+                )
+                if attempt == 0:
+                    continue
+                # Plain-text fallback intentionally not cached: it drops
+                # `new_terms` and would poison the next proper call.
+                fallback = await self._plain_text_fallback(chapter_zh, title_zh)
+                return self._attach_usage(fallback)
+        raise RuntimeError("translate_chapter exited the retry loop unexpectedly")
+
+    def _attach_usage(self, result: TranslationResult) -> TranslationResult:
+        """Return a copy of `result` with the accumulated TokenUsage attached.
+        Called only on FRESH translation paths (not cache hits) so cached
+        TranslationResults never carry stale per-call metadata."""
+        usage = self._usage_accumulator
+        if usage is None or (
+            usage.input_tokens == 0
+            and usage.output_tokens == 0
+            and usage.cached_input_tokens == 0
+        ):
+            return result
+        return result.model_copy(update={"usage": usage})
+
+    async def _plain_text_fallback(
+        self, chapter_zh: str, title_zh: str | None
+    ) -> TranslationResult:
+        """Last-ditch fallback when structured JSON keeps failing. Asks for the
+        title and body in a delimited plain-text format so the reader doesn't
+        end up with a Chinese title above an English body. If the model fails
+        to follow the format, falls back to title_zh (or "(untitled)")."""
+        self._check_call_budget()
+        if title_zh:
+            prompt = (
+                "Translate the following Chinese chapter to natural English. "
+                "Preserve paragraph breaks. Translate BOTH the title and the "
+                "body. Output exactly in this format and nothing else:\n\n"
+                f"TITLE_EN: <English title>\n"
+                f"{_FALLBACK_BODY_DELIMITER}\n"
+                "<English body>\n\n"
+                f"CHINESE TITLE: {title_zh}\n\n"
+                f"CHINESE BODY:\n{chapter_zh}"
+            )
+            raw = (await self._complete_plain(prompt)).strip()
+            title_en, body = _parse_titled_fallback(raw)
+            if not body:
+                raise ValueError("plain-text fallback produced empty body")
+            return TranslationResult(
+                title_en=title_en or title_zh,
+                translated_text=body,
+                new_terms=[],
+                degraded=True,
+            )
+        prompt = (
+            "Translate the following Chinese chapter to natural English. "
+            "Preserve paragraph breaks. Output the English translation only.\n\n"
+            f"{chapter_zh}"
+        )
+        body = (await self._complete_plain(prompt)).strip()
+        if not body:
+            raise ValueError("plain-text fallback produced empty body")
+        return TranslationResult(
+            title_en="(untitled)",
+            translated_text=body,
+            new_terms=[],
+            degraded=True,
+        )
+
+    @abstractmethod
+    async def _complete(self, prompt: str) -> str:
+        """Run the primary translation call. Return the raw model text — the
+        delimited envelope (`TITLE_EN: ...\\n=====BODY=====\\n...\\n=====TERMS=====\\n[...]`)
+        that `parse_delimited_response` will consume. Provider-specific
+        envelope stripping (Claude CLI JSON wrapper, etc.) happens here."""
+
+    @abstractmethod
+    async def _complete_plain(self, prompt: str) -> str:
+        """Run a plain-text completion (no JSON schema) for the fallback path."""

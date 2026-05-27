@@ -1,0 +1,104 @@
+/* Page-specific layout for stats.html — card-grid + sparkline shape used
+   nowhere else, kept off base.css. */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.stats-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  background: var(--bg);
+}
+
+.stats-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.stats-headline {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 4px 0;
+}
+
+.stats-sub { font-size: 12px; color: var(--muted); margin: 2px 0; }
+
+.stats-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+
+.stats-row .lbl { color: var(--muted); }
+.stats-row .val { font-weight: 500; }
+
+.stats-warning {
+  color: var(--warn-fg, #b56a16);
+  background: var(--warn-tint, rgba(181, 106, 22, 0.08));
+  padding: 4px 8px; border-radius: 4px;
+  font-size: 11px; margin-top: 6px;
+}
+
+.stats-sparkline { width: 100%; height: 40px; margin-top: 6px; }
+.stats-sparkline rect { fill: var(--accent, #5fb8a4); }
+
+.stats-empty { color: var(--muted); font-style: italic; font-size: 13px; }
+
+.stats-bar-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.stats-bar-row .lbl { color: var(--fg); }
+
+.stats-bar-row .bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  background: var(--bg-tint);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stats-bar-row .bar .fill {
+  display: block;
+  height: 100%;
+  background: var(--accent, #5fb8a4);
+}
+
+/* ST1: skeleton state matching the eventual card layout. The animation +
+ * .skeleton-line / .stats-card.skeleton classes mirror the library shelf's
+ * pattern so the page-shape doesn't shift on first paint. */
+.stats-card.skeleton {
+  background: linear-gradient(180deg,
+    var(--pane-bg) 0%,
+    color-mix(in srgb, var(--pane-bg) 80%, var(--border-soft)) 100%);
+}
+.stats-card.skeleton .skeleton-line {
+  height: 12px;
+  border-radius: 3px;
+  margin: 8px 0;
+  background: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  animation: stats-skel-pulse 1.4s var(--ease) infinite;
+}
+.stats-card.skeleton .skeleton-line.short { width: 30%; height: 9px; }
+.stats-card.skeleton .skeleton-line.med   { width: 60%; }
+.stats-card.skeleton .skeleton-line.long  { width: 88%; }
+@keyframes stats-skel-pulse {
+  0%   { opacity: 0.55; }
+  50%  { opacity: 0.85; }
+  100% { opacity: 0.55; }
+}

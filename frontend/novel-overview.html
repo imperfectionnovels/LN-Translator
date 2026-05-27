@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Novel · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/css/base.css?v=1">
+<link rel="stylesheet" href="/static/css/library.css?v=1">
+<link rel="stylesheet" href="/static/css/novel-overview.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
+
+<main id="main" tabindex="-1">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/library">Library</a>
+    <span aria-hidden="true">›</span>
+    <span class="here" id="crumb-title">Novel</span>
+  </nav>
+
+  <div id="no-id-msg" hidden>
+    <p class="muted">No novel selected. <a href="/library">Pick one from the library.</a></p>
+  </div>
+
+  <section id="overview" hidden>
+    <header class="no-header">
+      <div class="no-cover" id="no-cover" aria-hidden="true">
+        <span class="no-cover-placeholder" id="no-cover-placeholder">書</span>
+      </div>
+      <div class="no-header-body">
+        <h1 class="no-title" id="no-title">…</h1>
+        <div class="no-sub">
+          <span id="no-author" class="muted">…</span>
+          <span class="muted" id="no-original-title"></span>
+        </div>
+        <div class="no-progress muted" id="no-progress"></div>
+        <div class="no-cta">
+          <a class="btn-primary" id="no-read-btn" href="#">Read</a>
+          <a class="btn-ghost" id="no-glossary-btn" href="#">Glossary</a>
+          <a class="btn-ghost" id="no-stats-btn" href="#">Stats</a>
+        </div>
+      </div>
+    </header>
+
+    <section class="no-card">
+      <h2>Genres</h2>
+      <p class="lead">The <strong>primary</strong> genre drives the translator's prompt overlay. Secondary tags are organizational labels. Click "Make primary" on a secondary chip to swap.</p>
+      <div class="no-genre-chips" id="no-genre-chips" aria-live="polite"></div>
+      <div class="no-add-genre">
+        <select id="no-add-genre-select"></select>
+        <button type="button" class="btn-ghost" id="no-add-genre-btn">Add tag</button>
+        <span class="muted" id="no-genre-status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="no-card">
+      <h2>Source language</h2>
+      <p class="lead">Auto-detected from the first chapter's text. Override here if detection is wrong (mixed-language imports, romanized Chinese, etc.).</p>
+      <div class="no-inline-edit">
+        <span class="muted">Currently:</span>
+        <select id="no-source-lang-select">
+          <option value="zh">Chinese (中文)</option>
+          <option value="ja">Japanese (日本語)</option>
+          <option value="ko">Korean (한국어)</option>
+        </select>
+        <span class="muted" id="no-source-lang-status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="no-card">
+      <h2>Pipeline</h2>
+      <p class="lead">Per-novel overrides for translator + refinement. Leave on "Default" to inherit App Settings.</p>
+      <div class="no-pipeline-grid">
+        <div class="form-row">
+          <label for="no-translator">Translator</label>
+          <select id="no-translator"><option value="">Default</option></select>
+        </div>
+        <div class="form-row">
+          <label for="no-refinement">Refinement</label>
+          <select id="no-refinement"><option value="">Off</option></select>
+        </div>
+        <div class="form-row no-wide">
+          <label for="no-custom-brief">Custom style brief <span class="muted">(per-novel; overrides genre overlay)</span></label>
+          <textarea id="no-custom-brief" rows="3" placeholder="e.g. terse modern prose; preserve cultivator titles verbatim"></textarea>
+        </div>
+      </div>
+      <div class="no-pipeline-actions">
+        <button type="button" class="btn-primary" id="no-pipeline-save">Save pipeline</button>
+        <span class="muted" id="no-pipeline-status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="no-card">
+      <h2>Metadata</h2>
+      <p class="lead">Cosmetic only. Surfaces on library cards and in EPUB exports.</p>
+      <div class="no-meta-grid">
+        <div class="form-row no-wide">
+          <label for="no-title-in">Title</label>
+          <input type="text" id="no-title-in" maxlength="300" required>
+        </div>
+        <div class="form-row">
+          <label for="no-author-in">Author</label>
+          <input type="text" id="no-author-in" maxlength="200">
+        </div>
+        <div class="form-row">
+          <label for="no-original-title-in">Original title</label>
+          <input type="text" id="no-original-title-in" maxlength="200">
+        </div>
+        <div class="form-row">
+          <label for="no-status-in">Status</label>
+          <select id="no-status-in">
+            <option value="">(unset)</option>
+            <option value="ongoing">Ongoing</option>
+            <option value="complete">Complete</option>
+            <option value="hiatus">Hiatus</option>
+            <option value="dropped">Dropped</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="no-series-name-in">Series name</label>
+          <input type="text" id="no-series-name-in" maxlength="200">
+        </div>
+        <div class="form-row">
+          <label for="no-series-index-in">Series index</label>
+          <input type="number" id="no-series-index-in" min="1" max="999" step="1">
+        </div>
+        <div class="form-row no-wide">
+          <label for="no-synopsis-in">Synopsis</label>
+          <textarea id="no-synopsis-in" rows="4" maxlength="4000"></textarea>
+        </div>
+      </div>
+      <div class="no-pipeline-actions">
+        <button type="button" class="btn-primary" id="no-meta-save">Save metadata</button>
+        <span class="muted" id="no-meta-status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="no-card no-summary-grid">
+      <div>
+        <h2>Translation</h2>
+        <div class="no-stat-row"><span class="lbl">Chapters</span><span class="val" id="no-stat-chapters">…</span></div>
+        <div class="no-stat-row"><span class="lbl">Done</span><span class="val" id="no-stat-done">…</span></div>
+        <div class="no-stat-row"><span class="lbl">Queued</span><span class="val" id="no-stat-queued">…</span></div>
+        <div class="no-stat-row"><span class="lbl">Cost</span><span class="val" id="no-stat-cost">…</span></div>
+      </div>
+      <div>
+        <h2>Glossary</h2>
+        <div class="no-stat-row"><span class="lbl">Entries</span><span class="val" id="no-stat-glossary">…</span></div>
+        <a class="btn-ghost" id="no-glossary-link" href="#">Open glossary →</a>
+      </div>
+    </section>
+
+    <!-- Archive lives here (not on the library card) so the destructive
+         action is at the bottom of the per-novel surface, away from the
+         shelf grid where one wrong click does damage. -->
+    <section class="no-card no-danger-zone">
+      <h2>Archive</h2>
+      <p class="lead">Soft-deletes this novel. The Archive tab on the library keeps it for 30 days; restore or purge from there.</p>
+      <button type="button" class="btn-danger" id="no-archive-btn">Archive novel</button>
+      <span class="muted" id="no-archive-status" aria-live="polite"></span>
+    </section>
+  </section>
+
+  <dialog id="archive-confirm" class="dialog" aria-labelledby="archive-confirm-title">
+    <h3 id="archive-confirm-title">Archive novel?</h3>
+    <div class="dialog-body" id="archive-confirm-body"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+      <button type="button" class="btn-danger" data-act="ok">Archive</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="status" aria-live="polite" role="status"></div>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/novel-overview.js"></script>
+</body>
+</html>
