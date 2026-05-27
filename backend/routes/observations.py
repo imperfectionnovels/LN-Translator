@@ -17,6 +17,7 @@ import logging
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
 from backend.db import get_conn
 from backend.models import Observation, ObservationsSummary
@@ -193,36 +194,43 @@ async def get_diagnostics(
     from backend.services.providers import get_default_provider  # noqa: PLC0415
 
     default = await get_default_provider()
-    log_tail: list[str] = []
     log_path = USER_DATA_ROOT / "logs" / "startup.log"
-    if log_path.exists():
-        try:
-            with open(log_path, encoding="utf-8", errors="replace") as f:
-                # Read last ~50 lines; cheap, bounded.
-                lines = f.readlines()
-                log_tail = [ln.rstrip() for ln in lines[-50:]]
-        except OSError:
-            log_tail = ["(log file present but unreadable)"]
-
-    def _dir_size(p) -> int:
-        if not p.exists():
-            return 0
-        total = 0
-        try:
-            for root, _dirs, files in os.walk(p):
-                for fname in files:
-                    try:
-                        total += (p.__class__(root) / fname).stat().st_size
-                    except OSError:
-                        continue
-        except OSError:
-            pass
-        return total
-
-    cache = cache_stats()
-    db_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     covers_dir = USER_DATA_ROOT / "covers"
-    covers_bytes = _dir_size(covers_dir)
+
+    def _gather_disk_info() -> tuple[list[str], int, int]:
+        # All filesystem I/O for this endpoint runs in one threadpool
+        # hop so the event loop isn't blocked by readlines / os.walk /
+        # stat. Returns (log_tail, db_bytes, covers_bytes).
+        log_tail: list[str] = []
+        if log_path.exists():
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    log_tail = [ln.rstrip() for ln in lines[-50:]]
+            except OSError:
+                log_tail = ["(log file present but unreadable)"]
+
+        def _dir_size(p) -> int:
+            if not p.exists():
+                return 0
+            total = 0
+            try:
+                for root, _dirs, files in os.walk(p):
+                    for fname in files:
+                        try:
+                            total += (p.__class__(root) / fname).stat().st_size
+                        except OSError:
+                            continue
+            except OSError:
+                pass
+            return total
+
+        db_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+        covers_bytes = _dir_size(covers_dir)
+        return log_tail, db_bytes, covers_bytes
+
+    log_tail, db_bytes, covers_bytes = await run_in_threadpool(_gather_disk_info)
+    cache = cache_stats()
     cache_bytes = int(cache.get("on_disk_bytes") or 0)
     return {
         "version": __version__,

@@ -10,7 +10,10 @@ const grid = document.getElementById("stats-grid");
 
 /* ---- API helpers ---- */
 const statsApi = {
-  global: () => fetch("/api/stats/global").then(r => r.json()),
+  global: () => fetch("/api/stats/global").then(async r => {
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  }),
   novel: (id) => fetch(`/api/stats/novel/${id}`).then(async r => {
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();

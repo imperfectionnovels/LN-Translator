@@ -37,15 +37,28 @@ const applyChoiceMeta = document.getElementById("apply-choice-meta");
 
 async function openGlobalApplyChoiceDialog(entry, oldTermEn) {
   if (!applyChoiceDlg) return;
-  // Surface the blast radius up front — global edits hit every novel.
+  // Surface the blast radius up front, global edits hit every novel.
+  // If the usage lookup fails, surface it: an empty array would falsely
+  // read as "0 novels affected" and the user could confidently apply
+  // changes thinking they were no-ops.
   let usage = [];
-  try { usage = await api.globalGlossaryUsage(entry.id); } catch (_) {}
+  let usageFailed = false;
+  try {
+    usage = await api.globalGlossaryUsage(entry.id);
+  } catch (e) {
+    usageFailed = true;
+    showToast(`Could not load impact for "${entry.term_zh}": ${e.message}`, "err");
+  }
   const totalChapters = usage.reduce((s, u) => s + u.chapter_count, 0);
   applyChoiceBody.innerHTML =
     `<p>Global term updated:</p>
      <p><strong>${escapeHtml(entry.term_zh)}</strong>: ${escapeHtml(oldTermEn)} → <strong>${escapeHtml(entry.term_en)}</strong></p>
      <p class="muted">Applying updates exact matching English text only. Chapters where the old term was translated inconsistently won't all match.</p>`;
-  if (usage.length) {
+  if (usageFailed) {
+    applyChoiceMeta.innerHTML =
+      `<strong>Impact:</strong> could not be determined (usage lookup failed). Applying anyway will still attempt the change across all novels.`;
+    applyChoiceMeta.classList.remove("hidden");
+  } else if (usage.length) {
     applyChoiceMeta.innerHTML =
       `<strong>Impact:</strong> ${usage.length} novel${usage.length === 1 ? "" : "s"} · ${totalChapters} source chapter${totalChapters === 1 ? "" : "s"} reference this term.`;
     applyChoiceMeta.classList.remove("hidden");
@@ -170,11 +183,21 @@ function _wireCards() {
       const entry = entries.find(x => x.id === id);
       if (!entry) return;
       // Show blast radius before delete so the user knows what they're
-      // undoing across novels.
+      // undoing across novels. If the lookup fails, say so explicitly,
+      // an empty array would falsely read as "0 novels affected" and
+      // the user could confirm a delete believing it had no reach.
       let usage = [];
-      try { usage = await api.globalGlossaryUsage(id); } catch (_) { /* best effort */ }
+      let usageFailed = false;
+      try {
+        usage = await api.globalGlossaryUsage(id);
+      } catch (e) {
+        usageFailed = true;
+        showToast(`Could not load impact for "${entry.term_zh}": ${e.message}`, "err");
+      }
       const totalChapters = usage.reduce((s, u) => s + u.chapter_count, 0);
-      const meta = usage.length
+      const meta = usageFailed
+        ? `<strong>Affects:</strong> could not be determined (usage lookup failed).`
+        : usage.length
         ? `<strong>Affects:</strong> ${usage.length} novel${usage.length === 1 ? "" : "s"} · ${totalChapters} chapter${totalChapters === 1 ? "" : "s"} reference this term in their source.`
         : "";
       const ok = await confirmDialog({
