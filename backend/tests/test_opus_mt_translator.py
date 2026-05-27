@@ -268,6 +268,67 @@ async def test_substitution_disabled_when_no_sentinel_format(monkeypatch):
     assert "玄阳" in result.translated_text
 
 
+@pytest.mark.asyncio
+async def test_term_en_slash_alternates_substitute_as_headword(monkeypatch):
+    """Descriptor-style term_en values with slash alternates restore as just
+    the first headword, not the full `Foo / Bar` display string. Reproduces
+    the corruption mode where `会 → Society / Association` was injecting
+    the literal `Society / Association` into the prose."""
+    _install_fake_translator(monkeypatch)
+    t = OpusMTTranslator(provider=_make_provider("zh-en"))
+
+    glossary = [_g("会", "Society / Association", locked=True)]
+    result = await t.translate_chapter(
+        chapter_zh="他参加了会。",
+        title_zh=None,
+        glossary=glossary,
+        source_language="zh",
+    )
+    assert "Society" in result.translated_text
+    assert "/ Association" not in result.translated_text
+
+
+@pytest.mark.asyncio
+async def test_term_en_parenthetical_substitutes_as_headword(monkeypatch):
+    """A `term_en` carrying trailing parenthetical metadata restores as the
+    bare English term, not the full descriptor. Covers entries like
+    `修炼 → cultivation (the act)`."""
+    _install_fake_translator(monkeypatch)
+    t = OpusMTTranslator(provider=_make_provider("zh-en"))
+
+    glossary = [_g("修炼", "cultivation (the act)", locked=True)]
+    result = await t.translate_chapter(
+        chapter_zh="他在修炼。",
+        title_zh=None,
+        glossary=glossary,
+        source_language="zh",
+    )
+    assert "cultivation" in result.translated_text
+    assert "(the act)" not in result.translated_text
+
+
+@pytest.mark.asyncio
+async def test_paired_zh_en_aliases_substitute_positionally(monkeypatch):
+    """A row whose zh side has the same alias arity as the en side gets each
+    zh variant mapped to its positional en counterpart. Covers entries like
+    `呂陽 / 都煥 → Lü Yang / Douhuan` where one character has two written
+    forms with two distinct romanizations."""
+    _install_fake_translator(monkeypatch)
+    t = OpusMTTranslator(provider=_make_provider("zh-en"))
+
+    glossary = [_g("呂陽 / 都煥", "Lü Yang / Douhuan", locked=True)]
+    result = await t.translate_chapter(
+        chapter_zh="呂陽很强。都煥很弱。",
+        title_zh=None,
+        glossary=glossary,
+        source_language="zh",
+    )
+    assert "Lü Yang" in result.translated_text
+    assert "Douhuan" in result.translated_text
+    assert "/ Douhuan" not in result.translated_text
+    assert "/ Lü Yang" not in result.translated_text
+
+
 # ---------------------------------------------------------------------------
 # Catalog + factory + probe integration
 # ---------------------------------------------------------------------------

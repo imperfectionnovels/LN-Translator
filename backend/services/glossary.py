@@ -56,6 +56,7 @@ __all__ = [
     "split_aliases",
     # Owned by this module
     "english_term_present",
+    "headword_for_substitution",
     "missing_translator_terms",
     "list_for_novel",
     "merge_new_terms",
@@ -149,6 +150,17 @@ def _check_variants(term_en: str) -> list[str]:
             seen.add(p)
             out.append(p)
     return out
+
+
+def headword_for_substitution(term_en: str) -> str:
+    """Bare English form suitable for inline injection (e.g., into NMT input).
+
+    Strips trailing parenthetical metadata and any alias alternates, returning
+    the first remaining variant. Use this only at the substitution boundary,
+    the stored `term_en` preserves the user-visible descriptor syntax used by
+    the LLM prompt and the UI."""
+    variants = _check_variants(term_en)
+    return variants[0] if variants else ""
 
 
 _LOCKED_IDIOM_VARIANTS: dict[str, tuple[str, ...]] = {

@@ -505,11 +505,18 @@ class CTranslator:
         if not sentences:
             return []
         tokens_in = [self._src.encode(s, out_type=str) for s in sentences]
+        # repetition_penalty + no_repeat_ngram_size suppress the degenerate
+        # decoder loops that turn short sentences into walls of one phrase.
+        # Without these, OPUS-MT routinely emits `Junior Brother Junior Brother
+        # Junior Brother ...` and similar; values are the de-facto defaults
+        # for OPUS-MT-style models.
         result = self._ct2.translate_batch(
             tokens_in,
             beam_size=4,
             max_decoding_length=256,
             replace_unknowns=True,
+            repetition_penalty=1.2,
+            no_repeat_ngram_size=4,
         )
         tokens_out = [r.hypotheses[0] for r in result]
         return [self._tgt.decode(t) for t in tokens_out]

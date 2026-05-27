@@ -36,6 +36,8 @@ from typing import Iterable
 
 from backend.models import GlossaryEntry, TranslationResult
 from backend.services import opus_mt_models
+from backend.services.glossary import headword_for_substitution
+from backend.services.glossary_filters import split_aliases
 from backend.services.providers import Provider
 
 from .base import BaseTranslator
@@ -231,28 +233,34 @@ class OpusMTTranslator(BaseTranslator):
         if ct.sentinel_fn is None:
             return {}, text
 
-        # Filter to LOCKED entries with non-empty zh+en, sorted by zh length
-        # descending so we substitute compound terms (e.g. "九霄玄宫") before
-        # any shorter substring of them ("玄宫"). This matches the same
-        # longest-first discipline the format_glossary block uses for the LLM.
-        candidates = [
-            g for g in glossary
-            if getattr(g, "locked", False)
-            and (g.term_zh or "").strip()
-            and (g.term_en or "").strip()
-        ]
-        candidates.sort(key=lambda g: (-len(g.term_zh), g.term_zh))
+        # Expand locked entries into (zh_alias, clean_en) pairs so a row like
+        # `呂陽 / 都煥 → Lü Yang / Douhuan` becomes two independent substitutions,
+        # and so a descriptor-style en value like `Society / Association` or
+        # `cultivation (the act)` is reduced to its bare headword. The stored
+        # `term_en` keeps its descriptor syntax for the LLM prompt and the UI;
+        # only the NMT substitution boundary gets the bare form. Sorted by zh
+        # length descending so compound terms (e.g. "九霄玄宫") substitute before
+        # any shorter substring ("玄宫").
+        pairs: list[tuple[str, str]] = []
+        for g in glossary:
+            if not getattr(g, "locked", False):
+                continue
+            for zh, en in split_aliases(g.term_zh or "", g.term_en or ""):
+                clean_en = headword_for_substitution(en)
+                if zh and clean_en:
+                    pairs.append((zh, clean_en))
+        pairs.sort(key=lambda p: (-len(p[0]), p[0]))
 
         sub_map: dict[str, str] = {}
         idx = 0
         out = text
-        for g in candidates:
-            if g.term_zh not in out:
+        for zh, clean_en in pairs:
+            if zh not in out:
                 continue
             idx += 1
             sentinel = ct.sentinel_fn(idx)
-            sub_map[sentinel] = g.term_en
-            out = out.replace(g.term_zh, sentinel)
+            sub_map[sentinel] = clean_en
+            out = out.replace(zh, sentinel)
         return sub_map, out
 
     def _restore_glossary_substitution(
