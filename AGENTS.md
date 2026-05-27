@@ -13,10 +13,13 @@ the prompt overlays support.
 Key facts:
 
 - **AI providers are generic.** A `Provider` row in the database describes one
-  backend (claude_agent, claude_cli, gemini, deepseek) with its own `model_id`,
-  `base_url`, and `secret_ref`. Novels reference providers by id; the queue
-  worker routes through `provider.provider_type`. **Do not hardcode model
-  versions in routing logic** — treat provider type + model as data.
+  backend with its own `model_id`, `base_url`, and `secret_ref`. Novels reference
+  providers by id; the queue worker routes through `provider.provider_type`. The
+  authoritative list of supported types lives in
+  `backend/services/translator_catalog.py::_CATALOG` (currently 19 types across
+  the Subscription / API key / Local groups; the dropdown in the Add Provider
+  dialog is generated from it). **Do not hardcode model versions in routing
+  logic** — treat provider type + model as data.
 - **Per-novel settings** drive each translation: `translator_provider_id`,
   optional `refinement_provider_id` (Phase 4), `genre`, `custom_style_brief`,
   `source_language`. NULL falls back to defaults via `resolve_genre` and the
@@ -66,8 +69,10 @@ Key facts:
   mid-sentence paragraph breaks. Observers LOG only; the single-pass thesis
   is that noticing has to happen inside the translator's thinking phase.
 
-Codex is not a supported backend. If you see `Codex` mentioned anywhere in
-the repo it's a stale find-replace artifact — file an issue.
+Subscription-CLI backends (`codex_cli`, `gemini_cli`, `opencode`) reuse the
+same shape as `claude_cli`: they shell out to a vendor CLI rather than holding
+an API key, so the secret_ref column stays empty and the user authenticates
+out-of-band via the vendor's own `<tool> login` command.
 
 ## Where to look
 

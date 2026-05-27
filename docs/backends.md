@@ -110,6 +110,64 @@ content-addressed cache key (only the draft prompt + system instruction are).
 DeepSeek auto-caches the glossary-heavy prefix server-side. Log line
 `deepseek X usage: prompt=N (cached=M), completion=...` shows the hit rate.
 
+## Other backends
+
+The four detailed backends above (plus `opus_mt` further down) are the ones
+with real per-backend tuning surface. The catalog in
+`backend/services/translator_catalog.py::_CATALOG` also lists 14 more types,
+most of which are thin OpenAI-compatible wrappers with no custom knobs. They live under `backend/services/translators/openai_compatible.py` (the
+shared base) plus a tiny per-vendor subclass that sets `name`,
+`DEFAULT_BASE_URL`, and the secret-ref hint. The catalog is the authoritative
+menu; `KNOWN_PROVIDER_TYPES`, the Add Provider dropdown, and the factory
+dispatch all derive from it.
+
+Grouped by the catalog's `group` field:
+
+- **Subscription** (no API key, vendor CLI handles auth out-of-band):
+  - `codex_cli` — OpenAI Codex CLI, drives a ChatGPT Plus / Pro / Team
+    subscription. Install with `npm i -g @openai/codex`, then `codex login`.
+    Curated models: `gpt-5`, `gpt-5-codex`, `o3`.
+  - `gemini_cli` — Google Gemini CLI, drives a Google account (free tier +
+    Gemini Advanced). Install with `npm i -g @google/gemini-cli`, then run
+    `gemini` once to OAuth.
+  - `opencode` — multi-provider router by OpenCode. Routes to Anthropic /
+    OpenAI / Google / GitHub Copilot under whichever provider the user has
+    logged into. Model IDs use OpenCode's `<provider>/<model>` namespacing
+    (e.g. `anthropic/claude-opus-4-7`).
+- **API key** (paste a key; secret resolved via `keyring` → env-var fallback):
+  - `anthropic_api` — Anthropic Claude via direct API key (alternative to the
+    SDK / CLI subscription path).
+  - `openai` — OpenAI native (`api.openai.com/v1`). Curated: GPT-5, GPT-5 mini,
+    GPT-4.1, GPT-4o, o3, o3-mini.
+  - `xai` — xAI Grok (`api.x.ai/v1`). Curated: Grok 4, Grok 3, Grok 3 mini.
+  - `mistral` — Mistral (`api.mistral.ai/v1`). Curated: Large, Medium, Small
+    `*-latest`.
+  - `openrouter` — multi-model aggregator (`openrouter.ai/api/v1`). Model IDs
+    use the `provider/model` form (e.g. `anthropic/claude-opus-4`).
+  - `qwen` — Alibaba Qwen via the international DashScope OpenAI-compatible
+    endpoint. Curated: Qwen Max / Plus / Turbo.
+  - `zhipu` — Zhipu GLM (`open.bigmodel.cn/api/paas/v4`). Curated: GLM-4.6,
+    GLM-4 Plus, GLM-4 Air.
+  - `moonshot` — Moonshot Kimi (`api.moonshot.cn/v1`). Curated: Kimi K2,
+    Kimi K1.5.
+  - `groq` — Groq inference (`api.groq.com/openai/v1`). Curated:
+    Llama 3.3/3.1 70B Versatile, Mixtral 8x7B.
+  - `openai_compatible` — generic fallback for any vendor exposing the OpenAI
+    `/chat/completions` shape. User sets the Base URL themselves; no curated
+    model list.
+- **Local** (no key, no internet round-trip):
+  - `ollama` — Ollama local server (`http://localhost:11434/v1` by default).
+    Pull the model with `ollama pull <name>` first. Curated suggestions:
+    `llama3.3:70b`, `qwen2.5:72b`, `deepseek-r1:70b`.
+  - `opus_mt` — also in this group; covered in detail below.
+
+All of these share the global `_translator_lock`, the `BACKOFF_SCHEDULE` from
+`base.py`, and the same delimited-envelope output shape, so they don't get
+their own tuning-knob tables in this doc. The only env vars they read are the
+secret named by the catalog's `secret_ref_hint` (e.g. `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `XAI_API_KEY`). Add a vendor-specific section here only
+if a new tuning knob materializes.
+
 ## Common rule across all backends
 
 Every backend's `max_parallel` is effectively 1 because the `_translator_lock`

@@ -78,7 +78,7 @@ The entry point (`backend/app_entry.py`) supports three UI modes:
 The wizard itself lives at `frontend/onboarding.html` + `frontend/js/onboarding.js`.
 It walks the user through:
 
-1. Picking a provider type (Gemini / DeepSeek / Claude Agent SDK / Claude CLI).
+1. Picking a provider type from the catalog dropdown (19 types, sourced from `backend/services/translator_catalog.py`). The dropdown groups them as Subscription (Claude Agent SDK / Claude CLI / Codex CLI / Gemini CLI / OpenCode), API key (Anthropic / OpenAI / Gemini / DeepSeek / xAI / Mistral / OpenRouter / Qwen / Zhipu / Moonshot / Groq / generic OpenAI-compatible), and Local (Ollama / OPUS-MT).
 2. Naming the provider and entering a `model_id`.
 3. Pasting the API key — stored in the OS keychain via
    `POST /api/providers/{id}/secret` (Windows Credential Manager / macOS
@@ -312,13 +312,18 @@ on Windows 11 + Python 3.14 + PyInstaller 6.20.
 
 ## Provider-type compatibility checklist
 
-| provider_type   | EXE bundle behavior                                              |
-| --------------- | ---------------------------------------------------------------- |
-| `gemini`        | works out of the box; needs `GEMINI_API_KEY` in keychain or env  |
-| `deepseek`      | works out of the box; needs `DEEPSEEK_API_KEY`                   |
-| `claude_agent`  | requires Claude Code installed separately (SDK shells out to it) |
-| `claude_cli`    | requires `claude` on PATH (same external dep)                    |
+The EXE bundle ships every backend module in
+`backend/services/translator_catalog.py::_CATALOG` (commit `1b61112` switched
+the spec to a hard-coded list after discovering `collect_submodules` returned
+empty during PyInstaller spec evaluation). Compatibility now splits cleanly by
+the catalog's `group` field:
 
-For users who only have Gemini / DeepSeek keys, the EXE works
-standalone. For users who want Claude, they install Claude Code first
-and the EXE finds it via the system PATH.
+| Group | provider_types | EXE bundle behavior |
+| --- | --- | --- |
+| Subscription | `claude_agent`, `claude_cli`, `codex_cli`, `gemini_cli`, `opencode` | Backend code is bundled, but auth requires the vendor's own CLI installed separately and logged in (`claude login`, `codex login`, `gemini`, `opencode auth login`). The provider "Test" button surfaces a clear error if the CLI is missing or unauthenticated. |
+| API key | `anthropic_api`, `gemini`, `openai`, `deepseek`, `xai`, `mistral`, `openrouter`, `qwen`, `zhipu`, `moonshot`, `groq`, `openai_compatible` | Works out of the box. User pastes the key in the wizard; it goes to the OS keychain (env-var fallback for headless / dev). The catalog's `secret_ref_hint` names the canonical env var (e.g. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). |
+| Local | `ollama`, `opus_mt` | No external account needed. `ollama` requires a running local Ollama server and a pre-pulled model. `opus_mt` lazy-downloads CTranslate2 language-pair models on first use from Settings → Providers. |
+
+For users who only have API keys (any vendor in the API-key row), the EXE
+works standalone. For users who want a subscription-CLI backend, they install
+the vendor's CLI first and the EXE finds it via the system PATH.
