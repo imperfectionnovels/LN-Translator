@@ -94,6 +94,7 @@ _OPENAI_MODELS = (
 )
 
 _CODEX_MODELS = (
+    ModelEntry("gpt-5.5", "GPT-5.5"),
     ModelEntry("gpt-5", "GPT-5"),
     ModelEntry("gpt-5-codex", "GPT-5 Codex"),
     ModelEntry("o3", "o3"),
