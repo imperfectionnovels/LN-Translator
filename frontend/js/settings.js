@@ -615,8 +615,6 @@ async function openCreateDialog() {
   els.dialogTitle.textContent = "Add provider";
   els.form.reset();
   els.fId.value = "";
-  const willBeFirst = !els.list.querySelector(".prov-card");
-  els.fDefault.checked = willBeFirst;
   await loadCatalog();
   // Default to the first option in the Type dropdown (claude_agent if the
   // catalog is intact — the most accessible option for a fresh user).
