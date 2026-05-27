@@ -176,6 +176,7 @@ class ApplyInPlaceResponse(BaseModel):
     chapters_updated: int
     rows_updated_translated: int
     rows_updated_refined: int
+    rows_updated_titles: int = 0
 
 
 @router.post("/glossary/{entry_id}/apply-in-place")
@@ -210,6 +211,7 @@ async def apply_in_place(
         chapters_updated=result.chapters_updated,
         rows_updated_translated=result.rows_updated_translated,
         rows_updated_refined=result.rows_updated_refined,
+        rows_updated_titles=result.rows_updated_titles,
     )
 
 

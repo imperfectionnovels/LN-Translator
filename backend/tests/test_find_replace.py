@@ -296,3 +296,74 @@ async def test_apply_in_place_is_a_noop_when_old_equals_new():
             novel_id=novel_id,
         )
     assert result.chapters_updated == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_rewrites_title_en_too():
+    """A renamed character should propagate to chapter titles, not just
+    the body. Mirrors the inline-edit popover's promise that 'Renamed in
+    N chapters' covers everything a reader sees."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked into the hall.", None),
+        (2, "The sect deliberated.", None),
+    ])
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET title_en = ? WHERE novel_id = ? AND chapter_num = 1",
+            ("Chapter 1: Bai Xiaochun Arrives", novel_id),
+        )
+        await conn.execute(
+            "UPDATE chapters SET title_en = ? WHERE novel_id = ? AND chapter_num = 2",
+            ("Chapter 2: A Quiet Day", novel_id),
+        )
+        await conn.commit()
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Bai Xiao Chun",
+            novel_id=novel_id,
+        )
+    # Chapter 1 changes in BOTH title_en and translated_text — counted
+    # once for chapters_updated, but once each for the per-column tallies.
+    assert result.chapters_updated == 1
+    assert result.rows_updated_translated == 1
+    assert result.rows_updated_titles == 1
+    assert result.rows_updated_refined == 0
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT chapter_num, title_en, translated_text FROM chapters "
+            "WHERE novel_id = ? ORDER BY chapter_num",
+            (novel_id,),
+        )
+        rows = await cur.fetchall()
+    assert rows[0]["title_en"] == "Chapter 1: Bai Xiao Chun Arrives"
+    assert rows[0]["translated_text"] == "Bai Xiao Chun walked into the hall."
+    # Chapter 2 had no occurrences in any column — untouched.
+    assert rows[1]["title_en"] == "Chapter 2: A Quiet Day"
+    assert rows[1]["translated_text"] == "The sect deliberated."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_title_only_match_still_counts_chapter():
+    """If the term lives only in the title (not the body), the chapter
+    should still be counted as updated so the toast isn't misleading."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "The mountain was quiet.", None),
+    ])
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET title_en = ? WHERE novel_id = ?",
+            ("Chapter 1: Bai Xiaochun's Birthday", novel_id),
+        )
+        await conn.commit()
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Bai Xiao Chun",
+            novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert result.rows_updated_titles == 1
+    assert result.rows_updated_translated == 0
+    assert result.rows_updated_refined == 0

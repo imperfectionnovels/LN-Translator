@@ -1447,6 +1447,38 @@ body.has-selection .reading-rail {
   100% { background: var(--bg-tint); color: var(--fg); }
 }
 
+/* WTR-lab-style inline term editor. Reuses .sel-form chrome (positioning,
+ * border, shadow, row layout) and adds a compact header showing the
+ * ZH ↔ EN pair the user just clicked. Narrower than the add-glossary
+ * form because it's anchored to a single term span; no source-panel
+ * reference column is needed. */
+.term-edit-pop {
+  width: 300px;
+  gap: 6px;
+}
+.term-edit-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.term-edit-zh {
+  font-family: var(--font-family-han);
+  font-size: 15px;
+  color: var(--fg);
+}
+.term-edit-sep {
+  color: var(--muted);
+  font-size: 12px;
+}
+.term-edit-pop .row label { font-size: 12px; color: var(--muted); }
+.term-edit-pop .actions button[data-act='delete'] {
+  color: var(--signal-error);
+}
+
 /* Edit-mode discoverability banner. Shown once per user; sticky-dismissed
  * via localStorage.editModeHintSeen. Lives at the top of the reading column
  * inside the EN pane so it sits beside the masthead, not the toolbar. */

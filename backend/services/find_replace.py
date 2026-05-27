@@ -159,6 +159,12 @@ class CommitResult:
     chapters_updated: int
     rows_updated_translated: int
     rows_updated_refined: int
+    # Only populated by `apply_in_place_for_glossary_term` — the generic
+    # find/replace engine deliberately never touches title_en (titles are
+    # rewritten by the `normalize_title_en` step at translate time and the
+    # user-facing find/replace UI is scoped to body text). Defaults to 0
+    # so the generic commit_preview path stays untouched.
+    rows_updated_titles: int = 0
 
 
 # Internal in-memory store. {token: _StoredPreview}. Process-local;
@@ -591,14 +597,18 @@ async def apply_in_place_for_glossary_term(
     rows = await _select_chapters_for_scope(conn, query)
     rows_translated = 0
     rows_refined = 0
+    rows_titles = 0
     chapters_touched: set[int] = set()
     for r in rows:
         translated = r["translated_text"]
         refined = r["refined_text"]
-        change_translated = False
-        change_refined = False
+        title_en = r["title_en"]
         new_translated = translated
         new_refined = refined
+        new_title = title_en
+        change_translated = False
+        change_refined = False
+        change_title = False
         if translated:
             substituted, n = pattern.subn(new_en, translated)
             if n > 0:
@@ -609,32 +619,42 @@ async def apply_in_place_for_glossary_term(
             if n > 0:
                 new_refined = substituted
                 change_refined = True
-        if not (change_translated or change_refined):
+        if title_en:
+            substituted, n = pattern.subn(new_en, title_en)
+            if n > 0:
+                new_title = substituted
+                change_title = True
+        if not (change_translated or change_refined or change_title):
             continue
         chapters_touched.add(r["id"])
-        if change_translated and change_refined:
-            await conn.execute(
-                "UPDATE chapters SET translated_text = ?, refined_text = ? "
-                "WHERE id = ?",
-                (new_translated, new_refined, r["id"]),
-            )
-        elif change_translated:
-            await conn.execute(
-                "UPDATE chapters SET translated_text = ? WHERE id = ?",
-                (new_translated, r["id"]),
-            )
-        else:
-            await conn.execute(
-                "UPDATE chapters SET refined_text = ? WHERE id = ?",
-                (new_refined, r["id"]),
-            )
+        # One UPDATE per chapter; assemble the SET clause from whichever
+        # columns actually changed so we don't rewrite untouched bodies.
+        set_parts: list[str] = []
+        set_values: list = []
+        if change_translated:
+            set_parts.append("translated_text = ?")
+            set_values.append(new_translated)
+        if change_refined:
+            set_parts.append("refined_text = ?")
+            set_values.append(new_refined)
+        if change_title:
+            set_parts.append("title_en = ?")
+            set_values.append(new_title)
+        set_values.append(r["id"])
+        await conn.execute(
+            f"UPDATE chapters SET {', '.join(set_parts)} WHERE id = ?",
+            set_values,
+        )
         if change_translated:
             rows_translated += 1
         if change_refined:
             rows_refined += 1
+        if change_title:
+            rows_titles += 1
     await conn.commit()
     return CommitResult(
         chapters_updated=len(chapters_touched),
         rows_updated_translated=rows_translated,
         rows_updated_refined=rows_refined,
+        rows_updated_titles=rows_titles,
     )

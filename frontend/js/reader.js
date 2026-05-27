@@ -1076,6 +1076,223 @@ function showPopoverForSelection() {
   });
 }
 
+/* ---- Inline term-edit popover (WTR-lab style click-to-edit) ----
+ *
+ * Edit mode only. Click a highlighted .term span, edit its English
+ * rendering in a small floating form, save: PATCH the glossary entry
+ * (implicitly locks it) + apply-in-place across all chapters of this
+ * novel (word-boundary, case-sensitive — see
+ * backend/services/find_replace.py::apply_in_place_for_glossary_term).
+ * No three-way choice dialog — the WTR-lab feel is instant rewrite.
+ */
+let termEditPop = null;
+function clearTermEditPop() {
+  if (termEditPop) { termEditPop.remove(); termEditPop = null; }
+}
+
+function showTermEditPop(span, entry, side) {
+  clearTermEditPop();
+  // The selection popover and the term-edit popover are mutually
+  // exclusive — close the other side so they don't overlap.
+  clearPopover();
+
+  const rect = span.getBoundingClientRect();
+  const pop = document.createElement("div");
+  pop.className = "sel-form term-edit-pop";
+  // Pin the locked checkbox to checked by default: the user is editing,
+  // which already implicitly locks the entry server-side (see
+  // backend/services/glossary.py::update_entry). Surfacing it as checked
+  // matches the truth so users aren't surprised.
+  const categories = ["character", "place", "technique", "item", "other", "idiom"];
+  const cat = entry.category || "other";
+  pop.innerHTML = `
+    <div class="term-edit-head">
+      <span class="term-edit-zh">${escapeHtml(entry.term_zh)}</span>
+      <span class="term-edit-sep">↔</span>
+      <span class="muted">${escapeHtml(entry.term_en)}</span>
+    </div>
+    <div class="row"><label style="width:64px;">English</label><input id="te-en" value="${escapeHtml(entry.term_en)}"></div>
+    <div class="row"><label style="width:64px;">Category</label>
+      <select id="te-cat">
+        ${categories.map(c => `<option value="${c}"${c === cat ? " selected" : ""}>${c}</option>`).join("")}
+      </select>
+    </div>
+    <div class="row"><label style="width:64px;">Locked</label>
+      <input id="te-lock" type="checkbox"${entry.locked ? " checked" : ""}>
+      <span class="muted" style="font-size:11.5px;">Editing locks automatically.</span>
+    </div>
+    <div id="te-err" class="muted" style="color: var(--signal-error); min-height: 1em;"></div>
+    <div class="actions">
+      <button class="btn-ghost" data-act="delete" title="Remove this glossary entry">Remove</button>
+      <span style="flex:1;"></span>
+      <button class="btn-ghost" data-act="cancel">Cancel</button>
+      <button class="btn-primary" data-act="save">Save</button>
+    </div>
+  `;
+  document.body.appendChild(pop);
+
+  // Position like .sel-pop: prefer above the span, fall back below if no
+  // room. Viewport-clamp on all four sides so edge clicks don't render
+  // off-screen.
+  const popH = pop.offsetHeight;
+  const popW = pop.offsetWidth;
+  const above = window.scrollY + rect.top - popH - 10;
+  const below = window.scrollY + rect.bottom + 10;
+  const desiredTop = (rect.top > popH + 20) ? above : below;
+  const desiredLeft = window.scrollX + rect.left + (rect.width / 2) - (popW / 2);
+  const maxLeft = window.scrollX + window.innerWidth - popW - 8;
+  const maxTop  = window.scrollY + window.innerHeight - popH - 8;
+  pop.style.top  = `${Math.min(Math.max(window.scrollY + 8, desiredTop), maxTop)}px`;
+  pop.style.left = `${Math.min(Math.max(8, desiredLeft), maxLeft)}px`;
+
+  termEditPop = pop;
+
+  const enInput = pop.querySelector("#te-en");
+  const catSel  = pop.querySelector("#te-cat");
+  const lockChk = pop.querySelector("#te-lock");
+  const errEl   = pop.querySelector("#te-err");
+
+  // Focus + select-all so the user can just start typing.
+  setTimeout(() => { enInput.focus(); enInput.select(); }, 0);
+
+  const close = () => clearTermEditPop();
+
+  // Esc dismisses; Enter saves.
+  pop.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    else if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      pop.querySelector("[data-act='save']").click();
+    }
+  });
+
+  pop.querySelector("[data-act='cancel']").addEventListener("click", close);
+
+  pop.querySelector("[data-act='delete']").addEventListener("click", async () => {
+    if (!confirm(`Remove "${entry.term_zh} ↔ ${entry.term_en}" from the glossary? Existing chapter text is unchanged.`)) return;
+    try {
+      await api.deleteGlossary(entry.id);
+      await loadGlossary();
+      invalidateTermPattern();
+      if (lastChapter) renderChapterBody(lastChapter);
+      showFloatToast("Removed from glossary", rect);
+      close();
+    } catch (e) {
+      errEl.textContent = `Delete failed: ${e.message}`;
+    }
+  });
+
+  pop.querySelector("[data-act='save']").addEventListener("click", async () => {
+    const newEn = enInput.value.trim();
+    if (!newEn) { errEl.textContent = "English term cannot be empty."; return; }
+    const newCat = catSel.value;
+    const newLock = lockChk.checked;
+    const oldEn = (entry.term_en || "").trim();
+
+    // Build the PATCH body from changed fields only. Skip the request
+    // entirely if nothing changed (avoid a useless lock bump).
+    const patch = {};
+    if (newEn !== oldEn) patch.term_en = newEn;
+    if (newCat !== (entry.category || "other")) patch.category = newCat;
+    if (newLock !== !!entry.locked) patch.locked = newLock;
+    if (Object.keys(patch).length === 0) { close(); return; }
+
+    const saveBtn = pop.querySelector("[data-act='save']");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    errEl.textContent = "";
+
+    try {
+      await api.updateGlossary(entry.id, patch);
+
+      let chaptersUpdated = 0;
+      let titlesUpdated = 0;
+      let inPlaceFailed = false;
+      if (patch.term_en && oldEn) {
+        try {
+          const res = await api.glossaryApplyInPlace(entry.id, oldEn, newEn);
+          chaptersUpdated = res.chapters_updated || 0;
+          titlesUpdated = res.rows_updated_titles || 0;
+        } catch (e) {
+          inPlaceFailed = true;
+        }
+      }
+
+      // Refresh in-memory state so the live chapter pane reflects the
+      // server-side rewrite without a manual reload.
+      await loadGlossary();
+      invalidateTermPattern();
+      // If the title changed, the TOC entry needs updating too.
+      if (titlesUpdated > 0) {
+        try { await loadChapters(); } catch { /* best-effort */ }
+      }
+      // Refetch the current chapter so bodyEn / bodyZh pick up the
+      // server-side substitution. Skip if we never had a chapter loaded
+      // (defensive — shouldn't happen since the user clicked a term).
+      if (lastChapter && typeof currentCh === "number") {
+        try {
+          const fresh = await api.chapter(novelId, currentCh);
+          lastChapter = fresh;
+          renderChapterBody(fresh);
+        } catch {
+          // Server unreachable mid-save — fall back to local re-render of
+          // the stale chapter; the user will see the new highlight color
+          // / term, but the body text won't reflect the rewrite until
+          // they navigate. Better than a blank screen.
+          renderChapterBody(lastChapter);
+        }
+      }
+
+      if (inPlaceFailed) {
+        showFloatToast("Glossary updated, but in-place rewrite failed. Try Glossary page.", rect);
+      } else if (patch.term_en) {
+        const chPart = `Renamed in ${chaptersUpdated} chapter${chaptersUpdated === 1 ? "" : "s"}`;
+        const titlePart = titlesUpdated > 0 ? ` · ${titlesUpdated} title${titlesUpdated === 1 ? "" : "s"}` : "";
+        showFloatToast(`${chPart}${titlePart}`, rect);
+      } else {
+        showFloatToast("Saved", rect);
+      }
+      close();
+    } catch (e) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
+      errEl.textContent = `Save failed: ${e.message}`;
+    }
+  });
+}
+
+function _handleTermClick(ev, side) {
+  if (readerMode !== "edit") return;
+  // Defer to the selection popover when the user is making a selection.
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+  const span = ev.target.closest(".term");
+  if (!span) return;
+  const dataTerm = span.getAttribute("data-term") || "";
+  // The span renders the same-language text; data-term carries the
+  // opposite-language partner. Look up by the side the click happened on.
+  const shownText = (span.textContent || "").trim();
+  const entry = termInfo(shownText, side) || (dataTerm ? termInfo(dataTerm, side === "en" ? "zh" : "en") : null);
+  if (!entry) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  showTermEditPop(span, entry, side);
+}
+
+bodyEn.addEventListener("click", (ev) => _handleTermClick(ev, "en"));
+bodyZh.addEventListener("click", (ev) => _handleTermClick(ev, "zh"));
+
+// Outside-click dismiss for the term-edit popover. Matches the
+// mousedown handler the selection popover already uses; kept as a
+// separate listener so they can't accidentally cancel each other.
+document.addEventListener("mousedown", (ev) => {
+  if (termEditPop && !termEditPop.contains(ev.target)) {
+    // Don't dismiss when the click landed on another .term span — the
+    // click handler above will rebuild the popover for the new target.
+    if (!ev.target.closest(".term")) clearTermEditPop();
+  }
+});
+
 // Walks up from `range.commonAncestorContainer` to the nearest <p> child of
 // `pane` and returns its 0-based index among siblings (any-tag), matching the
 // indexing convention bookmarks already use. Returns null when no enclosing
