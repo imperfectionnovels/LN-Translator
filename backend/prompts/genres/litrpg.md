@@ -10,10 +10,10 @@ Voice register:
 - Internal thought: tactical. The POV calculates, checks cooldowns, weighs skill choices, evaluates loot. The reader sees the optimization loop. "If I burn Fireball now, it's down for 30 seconds; better save it for the boss." Render the cost-benefit thinking clearly.
 
 System messages and notifications:
-- Render exactly as the source formats them. Preserve **bold**, 【brackets】, ALL-CAPS, line breaks.
+- System-interface formatting follows base.md (bold 【Field: Value】 lines, ALL-CAPS for emphasis); preserve the source's line breaks. The genre cases below show how that applies to game UI.
 - "**【Quest Accepted: Slay the Goblin King】**": Title-Case the field, preserve the 【】, bold the line.
 - "[+25 EXP]": preserve the [+...] form when used; render small numerical deltas inline.
-- Status blocks (multi-line stat windows) preserve their column structure when possible. If the source uses a table-like layout, render it as a markdown-style aligned block.
+- Status blocks (multi-line stat windows): render each field on its own line, or collapse them to a single bullet- or slash-separated line (for example, HP 1850 / 2000 · MP 320 / 500 · STR 88), as the worked examples do. Do not emit a pipe-delimited markdown table: the prose output format is one 【】 line per paragraph (base.md), not tabular layout.
 - ALL-CAPS for emphasis (CRITICAL HIT, LEVEL UP, BOSS DEFEATED): preserve.
 
 Numerals, strictly preserved:

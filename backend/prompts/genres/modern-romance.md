@@ -18,7 +18,7 @@ Dialogue conventions:
 - Pet names and nicknames carry weight. "Baby," "darling," "old man" (老公 / "husband"), "wifey" (老婆 / "wife"), "little sister" (妹妹 used affectionately): translate per glossary; the choice between literal and softened renderings can shift the relationship's tone.
 - Honorifics matter less than in xianxia but still carry social signal. Boss / president (总 / 老板), professor / teacher (老师), senior (前辈): render per source.
 - Family hierarchy address: "Mom" / "Dad" / "Older Brother": translate to the natural English equivalent, but preserve the hierarchical address when the source character uses it (e.g. an adult character still calling an older sibling "Big Brother" reads as a relationship marker, not just family).
-- Texting and messaging: render IM exchanges with realistic line breaks and natural phrasing. Don't overformalize. If the source uses "嗯" / "哦" / "呵呵", these are tonal, not literal "mm" / "oh" / "haha." Render the felt tone (often "..." or "Sure" or "Right").
+- Texting and messaging: render IM exchanges with realistic line breaks and natural phrasing. Don't overformalize. If the source uses "嗯" / "哦" / "呵呵", these are tonal, not literal "mm" / "oh" / "haha." Render the felt tone as a word ("Sure", "Right", "Mm", a flat "Fine"); reserve "..." for a reply that genuinely trails off, since base.md uses "..." as the trailing-into-silence mark.
 
 Body language and emotion:
 - Render reactions as physical beats: blushes, looking down, fingers tightening on a phone, ears going red. Do not narrate the emotion behind the gesture unless the source does. "Her ears turned red" is more romantic than "she felt embarrassed."

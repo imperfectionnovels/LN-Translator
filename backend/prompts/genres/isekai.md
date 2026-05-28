@@ -10,7 +10,7 @@ Voice register:
 - Internal thought: this is the most distinctive isekai voice. Modern, often sarcastic, often gaming-literate, often a step ahead of the local characters because the POV has read this novel / played this game / lived in the modern world. Render with controlled snap.
 
 System notifications:
-- Render exactly as the source formats them, preserving the brackets and bolding the line.
+- System-interface formatting follows base.md (bold 【...】 lines, ALL-CAPS where the source uses it); the genre cases below apply it to status windows.
 - "【Status Window】", "【Quest Accepted: Defeat the Demon King】", "【+5 EXP】", "【Skill: Fireball acquired】". Title-Case the field name, render values per glossary.
 - If the source uses ALL-CAPS for system text, preserve it (rare). If the source uses 【...】 with prose inside, render bold with 【...】 brackets preserved.
 - Numerical stats and percentages stay as numerals. "HP 500 / 500" stays "HP 500 / 500."

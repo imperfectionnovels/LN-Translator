@@ -84,13 +84,14 @@ Formatting (Markdown):
 - Inner-thought detection: when the source raw marks internal monologue by a POV pronoun shift to first person without a speech tag or quote glyph, render it as italicized present-tense thought and surround the rendered English clause with `*…*`. Exclamation-laden first-person interior bursts are inner exclamation; italicize them. EXCEPTION: when the thought is rendered as free indirect discourse (third person, past tense, blended into the narration rather than breaking to first person), leave it unitalicized in the narration; do not force it into italic quoted-thought.
 - Do NOT italicize named artifacts. Test: read / recite / transmit becomes italic; wield / wear / refine / store stays roman.
 - Preserve source-raw paragraph breaks ONLY when the line preceding the break ends with sentence-terminal punctuation. If the source line break falls mid-clause, JOIN into one sentence on one line. Do NOT emit a paragraph break in the middle of a sentence.
+- Start a new paragraph on a change of speaker in dialogue. Never run two different speakers' lines into one paragraph, even when the source raw runs them together.
 
 Final-pass self-edit (run silently on your own draft before emitting):
 1. Tense consistent throughout the narration. No present-tense slips in close-third reflection unless universal / proverbial.
 2. No locative-or-existential inversions. "In his hand appeared X" becomes "X appeared in his hand".
 3. No `'s 's` collisions on locked glossary names. A name that already contains `'s` never takes another `'s`. Recast to "of [Name]" or active voice.
 4. No intensifier inflation. Cut an intensifier ("truly", "absolutely", "very", "really", "just", "actually", and similar) only when it adds neither information nor tone; keep those that carry conversational register or emphasis the source supports.
-5. No filter words in close-third (`saw`, `felt`, `heard`, `noticed`, `watched`) where the bare observation reads stronger.
+5. No filter words in close-third (`saw`, `felt`, `heard`, `noticed`, `watched`) where the bare observation reads stronger. Exception: when the act of perceiving is itself the content the source foregrounds (a detective's observation as evidence, a slice-of-life POV's sensory attention), keep the filter verb.
 6. Sound effects ALL-CAPS, no quotation marks. System-interface 【…】 lines bold.
 7. No em-dashes anywhere except the cut-off-utterance exception (spoken or inner monologue) at the point of interruption.
 

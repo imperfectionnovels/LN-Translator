@@ -1,6 +1,6 @@
 GENRE: science fiction. Speculative fiction grounded in technology, science, or future societies. Spans hard SF (engineering plausibility), space opera (interstellar war, galactic empires), cyberpunk (neon dystopia, hacking, megacorps), mecha (giant robots, pilots, military hierarchy), near-future thrillers, post-apocalyptic, alien-contact, time-travel. The differentiator from fantasy is that the speculative elements have a (claimed) scientific or technological basis. Even when soft, they're framed as physics, not magic.
 
-Narrative mode: ranges by sub-genre. Hard SF leans third-person omniscient or limited with technical voice. Cyberpunk leans first-person or close third with street vernacular. Space opera leans cinematic third with multiple POVs. Match the source's choice; do not flatten.
+Narrative mode: ranges by sub-genre. Hard SF leans third-person omniscient or limited with technical voice. Cyberpunk leans first-person or close third with street vernacular. Space opera leans cinematic third with multiple POVs. Match the source's choice; do not flatten. Whatever the mode, POV still changes only at paragraph or scene breaks per base.md, never mid-paragraph or mid-sentence: omniscient breadth means ranging across scenes, not head-hopping inside one.
 
 Target prose: precise. Technical vocabulary is a feature, not a bug; jargon is allowed when the source uses it, and stays consistent across the novel.
 
@@ -23,7 +23,7 @@ Dialogue protocol: callsigns, radio chatter, military exchange:
 - Preserve callsigns as proper nouns: "Viper Lead," "Bravo Six," "Cortez Actual."
 - Radio brevity codes (Roger, Wilco, Affirmative, Negative, Out, Over): render in the standard radio register; do not translate to conversational equivalents.
 - Military rank: render with the source's hierarchy. "Lieutenant Commander Kim" not "Commander Kim" if rank is full-spelled.
-- ALL-CAPS for klaxon / system text: "HULL BREACH DETECTED" stays ALL-CAPS; an automated AI voice in dialogue may stay ALL-CAPS or render as italic Small-Caps depending on glossary.
+- ALL-CAPS for klaxon / system text: "HULL BREACH DETECTED" stays ALL-CAPS; an automated AI voice in dialogue may stay ALL-CAPS or render in italics per glossary (the Markdown output has no small-caps, so do not attempt it).
 
 Cyberpunk register (apply when sub-genre is cyberpunk):
 - Sentence rhythm shorter, more fragments. "Streets wet. Neon bleeding. Couldn't see the rain for the glare."

@@ -1,6 +1,6 @@
 GENRE: Western-style fantasy. Secondary-world fiction with magic systems, mythical creatures, kingdoms, dungeons, sorcerers, knights. The cultural reference points are European medieval / early modern (Arthuriana, Norse, Tolkienian) rather than East Asian. The protagonist is native to the world; this is NOT isekai (no transmigrator), NOT xianxia (no cultivation, no qi, no Daoist cosmology), NOT wuxia (no jianghu, no Chinese martial-arts vocabulary). When a CN / JP / KR web novel adopts these conventions wholesale (knight-protagonist in a magic academy, sorceress with a familiar, dragons that hoard gold), that's this genre.
 
-Narrative mode: third-person limited or omniscient; occasionally first-person. The narrator tone is elevated but not archaic. Modern English prose with high-register vocabulary, not pseudo-medieval pastiche.
+Narrative mode: third-person limited or omniscient; occasionally first-person. Omniscient narration still switches heads only at paragraph or scene breaks per base.md, never mid-paragraph. The narrator tone is elevated but not archaic. Modern English prose with high-register vocabulary, not pseudo-medieval pastiche.
 
 Target prose: elevated standard English. Avoid forsoothery ("thou," "verily," "milord") unless the source itself is doing archaic register on purpose. Render formal address ("Your Grace," "my lord," "Sir Cedric") cleanly; render court etiquette and oath language with appropriate weight.
 
