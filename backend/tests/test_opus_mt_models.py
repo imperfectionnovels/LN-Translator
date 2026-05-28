@@ -3,8 +3,8 @@
 The module is lazy-import-only — ctranslate2 / sentencepiece are not imported
 until ``load_translator`` is called. These tests exercise the bits that don't
 need the wheels installed: registry, path resolution, sentence segmentation,
-sentinel format validation, the download lock, and the atomic-extraction
-control flow against a synthetic tarball.
+the download lock, and the atomic-extraction control flow against a synthetic
+tarball.
 """
 
 from __future__ import annotations
@@ -118,23 +118,6 @@ def test_reassemble_roundtrips_through_segmenter():
     # design (NMT outputs lose internal whitespace anyway). Paragraph
     # boundary survives.
     assert out == "Hello.\n\nWorld today. Tomorrow we leave."
-
-
-# ---------------------------------------------------------------------------
-# Sentinel format validation
-# ---------------------------------------------------------------------------
-
-def test_validate_sentinel_accepts_safe_formats():
-    assert opus_mt_models.validate_sentinel("ZX001") is True
-    assert opus_mt_models.validate_sentinel("XZX_03") is True
-    assert opus_mt_models.validate_sentinel("placeholder-7") is True
-
-
-def test_validate_sentinel_rejects_dangerous_characters():
-    assert opus_mt_models.validate_sentinel("ZX 01") is False  # space
-    assert opus_mt_models.validate_sentinel("=====") is False  # delimiter chars
-    assert opus_mt_models.validate_sentinel("") is False       # empty
-    assert opus_mt_models.validate_sentinel("中文") is False     # non-ASCII
 
 
 # ---------------------------------------------------------------------------

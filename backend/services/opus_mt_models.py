@@ -1,4 +1,4 @@
-"""OPUS-MT model lifecycle: registry, download, load, segment, sentinel.
+"""OPUS-MT model lifecycle: registry, download, load, segment.
 
 This module owns everything about the free-tier OPUS-MT NMT backend that is
 **not** the translator class itself. It is intentionally lazy-import-only —
@@ -31,12 +31,11 @@ import logging
 import os
 import re
 import shutil
-import string
 import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Callable, Optional
+from typing import AsyncIterator
 
 import httpx
 
@@ -413,72 +412,12 @@ def reassemble(paragraphs: list[list[str]]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Glossary placeholder sentinels
-# ---------------------------------------------------------------------------
-
-# Candidate sentinel formats, in order of preference (shortest first). Each
-# format is a callable ``int -> str`` so the substitution layer can mint
-# distinct sentinels per glossary entry. We probe them at load time against
-# the installed pair's source tokenizer and pick the first format whose
-# encode→decode roundtrip is lossless.
-_SENTINEL_CANDIDATES: tuple[Callable[[int], str], ...] = (
-    lambda i: f"ZX{i:03d}",        # ZX001, ZX002, ...
-    lambda i: f"XZX{i:02d}",       # XZX01, XZX02, ...
-    lambda i: f"ZZZZX{i:03d}",     # ZZZZX001, ...
-    lambda i: f"X{i:03d}ZZZZ",
-)
-
-
-def _probe_sentinel(
-    fmt: Callable[[int], str], src_tokenizer, tgt_tokenizer
-) -> bool:
-    """One sentinel format survives if encode→decode of a small batch of
-    instances yields the exact strings back, with no internal whitespace
-    insertion or piece-split. We probe several indices, not just one, so a
-    digit-specific corner case doesn't slip through."""
-    samples = [fmt(i) for i in (1, 7, 42, 123)]
-    inline = "Foo " + " ".join(samples) + " bar"
-    encoded = src_tokenizer.encode(inline, out_type=str)
-    decoded = src_tokenizer.decode(encoded)
-    if any(s not in decoded for s in samples):
-        return False
-    # Also confirm the target tokenizer (used on the way out for post-
-    # substitution scanning) can re-detect the sentinel. We only care that
-    # the literal strings appear in the target's decoded output.
-    out_encoded = tgt_tokenizer.encode(inline, out_type=str)
-    out_decoded = tgt_tokenizer.decode(out_encoded)
-    return all(s in out_decoded for s in samples)
-
-
-def choose_sentinel_format(
-    src_tokenizer, tgt_tokenizer
-) -> Callable[[int], str] | None:
-    """Return the first sentinel format whose roundtrip is lossless on both
-    tokenizers, or None if no format survives (caller falls back to no
-    substitution and accepts terminology drift)."""
-    for fmt in _SENTINEL_CANDIDATES:
-        try:
-            if _probe_sentinel(fmt, src_tokenizer, tgt_tokenizer):
-                return fmt
-        except Exception as exc:
-            logger.debug(
-                "OPUS-MT sentinel candidate failed during probe: %s", exc
-            )
-    logger.warning(
-        "OPUS-MT: no glossary sentinel format survived SentencePiece roundtrip "
-        "on the installed pair — locked-term substitution disabled, expect "
-        "terminology drift."
-    )
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Translator loader
 # ---------------------------------------------------------------------------
 
 class CTranslator:
     """Thin wrapper bundling a CTranslate2 Translator plus the two
-    SentencePiece tokenizers and the chosen sentinel format.
+    SentencePiece tokenizers.
 
     Per-instance state is loaded lazily by ``load_translator`` and cached in
     ``_translator_cache`` so a long-running worker amortizes the model load
@@ -490,13 +429,11 @@ class CTranslator:
         ct2_translator,
         src_tokenizer,
         tgt_tokenizer,
-        sentinel_fn: Callable[[int], str] | None,
     ) -> None:
         self.pair = pair
         self._ct2 = ct2_translator
         self._src = src_tokenizer
         self._tgt = tgt_tokenizer
-        self.sentinel_fn = sentinel_fn
 
     def translate_batch(self, sentences: list[str]) -> list[str]:
         """Translate a list of source-language sentences. The list may be
@@ -510,6 +447,12 @@ class CTranslator:
         # Without these, OPUS-MT routinely emits `Junior Brother Junior Brother
         # Junior Brother ...` and similar; values are the de-facto defaults
         # for OPUS-MT-style models.
+        #
+        # replace_unknowns=True keeps proper nouns on rare-token names from
+        # vanishing into <unk>; the tradeoff is that it occasionally echoes a
+        # source-side numeric token into an adjacent English slot. We accept
+        # that — the free-draft is a fidelity anchor, not the final output, and
+        # the LLM PEMT pass cleans up the prose.
         result = self._ct2.translate_batch(
             tokens_in,
             beam_size=4,
@@ -563,8 +506,7 @@ def load_translator(pair: str) -> CTranslator:
     src_tok = spm.SentencePieceProcessor(model_file=str(root / "source.spm"))
     tgt_tok = spm.SentencePieceProcessor(model_file=str(root / "target.spm"))
 
-    sentinel_fn = choose_sentinel_format(src_tok, tgt_tok)
-    inst = CTranslator(pair, ct2_translator, src_tok, tgt_tok, sentinel_fn)
+    inst = CTranslator(pair, ct2_translator, src_tok, tgt_tok)
     _translator_cache[pair] = inst
     return inst
 
@@ -572,16 +514,3 @@ def load_translator(pair: str) -> CTranslator:
 def evict_translator(pair: str) -> None:
     """Drop a cached translator instance. Tests + remove_pair use this."""
     _translator_cache.pop(pair, None)
-
-
-# Allowed punctuation characters inside sentinel format strings — kept so a
-# future format author can't slip in something that conflicts with our
-# delimited-envelope parser.
-_SENTINEL_ALLOWED = set(string.ascii_letters + string.digits + "-_")
-
-
-def validate_sentinel(s: str) -> bool:
-    """Cheap structural check: a candidate sentinel must be ASCII and use
-    only ``[A-Za-z0-9_-]``. Stops invalid formats from being added to
-    ``_SENTINEL_CANDIDATES`` without a probe."""
-    return bool(s) and all(c in _SENTINEL_ALLOWED for c in s)

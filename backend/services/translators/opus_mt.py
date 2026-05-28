@@ -10,16 +10,12 @@ which is wrong for JA/KO). Instead we override ``translate_chapter`` to take
 the inputs directly and produce a ``TranslationResult`` with ``degraded=True``
 unconditionally.
 
-Locked-glossary terminology is applied via placeholder substitution:
-    1. Find each locked glossary entry whose ``term_zh`` appears in the source.
-    2. Replace each with a unique sentinel (e.g. ``ZX001``).
-    3. Translate.
-    4. Restore sentinels to the locked ``term_en``.
-
-If a sentinel doesn't survive into the output (SentencePiece split it, or the
-model dropped/rearranged it), the literal sentinel is left in place and logged
-at WARNING. Visible failure beats silent mistranslation for the glossary-
-critical "this character's name must always be X" case.
+The output is the OPUS-MT model's raw text, untouched. We do NOT try to
+enforce glossary terminology in the NMT output. Terminology is the LLM PEMT
+pass's responsibility: it receives the glossary as a separate input and
+applies authoritative casing in the final user-visible translation. The
+free-draft only needs to be a fidelity anchor (event order, named-entity
+positions, quantities), which raw OPUS-MT output gives us.
 
 Source-language safety: ``provider.model_id`` encodes the pair (``zh-en``,
 ``ja-en``, ``ko-en``). When the queue passes a chapter whose
@@ -31,13 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-from typing import Iterable
 
 from backend.models import GlossaryEntry, TranslationResult
 from backend.services import opus_mt_models
-from backend.services.glossary import headword_for_substitution
-from backend.services.glossary_filters import split_aliases
 from backend.services.providers import Provider
 
 from .base import BaseTranslator
@@ -106,13 +98,15 @@ class OpusMTTranslator(BaseTranslator):
     ) -> TranslationResult:
         """Translate ``chapter_zh`` via OPUS-MT and return the result.
 
-        ``previous_context``, ``style_edits``, ``style_note``, ``genre``,
-        ``custom_brief``, ``free_draft`` are accepted to match the
-        BaseTranslator surface but are deliberately ignored — NMT can't act
-        on them, and when OPUS-MT is the main translator it *is* the free
+        ``glossary``, ``previous_context``, ``style_edits``, ``style_note``,
+        ``genre``, ``custom_brief``, ``free_draft`` are accepted to match the
+        BaseTranslator surface but are deliberately ignored. NMT can't act on
+        instructions, and the glossary is applied authoritatively by the LLM
+        PEMT pass downstream; trying to enforce it here turned out to be net-
+        negative (mangled placeholder leakage corrupted the draft, and a
+        draft is only ever a fidelity anchor, not the final user-visible
+        translation). When OPUS-MT is the main translator it *is* the free
         draft, so a passed-in ``free_draft`` would be its own previous output.
-        The free-tier result is the same regardless of those inputs; the LLM
-        PEMT pass layered on top is where they take effect.
 
         ``source_language`` is validated against ``self.model_id``. ``None``
         is permissive (legacy callers that haven't been migrated yet); a
@@ -134,20 +128,8 @@ class OpusMTTranslator(BaseTranslator):
         # loop while the C++ libraries warm up.
         ct = await asyncio.to_thread(opus_mt_models.load_translator, self.model_id)
 
-        body, leaked_sentinels = await asyncio.to_thread(
-            self._translate_body, ct, chapter_zh, glossary,
-        )
-        title_en = await asyncio.to_thread(
-            self._translate_title, ct, title_zh, glossary,
-        )
-
-        if leaked_sentinels:
-            logger.warning(
-                "OPUS-MT translator %r emitted %d output(s) with unrestored "
-                "sentinels: %s. Locked glossary terminology may be wrong on "
-                "those occurrences.",
-                self.model_id, len(leaked_sentinels), leaked_sentinels[:5],
-            )
+        body = await asyncio.to_thread(self._translate_body, ct, chapter_zh)
+        title_en = await asyncio.to_thread(self._translate_title, ct, title_zh)
 
         return TranslationResult(
             title_en=title_en or "(untitled)",
@@ -156,18 +138,15 @@ class OpusMTTranslator(BaseTranslator):
             degraded=True,
         )
 
-    # -- Body translation with glossary placeholder substitution --
+    # -- Body / title translation --
 
     def _translate_body(
         self,
         ct: "opus_mt_models.CTranslator",
         chapter_zh: str,
-        glossary: Iterable[GlossaryEntry],
-    ) -> tuple[str, list[str]]:
-        """Translate the chapter body. Returns ``(body_en, leaked_sentinels)``."""
-        sub_map, marker_text = self._apply_glossary_substitution(chapter_zh, glossary, ct)
-
-        paragraphs = opus_mt_models.segment_paragraphs(marker_text)
+    ) -> str:
+        """Translate the chapter body. Raw OPUS-MT output, no post-processing."""
+        paragraphs = opus_mt_models.segment_paragraphs(chapter_zh)
         # Flatten paragraphs into one batch so CTranslate2 batches them
         # together; track paragraph boundaries so we can reassemble after.
         flat_sentences: list[str] = []
@@ -184,112 +163,18 @@ class OpusMTTranslator(BaseTranslator):
             start, end = boundaries[i], boundaries[i + 1]
             rebuilt_paragraphs.append(translated_sentences[start:end])
 
-        body = opus_mt_models.reassemble(rebuilt_paragraphs)
-        body, leaked = self._restore_glossary_substitution(body, sub_map)
-        return body, leaked
+        return opus_mt_models.reassemble(rebuilt_paragraphs)
 
     def _translate_title(
         self,
         ct: "opus_mt_models.CTranslator",
         title_zh: str | None,
-        glossary: Iterable[GlossaryEntry],
     ) -> str:
-        """Translate the title. Locked glossary terms inside the title get
-        the same placeholder treatment as the body so a character's name in
-        the title comes out consistent."""
+        """Translate the title. Titles are short — treat as one sentence."""
         if not title_zh or not title_zh.strip():
             return ""
-        sub_map, marker_text = self._apply_glossary_substitution(
-            title_zh.strip(), glossary, ct,
-        )
-        if not marker_text.strip():
-            return ""
-        # Titles are usually short, treat them as one sentence.
-        translated = ct.translate_batch([marker_text])
-        out = translated[0] if translated else ""
-        out, _ = self._restore_glossary_substitution(out, sub_map)
-        return out.strip()
-
-    # -- Placeholder substitution helpers --
-
-    def _apply_glossary_substitution(
-        self,
-        text: str,
-        glossary: Iterable[GlossaryEntry],
-        ct: "opus_mt_models.CTranslator",
-    ) -> tuple[dict[str, str], str]:
-        """Replace each in-text locked-glossary ``term_zh`` with a fresh sentinel.
-
-        Returns ``(sub_map, transformed_text)`` where ``sub_map`` is
-        ``{sentinel: term_en}``. The caller passes ``sub_map`` to
-        ``_restore_glossary_substitution`` after translation to put the
-        canonical English term back in place of each sentinel.
-
-        If the pair's sentinel format selection failed (no format survives
-        SentencePiece roundtrip on this tokenizer), returns ``({}, text)``
-        and the caller accepts terminology drift — better than silently
-        producing splintered placeholder fragments.
-        """
-        if ct.sentinel_fn is None:
-            return {}, text
-
-        # Expand locked entries into (zh_alias, clean_en) pairs so a row like
-        # `呂陽 / 都煥 → Lü Yang / Douhuan` becomes two independent substitutions,
-        # and so a descriptor-style en value like `Society / Association` or
-        # `cultivation (the act)` is reduced to its bare headword. The stored
-        # `term_en` keeps its descriptor syntax for the LLM prompt and the UI;
-        # only the NMT substitution boundary gets the bare form. Sorted by zh
-        # length descending so compound terms (e.g. "九霄玄宫") substitute before
-        # any shorter substring ("玄宫").
-        pairs: list[tuple[str, str]] = []
-        for g in glossary:
-            if not getattr(g, "locked", False):
-                continue
-            for zh, en in split_aliases(g.term_zh or "", g.term_en or ""):
-                clean_en = headword_for_substitution(en)
-                if zh and clean_en:
-                    pairs.append((zh, clean_en))
-        pairs.sort(key=lambda p: (-len(p[0]), p[0]))
-
-        sub_map: dict[str, str] = {}
-        idx = 0
-        out = text
-        for zh, clean_en in pairs:
-            if zh not in out:
-                continue
-            idx += 1
-            sentinel = ct.sentinel_fn(idx)
-            sub_map[sentinel] = clean_en
-            out = out.replace(zh, sentinel)
-        return sub_map, out
-
-    def _restore_glossary_substitution(
-        self, text: str, sub_map: dict[str, str],
-    ) -> tuple[str, list[str]]:
-        """Replace each sentinel in ``text`` with its canonical English term.
-
-        Returns ``(restored_text, leaked_sentinels)`` where ``leaked_sentinels``
-        is the list of sentinels that did NOT appear in the output (i.e. the
-        NMT model dropped them or SentencePiece split them despite the probe).
-        These are logged by the caller; the un-restored sentinel stays visible
-        in the output as a deliberate "this term failed" signal."""
-        if not sub_map:
-            return text, []
-        leaked: list[str] = []
-        out = text
-        for sentinel, term_en in sub_map.items():
-            # Case-insensitive match because NMT decoders sometimes Title-Case
-            # all-caps tokens. Plain substring (no \b word boundaries) — CJK
-            # characters are Unicode "word" chars in Python's re module, so a
-            # \b right after the sentinel would fail at the Latin→CJK boundary
-            # in mixed output like ``EN(ZX001来了)``. Sentinel uniqueness comes
-            # from the mint counter, not from boundary tokens.
-            pattern = re.compile(re.escape(sentinel), re.IGNORECASE)
-            if not pattern.search(out):
-                leaked.append(sentinel)
-                continue
-            out = pattern.sub(lambda m: term_en, out)
-        return out, leaked
+        translated = ct.translate_batch([title_zh.strip()])
+        return (translated[0] if translated else "").strip()
 
     def cache_identity(self) -> str:
         """OPUS-MT does not share the LLM cache layer (translate_chapter is

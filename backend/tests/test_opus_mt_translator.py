@@ -3,22 +3,18 @@
 We construct the translator with a Provider stub and exercise:
   * constructor validation (rejects missing model_id, unknown pair).
   * source_language mismatch error on translate_chapter.
-  * glossary placeholder substitution + restoration on a fake CTranslator
-    that returns sentence-by-sentence translations with sentinels preserved.
-  * leaked-sentinel detection when the fake translator drops a sentinel.
   * returned TranslationResult.degraded is True unconditionally.
+  * paragraph boundaries survive the segment/translate/reassemble roundtrip.
   * registered in the catalog + factory dispatch + boot probe is non-fatal.
 """
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from typing import Iterable
 
 import pytest
 
-from backend.models import GlossaryEntry, TranslationResult
+from backend.models import TranslationResult
 from backend.services import opus_mt_models
 from backend.services.providers import Provider
 from backend.services.translators.opus_mt import OpusMTTranslator
@@ -90,30 +86,17 @@ async def test_source_language_mismatch_raises(monkeypatch):
 @dataclass
 class _FakeCTranslator:
     """Stand-in for opus_mt_models.CTranslator. Translates by tagging each
-    input as ``EN(<input>)`` so we can verify boundaries / substitution
-    without needing the real CT2 model. Sentinels pass through unchanged."""
+    input as ``EN(<input>)`` so we can verify boundaries without needing the
+    real CT2 model."""
 
     pair: str = "zh-en"
-    sentinel_fn: object = None  # set below
-    leak_sentinels: tuple[str, ...] = ()
 
     def translate_batch(self, sentences: list[str]) -> list[str]:
-        out = []
-        for s in sentences:
-            piece = s
-            for leak in self.leak_sentinels:
-                piece = piece.replace(leak, "")  # drop on purpose
-            out.append(f"EN({piece})")
-        return out
+        return [f"EN({s})" for s in sentences]
 
 
-def _install_fake_translator(
-    monkeypatch, *, sentinel_fn=None, leak_sentinels=()
-) -> _FakeCTranslator:
-    fake = _FakeCTranslator(
-        sentinel_fn=sentinel_fn or (lambda i: f"ZX{i:03d}"),
-        leak_sentinels=leak_sentinels,
-    )
+def _install_fake_translator(monkeypatch) -> _FakeCTranslator:
+    fake = _FakeCTranslator()
 
     def _load(pair: str):
         return fake
@@ -155,178 +138,6 @@ async def test_translate_chapter_paragraph_boundaries_preserved(monkeypatch):
     )
     # Two paragraphs in the output, separated by a blank line.
     assert "\n\n" in result.translated_text
-
-
-# ---------------------------------------------------------------------------
-# Placeholder substitution
-# ---------------------------------------------------------------------------
-
-def _g(zh: str, en: str, locked: bool = True) -> GlossaryEntry:
-    return GlossaryEntry(
-        id=hash(zh) & 0xFFFFFFFF,
-        novel_id=1,
-        term_zh=zh,
-        term_en=en,
-        category="character",
-        notes=None,
-        auto_detected=not locked,
-        locked=locked,
-    )
-
-
-@pytest.mark.asyncio
-async def test_locked_terms_are_substituted_and_restored(monkeypatch):
-    """A locked glossary entry whose Chinese form appears in the source
-    is replaced with a sentinel before translation; the sentinel survives
-    the fake translator and is restored to the canonical English term."""
-    _install_fake_translator(monkeypatch)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("玄阳真人", "Patriarch Xuanyang", locked=True)]
-    src = "玄阳真人来了。玄阳真人很强。"
-    result = await t.translate_chapter(
-        chapter_zh=src,
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    # All occurrences of the locked term land as "Patriarch Xuanyang" — not
-    # as the sentinel and not as a translated-to-English mangle.
-    assert result.translated_text.count("Patriarch Xuanyang") == 2
-    assert "ZX001" not in result.translated_text
-
-
-@pytest.mark.asyncio
-async def test_unlocked_terms_do_not_substitute(monkeypatch):
-    """Unlocked glossary entries don't get the substitution treatment —
-    the LLM PEMT pass owns terminology shaping for those."""
-    _install_fake_translator(monkeypatch)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("术法", "spell craft", locked=False)]
-    src = "他用术法打人。"
-    result = await t.translate_chapter(
-        chapter_zh=src,
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    # The fake translator wraps in EN(...) — the source is what we'd see
-    # in the wrapper, NOT a substituted sentinel.
-    assert "术法" in result.translated_text
-    assert "spell craft" not in result.translated_text
-
-
-@pytest.mark.asyncio
-async def test_leaked_sentinels_remain_visible(monkeypatch, caplog):
-    """If the fake translator drops a sentinel from its output, the
-    substitution layer leaves the sentinel visible in the final body
-    (rather than silently restoring it as a hallucinated term) and emits
-    a WARNING log line."""
-    fake = _install_fake_translator(monkeypatch, leak_sentinels=("ZX001",))
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("玄阳真人", "Patriarch Xuanyang", locked=True)]
-    src = "玄阳真人来了。"
-    import logging
-    with caplog.at_level(logging.WARNING, logger="backend.services.translators.opus_mt"):
-        result = await t.translate_chapter(
-            chapter_zh=src,
-            title_zh=None,
-            glossary=glossary,
-            source_language="zh",
-        )
-    assert "Patriarch Xuanyang" not in result.translated_text
-    # WARN log line surfaces the leaked sentinel.
-    assert any("sentinel" in rec.message for rec in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_substitution_disabled_when_no_sentinel_format(monkeypatch):
-    """When the pair's tokenizer has no sentinel format that survives the
-    roundtrip probe (CTranslator.sentinel_fn is None), the translator
-    skips substitution entirely and accepts terminology drift."""
-    _install_fake_translator(monkeypatch, sentinel_fn=None)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    # Build a translator with sentinel_fn=None.
-    fake = _FakeCTranslator(sentinel_fn=None)
-    monkeypatch.setattr(
-        opus_mt_models, "load_translator", lambda pair: fake,
-    )
-
-    glossary = [_g("玄阳", "Xuanyang", locked=True)]
-    result = await t.translate_chapter(
-        chapter_zh="玄阳的剑很快。",
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    # Untouched source flows through the fake translator → no sentinel,
-    # no substitution. The locked-term Chinese characters reach the EN()
-    # wrapper of the fake translator unchanged.
-    assert "玄阳" in result.translated_text
-
-
-@pytest.mark.asyncio
-async def test_term_en_slash_alternates_substitute_as_headword(monkeypatch):
-    """Descriptor-style term_en values with slash alternates restore as just
-    the first headword, not the full `Foo / Bar` display string. Reproduces
-    the corruption mode where `会 → Society / Association` was injecting
-    the literal `Society / Association` into the prose."""
-    _install_fake_translator(monkeypatch)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("会", "Society / Association", locked=True)]
-    result = await t.translate_chapter(
-        chapter_zh="他参加了会。",
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    assert "Society" in result.translated_text
-    assert "/ Association" not in result.translated_text
-
-
-@pytest.mark.asyncio
-async def test_term_en_parenthetical_substitutes_as_headword(monkeypatch):
-    """A `term_en` carrying trailing parenthetical metadata restores as the
-    bare English term, not the full descriptor. Covers entries like
-    `修炼 → cultivation (the act)`."""
-    _install_fake_translator(monkeypatch)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("修炼", "cultivation (the act)", locked=True)]
-    result = await t.translate_chapter(
-        chapter_zh="他在修炼。",
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    assert "cultivation" in result.translated_text
-    assert "(the act)" not in result.translated_text
-
-
-@pytest.mark.asyncio
-async def test_paired_zh_en_aliases_substitute_positionally(monkeypatch):
-    """A row whose zh side has the same alias arity as the en side gets each
-    zh variant mapped to its positional en counterpart. Covers entries like
-    `呂陽 / 都煥 → Lü Yang / Douhuan` where one character has two written
-    forms with two distinct romanizations."""
-    _install_fake_translator(monkeypatch)
-    t = OpusMTTranslator(provider=_make_provider("zh-en"))
-
-    glossary = [_g("呂陽 / 都煥", "Lü Yang / Douhuan", locked=True)]
-    result = await t.translate_chapter(
-        chapter_zh="呂陽很强。都煥很弱。",
-        title_zh=None,
-        glossary=glossary,
-        source_language="zh",
-    )
-    assert "Lü Yang" in result.translated_text
-    assert "Douhuan" in result.translated_text
-    assert "/ Douhuan" not in result.translated_text
-    assert "/ Lü Yang" not in result.translated_text
 
 
 # ---------------------------------------------------------------------------
