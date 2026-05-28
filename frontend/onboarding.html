@@ -20,7 +20,7 @@
       <h1 class="ob-title">Welcome.</h1>
       <p class="ob-sub">Translate Chinese light novels into English using your preferred AI. A two-minute setup gets you reading.</p>
     </div>
-    <a class="ob-skip" href="/library" title="Skip setup and go straight to the library">Skip for now →</a>
+    <a class="ob-skip" href="/settings" title="Skip setup and configure a provider in Settings">Skip for now →</a>
   </header>
 
   <ol class="ob-steps" aria-label="Setup steps">
@@ -34,10 +34,10 @@
     <h2 class="ob-h2">Which AI should translate?</h2>
     <p class="ob-lead">You can change this later or set different translators per novel. The default option uses your local Claude Code subscription. No API key required.</p>
     <div class="ob-provider-grid" id="ob-provider-grid">
-      <button type="button" class="ob-provider is-selected" data-provider-type="claude_agent" data-model="claude-opus-4-7" data-secret-ref="">
+      <button type="button" class="ob-provider is-selected" data-provider-type="claude_agent" data-model="claude-opus-4-8" data-secret-ref="" data-auth-command="claude login">
         <div class="ob-prov-icon" style="--prov-hue:#c8423a">C</div>
         <div class="ob-prov-name">Claude Agent SDK</div>
-        <div class="ob-prov-meta">Opus 4.7 · uses local Claude Code subscription</div>
+        <div class="ob-prov-meta">Opus 4.8 · uses local Claude Code subscription</div>
         <div class="ob-prov-note">No key needed. Runs through your installed <code>claude</code> CLI. Best quality, serial.</div>
       </button>
       <button type="button" class="ob-provider" data-provider-type="gemini" data-model="gemini-3-pro-preview" data-secret-ref="GEMINI_API_KEY">

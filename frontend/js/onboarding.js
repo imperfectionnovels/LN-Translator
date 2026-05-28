@@ -19,6 +19,7 @@
   let activeStep = 1;
   let selected = null; // {providerType, model, secretRef, name, hue, glyph}
   let createdProviderId = null;
+  let createdSignature = null; // "type::model" of the row we created, to detect a changed selection
 
   const PROVIDER_LABEL = {
     claude_agent: { name: "Claude Agent SDK", glyph: "C", hue: "#c8423a" },
@@ -88,6 +89,8 @@
       providerType: type,
       model: btn.dataset.model,
       secretRef: btn.dataset.secretRef || "",
+      baseUrl: btn.dataset.baseUrl || "",
+      authCommand: btn.dataset.authCommand || "",
       name: PROVIDER_LABEL[type]?.name || type,
       hue: PROVIDER_LABEL[type]?.hue || "var(--accent)",
       glyph: PROVIDER_LABEL[type]?.glyph || "·",
@@ -115,7 +118,13 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const catalog = await res.json();
       if (!Array.isArray(catalog) || catalog.length === 0) return;
-      const usable = catalog;
+      // Only show types the wizard can fully configure: a non-empty curated
+      // model list (an empty model_id would 422) and an auth path the wizard
+      // handles (subscription, or an API key with a built-in default base
+      // URL). The generic openai_compatible type needs a user-supplied base
+      // URL the wizard does not collect, so it is omitted here; it stays
+      // available on the Settings page.
+      const usable = catalog.filter(e => Array.isArray(e.models) && e.models.length > 0);
       if (!usable.length) return;
       grid.innerHTML = "";
       for (const entry of usable) {
@@ -131,6 +140,8 @@
         btn.dataset.providerType = entry.type;
         btn.dataset.model = defaultModel;
         btn.dataset.secretRef = entry.secret_ref_hint || "";
+        btn.dataset.baseUrl = entry.base_url_default || "";
+        btn.dataset.authCommand = entry.auth_command || "";
         btn.innerHTML = `
           <div class="ob-prov-icon" style="--prov-hue:${meta.hue}">${meta.glyph}</div>
           <div class="ob-prov-name">${meta.name}</div>
@@ -159,24 +170,43 @@
 
   async function onContinueFromStep1() {
     if (!selected) return;
+    const sig = `${selected.providerType}::${selected.model}`;
     // Create the provider row first — needed for both the key step
     // (provider id is required for set-secret) and the summary step.
     if (!createdProviderId) {
       try {
-        const payload = {
+        const created = await api.createProvider({
           name: selected.name,
           provider_type: selected.providerType,
           model_id: selected.model,
           secret_ref: selected.secretRef || null,
+          base_url: selected.baseUrl || null,
           is_default: true,
-        };
-        const created = await api.createProvider(payload);
+        });
         createdProviderId = created.id;
+        createdSignature = sig;
       } catch (err) {
         // The most common failure is the UNIQUE(name) constraint —
         // probably a returning user re-running the wizard. Surface
         // gracefully instead of stranding them.
         alert(`Couldn't create the provider: ${err.message}\nIf you've already configured this provider, use Settings to make changes.`);
+        return;
+      }
+    } else if (createdSignature !== sig) {
+      // The user went Back and picked a different provider after a row was
+      // already created. Update that row to match so the key step and the
+      // summary act on the current selection, not the stale one.
+      try {
+        await api.updateProvider(createdProviderId, {
+          name: selected.name,
+          provider_type: selected.providerType,
+          model_id: selected.model,
+          secret_ref: selected.secretRef || null,
+          base_url: selected.baseUrl || null,
+        });
+        createdSignature = sig;
+      } catch (err) {
+        alert(`Couldn't update the provider: ${err.message}\nUse Settings to make changes.`);
         return;
       }
     }
@@ -195,13 +225,17 @@
     input.value = "";
 
     if (!selected.secretRef) {
-      // Claude Agent SDK — uses local subscription, no key needed.
+      // Subscription / no-key provider (Claude Agent SDK, a CLI subscription
+      // type, or the free tier). Auth happens out-of-band, so there is no key
+      // to configure here.
       title.textContent = "No key needed";
-      lead.textContent = "You picked Claude Agent SDK, which uses your local Claude Code subscription. There's no API key to configure here.";
+      lead.textContent = `You picked ${selected.name}, which authenticates out-of-band (a local subscription or the free tier). There's no API key to configure here.`;
       label.textContent = "API key (not needed for this provider)";
       input.disabled = true;
-      input.placeholder = "Not used for Claude Agent SDK";
-      hint.innerHTML = `If you haven't yet, run <code>claude</code> once in a terminal so the local subscription is logged in. Then continue.`;
+      input.placeholder = `Not used for ${selected.name}`;
+      hint.innerHTML = selected.authCommand
+        ? `If you haven't yet, run <code>${escapeHtml(selected.authCommand)}</code> once in a terminal so the subscription is logged in. Then continue.`
+        : `If this provider needs a one-time login, do it in a terminal first. Then continue.`;
       saveBtn.textContent = "Continue →";
       saveBtn.dataset.act = "skip-key";
       skipBtn.hidden = true;
@@ -225,6 +259,7 @@
   async function onSaveKey() {
     const input = document.getElementById("ob-key-input");
     const status = document.getElementById("ob-key-status");
+    const skipBtn = document.getElementById("ob-skip-key");
     if (!selected.secretRef) {
       // No-key providers fall through immediately — but still verify the
       // local subscription works via api.testProvider.
@@ -242,31 +277,41 @@
     } catch (err) {
       status.classList.remove("hidden", "ok");
       status.classList.add("err");
-      status.textContent = `Couldn't store key: ${err.message}`;
+      if (err.status === 503) {
+        // OS keychain unavailable (no Secret Service on Linux, a locked
+        // keychain, or keyring import failed). The key was NOT stored, and
+        // in a packaged app there's no terminal to set an env var in. Keep
+        // Skip visible so the user isn't trapped on this step.
+        status.textContent = "Your OS keychain isn't available, so the key couldn't be stored. You can finish setup now and add the key later in Settings, or click \"Skip · set the key later\".";
+        if (skipBtn) skipBtn.hidden = false;
+      } else {
+        status.textContent = `Couldn't store key: ${err.message}`;
+      }
       return;
     }
-    // 2026-05-25 — F01 inline test. Verify the key actually works
-    // BEFORE advancing the wizard so a mistyped / quota-zero key
-    // surfaces here, not at first translate time.
+    // Validate the provider config before advancing. NOTE: this is a config
+    // check (known type, non-empty model, resolvable secret), NOT a live API
+    // round-trip, so a present-but-wrong key still passes here and only
+    // surfaces at first translate. The copy reflects that.
     status.classList.remove("hidden", "err", "ok");
-    status.textContent = "Testing connection…";
+    status.textContent = "Checking configuration…";
     try {
       const r = await api.testProvider(createdProviderId);
       if (!r || !r.ok) {
         status.classList.remove("ok");
         status.classList.add("err");
-        status.textContent = `Test failed: ${r?.message || "unknown error"}. Fix the key and try again, or click Skip to continue.`;
+        status.textContent = `Configuration check failed: ${r?.message || "unknown error"}. Fix it and try again, or click Skip to continue.`;
         return;
       }
       status.classList.remove("err");
       status.classList.add("ok");
-      status.textContent = `Key saved · connection OK.`;
+      status.textContent = "Key saved. It will be verified on your first translation.";
       populateStep3();
       setTimeout(() => goto(3), 350);
     } catch (err) {
       status.classList.remove("ok");
       status.classList.add("err");
-      status.textContent = `Test failed: ${err.message}. Fix the key and try again, or click Skip to continue.`;
+      status.textContent = `Configuration check failed: ${err.message}. Fix it and try again, or click Skip to continue.`;
     }
   }
 
@@ -278,23 +323,26 @@
     const status = document.getElementById("ob-key-status");
     if (!selected.secretRef) {
       status.classList.remove("hidden", "err", "ok");
-      status.textContent = "Testing local subscription…";
+      status.textContent = "Checking configuration…";
       try {
         const r = await api.testProvider(createdProviderId);
         if (!r || !r.ok) {
           status.classList.remove("ok");
           status.classList.add("err");
-          status.textContent = `Test failed: ${r?.message || "unknown error"}. Run 'claude' once in a terminal to log in, then come back. Or continue anyway and fix it later.`;
+          const loginHint = selected.authCommand
+            ? `Run "${selected.authCommand}" once in a terminal to log in, then come back.`
+            : "Make sure this provider is logged in,";
+          status.textContent = `Configuration check failed: ${r?.message || "unknown error"}. ${loginHint} Or continue anyway and fix it later.`;
           _showContinueAnyway();
           return;
         }
         status.classList.remove("err");
         status.classList.add("ok");
-        status.textContent = "Local subscription OK.";
+        status.textContent = "Configuration looks valid. It will be verified on your first translation.";
       } catch (err) {
         status.classList.remove("ok");
         status.classList.add("err");
-        status.textContent = `Test failed: ${err.message}. You can continue anyway and fix it later in App Settings.`;
+        status.textContent = `Configuration check failed: ${err.message}. You can continue anyway and fix it later in App Settings.`;
         _showContinueAnyway();
         return;
       }
@@ -329,12 +377,17 @@
     // directly. Best-effort — a 503 here shouldn't trap the user on
     // this screen.
     try {
-      await fetch("/api/config/first_run_complete", {
+      const res = await fetch("/api/config/first_run_complete", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: "1" }),
       });
-    } catch { /* ignore */ }
+      if (!res.ok) {
+        console.warn("first_run_complete not stamped (HTTP", res.status + ") — the wizard may reappear on next launch.");
+      }
+    } catch (e) {
+      console.warn("first_run_complete stamp failed — the wizard may reappear on next launch.", e);
+    }
 
     const sum = document.getElementById("ob-summary");
     sum.innerHTML = `
