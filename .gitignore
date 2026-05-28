@@ -35,3 +35,5 @@ ln-migration-check-*/
 LN-Translator-*.zip
 # Scratch dir for release-asset shuffling.
 .release-tmp/
+# PyInstaller log dump (created by the smoke harness; safe to discard).
+build-log.txt
