@@ -113,6 +113,47 @@ def test_prompt_template_version_bumped_for_pemt():
     assert "pemt" in PROMPT_TEMPLATE_VERSION
 
 
+def test_pemt_reference_truncated_when_over_cap(monkeypatch):
+    """A free_draft longer than FREE_DRAFT_REF_MAX_CHARS is truncated with a
+    marker, so a pathologically long draft cannot balloon the prompt."""
+    monkeypatch.setattr(base_module, "FREE_DRAFT_REF_MAX_CHARS", 50)
+    out = build_prompt(
+        chapter_zh="第一章内容。",
+        title_zh=None,
+        glossary=[],
+        free_draft="X" * 200,
+    )
+    assert _REFERENCE_HEADER in out
+    assert "[reference truncated]" in out
+    assert "X" * 200 not in out
+
+
+def test_pemt_reference_untouched_under_cap(monkeypatch):
+    """A normal-length draft passes through whole, with no truncation marker."""
+    monkeypatch.setattr(base_module, "FREE_DRAFT_REF_MAX_CHARS", 10000)
+    out = build_prompt(
+        chapter_zh="第一章内容。",
+        title_zh=None,
+        glossary=[],
+        free_draft="Reference body that is short.",
+    )
+    assert "Reference body that is short." in out
+    assert "[reference truncated]" not in out
+
+
+def test_pemt_cap_disabled_when_non_positive(monkeypatch):
+    """A cap of 0 disables truncation entirely."""
+    monkeypatch.setattr(base_module, "FREE_DRAFT_REF_MAX_CHARS", 0)
+    out = build_prompt(
+        chapter_zh="第一章内容。",
+        title_zh=None,
+        glossary=[],
+        free_draft="Y" * 500,
+    )
+    assert "Y" * 500 in out
+    assert "[reference truncated]" not in out
+
+
 @pytest.mark.asyncio
 async def test_basetranslator_threads_free_draft_into_build_prompt(monkeypatch):
     """BaseTranslator.translate_chapter must accept the new kwargs and

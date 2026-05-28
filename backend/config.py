@@ -163,6 +163,15 @@ PROMPT_INCLUDE_STYLE_EDITS = _bool_env("PROMPT_INCLUDE_STYLE_EDITS", True)
 # for an A/B arm that removes the refiner pass across the board.
 PROMPT_INCLUDE_REFINER = _bool_env("PROMPT_INCLUDE_REFINER", True)
 
+# Cap on the embedded free-draft REFERENCE TRANSLATION block, in characters.
+# The free draft is a full mechanical translation of the same chapter, so
+# including it roughly doubles the chapter-portion input tokens on every
+# default translate. The default is generous enough never to truncate a normal
+# chapter's draft; it only bounds a pathologically long one (an NMT runaway or
+# junk that would balloon the prompt). Lower it to actively trade some PEMT
+# fidelity for cost, or set <= 0 to disable the cap entirely.
+FREE_DRAFT_REF_MAX_CHARS = _int_env("FREE_DRAFT_REF_MAX_CHARS", 60000)
+
 # Hard cap on how many LLM completion calls one chapter is allowed to
 # make at the BaseTranslator level (counted at _complete + _complete_plain
 # call sites, NOT inside an SDK's own transient-retry loop). Belt-and-

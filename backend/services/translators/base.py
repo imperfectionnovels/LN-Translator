@@ -30,7 +30,12 @@ from functools import lru_cache
 
 from pydantic import ValidationError
 
-from backend.config import DEFAULT_GENRE, MAX_LLM_CALLS_PER_CHAPTER, PROJECT_ROOT
+from backend.config import (
+    DEFAULT_GENRE,
+    FREE_DRAFT_REF_MAX_CHARS,
+    MAX_LLM_CALLS_PER_CHAPTER,
+    PROJECT_ROOT,
+)
 from backend.genres import resolve_genre
 from backend.models import GlossaryEntry, NewTerm, TokenUsage, TranslationResult
 from backend.services import llm_cache
@@ -317,10 +322,15 @@ def build_prompt(
     # awkward phrasings.
     free_draft_block = ""
     if free_draft and free_draft.strip():
+        ref = free_draft.strip()
+        # Bound the reference so a pathologically long draft can't balloon the
+        # prompt. The default cap is well above any normal chapter's draft.
+        if FREE_DRAFT_REF_MAX_CHARS > 0 and len(ref) > FREE_DRAFT_REF_MAX_CHARS:
+            ref = ref[:FREE_DRAFT_REF_MAX_CHARS].rstrip() + "\n[reference truncated]"
         free_draft_block = (
             "REFERENCE TRANSLATION (mechanical NMT — for fidelity comparison only, "
             "DO NOT TRANSLATE OR COPY VERBATIM):\n"
-            f"{free_draft.strip()}\n\n"
+            f"{ref}\n\n"
             "This reference was produced by a machine-translation model. "
             "It tends to be more literal than necessary and may sound awkward, but "
             "it preserves event order, named entities, and quantities faithfully. "
