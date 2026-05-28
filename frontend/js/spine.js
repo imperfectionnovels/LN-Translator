@@ -77,8 +77,11 @@
 
     if (el.tagName === "A" && (nav === "reader" || nav === "glossary")) {
       if (novelId) {
+        // Omit &ch so the reader resumes on its persisted last-read chapter
+        // (lastRead:<novelId>) instead of always forcing chapter 1; the
+        // reader treats a missing ch param as "no explicit chapter".
         el.href = nav === "reader"
-          ? "/reader?novel=" + novelId + "&ch=1"
+          ? "/reader?novel=" + novelId
           : "/glossary?novel=" + novelId;
         el.classList.remove("disabled");
       } else {

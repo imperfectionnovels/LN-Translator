@@ -2208,6 +2208,10 @@ async function loadChapter(num) {
 
   try {
     const ch = await api.chapter(novelId, num);
+    // Staleness guard: a slow fetch can resolve after the user has navigated
+    // to a different chapter. Bail so a stale response can't overwrite the
+    // current chapter's body, banners, or poll loop.
+    if (num !== currentCh) return;
     lastChapter = ch;
     // R10: surface the chapter status to CSS so the reading-rail can hide
     // itself while the chapter is pending/translating instead of reporting a
@@ -2636,6 +2640,9 @@ function renderCockpit(ch, num, zhDetailsHtml) {
 
   // Async: fetch candidates and re-render highlights + the right pane.
   api.chapterSaturation(novelId, num).then(res => {
+    // Staleness guard: the user may have navigated away before this async
+    // fetch resolved; don't paint a stale chapter's preview / candidate list.
+    if (num !== currentCh) return;
     const cands = res?.candidates || [];
     if (!cands.length) return;
     const candTerms = cands.map(c => c.term);
@@ -3466,9 +3473,12 @@ window.addEventListener("resize", requestScrollPct);
   }
   updateScrollPct();
   setInterval(() => {
-    // Skip background polling when the tab is hidden — no point hitting the
-    // DB for a view nobody is looking at.
-    if (document.visibilityState === "visible") {
+    // Skip the background poll when the tab is hidden (no point hitting the DB
+    // for a view nobody is looking at) OR when nothing on the server can move
+    // the TOC without a user action (_hasLiveWork). The visibilitychange and
+    // BroadcastChannel handlers below still refresh on demand, so any
+    // staleness self-heals the moment the user returns or another tab appends.
+    if (document.visibilityState === "visible" && _hasLiveWork()) {
       loadChapters();
       refreshNovelMeta();
     }
@@ -3507,6 +3517,21 @@ async function refreshNovelMeta() {
         `${fresh.total_chapters} chapters · ${fresh.source_type || ""}`;
     }
   } catch (_) { /* visible-tab poll: silent failure is fine */ }
+}
+
+// True when something on the server could still change the chapter list or a
+// TOC glyph without user action: a chapter translating or queued, a refinement
+// or free-draft in flight, or an import in progress. When false, the periodic
+// background poll skips its tick — the TOC cannot change on its own, and the
+// viewed chapter keeps its own per-chapter poll regardless.
+function _hasLiveWork() {
+  if (novelMeta && novelMeta.import_status === "in_progress") return true;
+  return chaptersCache.some(c =>
+    c.status === "translating" ||
+    c.translate_queued ||
+    c.refinement_status === "pending" || c.refinement_status === "in_progress" ||
+    c.free_draft_status === "pending" || c.free_draft_status === "in_progress"
+  );
 }
 
 // ===========================================================================
