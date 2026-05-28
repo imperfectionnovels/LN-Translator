@@ -138,6 +138,31 @@ The worker (`_translate_chapter_in_db` in `services/queue.py`):
 7. Atomic success commit: one UPDATE writes `title_en`, `translated_text`, `status='done'`, clears `translate_queued` / `force_retranslate`. If the novel has `refinement_provider_id` set, the same UPDATE flags `refinement_status='pending'` and the worker chains into `_refine_chapter_in_db` under the same lock acquisition.
 8. Glossary merge runs after the success commit — failures stamp `glossary_merge_error` so the reader can surface a banner without losing the translation.
 
+### Prompt-assembly A/B knobs
+
+The runtime user prompt stacks several dynamic blocks on top of the static `base.md` + genre overlay + examples. Each block is gated at the queue's fetch site so a single env flag can suppress it for one A/B arm without DB mutation. Two kinds of control:
+
+- **Experiment instruments** (global env flags, default `true`/parity, flip via env for A/B):
+  - `PROMPT_INCLUDE_FREE_DRAFT` — REFERENCE TRANSLATION (Google-Translate mechanical NMT draft, PEMT layer).
+  - `PROMPT_INCLUDE_STYLE_NOTE` — STYLE NOTE block (per-novel voice anchor).
+  - `PROMPT_INCLUDE_STYLE_EDITS` — USER STYLE PREFERENCES block (captured paragraph edits).
+  - `PROMPT_INCLUDE_REFINER` — global refiner kill-switch (overrides per-novel `refinement_provider_id` when false).
+  - `DEEPSEEK_REVISION_ENABLED` — DeepSeek's internal translate→revise pass (provider-specific).
+- **Product settings** (defaults chosen for product reasons, **not** part of the A/B grid):
+  - `PREVIOUS_CONTEXT_ENABLED` — previous-chapter tail is doing real continuity work (pronoun reference, honorific consistency) that the glossary does not carry. Stays default `true`; do not put it in the A/B sequence.
+  - `novels.refinement_provider_id` — per-novel column; long-term opt-in surface for the refiner.
+  - `novels.genre`, `novels.custom_style_brief` — per-novel.
+
+**Graduation rule (binding).** Defaults flip only when all four hold:
+1. Single-variable A/B: exactly one flag flipped between two arms, every other config identical.
+2. Run on a chapter where you have a ground-truth rewrite to diff against.
+3. The off-arm output measurably closes the gap to the rewrite — "looks better" without a side-by-side diff does not count.
+4. The commit that flips the default cites the chapter pair (config-A output, config-B output, your rewrite) in its body.
+
+No "feels right on priors" default flips. Recommended A/B sequence: `PROMPT_INCLUDE_FREE_DRAFT=false` first (strongest prior, lowest continuity cost), then `PROMPT_INCLUDE_REFINER=false` if the test novel was using a refiner, then style flags as completeness arms. Run one flag at a time; bundling makes results uninterpretable.
+
+**Provenance.** Every successful translate commit stamps `chapters.prompt_config_snapshot` (JSON) with the full pipeline config: template version, translator/refiner provider+model, genre, which blocks actually shipped (block included only when both the flag was true AND the data was non-empty — `*_included` keys), and which flags were set (`flags.*`). Refinement-success extends the same blob with `refiner_*` keys. Query A/B runs with `json_extract(prompt_config_snapshot, '$.flags.PROMPT_INCLUDE_FREE_DRAFT')`. Writer: `services/queue.py::_build_prompt_config_snapshot` + `_extend_snapshot_with_refiner`.
+
 ## Translator rules
 
 The literary system instruction is **genre-aware**. It is composed per call by `build_system_instruction(genre, custom_brief)` in `services/translators/base.py`, layering:

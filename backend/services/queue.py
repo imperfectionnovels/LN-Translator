@@ -24,9 +24,14 @@ import time
 import aiosqlite
 
 from backend.config import (
+    DEEPSEEK_REVISION_ENABLED,
     PREVIOUS_CONTEXT_ENABLED,
     PREVIOUS_CONTEXT_MAX_GAP,
     PREVIOUS_CONTEXT_PARAGRAPHS,
+    PROMPT_INCLUDE_FREE_DRAFT,
+    PROMPT_INCLUDE_REFINER,
+    PROMPT_INCLUDE_STYLE_EDITS,
+    PROMPT_INCLUDE_STYLE_NOTE,
 )
 from backend.db import open_conn
 from backend.services import global_glossary as global_glossary_svc
@@ -62,8 +67,70 @@ from backend.services.text_observers import (
     detect_mt_texture,
 )
 from backend.services.translators import translate_chapter
+from backend.services.translators.base import PROMPT_TEMPLATE_VERSION
 
 logger = logging.getLogger(__name__)
+
+
+def _build_prompt_config_snapshot(
+    *,
+    provider: Provider | None,
+    novel_meta: dict,
+    free_draft_included: bool,
+    previous_context_included: bool,
+    style_note_included: bool,
+    style_edits_included: bool,
+) -> str:
+    """JSON blob recording the prompt-assembly config that produced this
+    chapter. Stamped onto chapters.prompt_config_snapshot in the same
+    transaction as the chapter success commit so A/B runs stay recoverable
+    per-output.
+
+    The `*_included` keys record what actually shipped to the model (block
+    sent only when both the env flag was true AND the data was non-empty).
+    The `flags` dict records what the env said, so a flag-on + data-empty
+    state is distinguishable from a flag-off state."""
+    import json  # noqa: PLC0415
+    return json.dumps({
+        "prompt_template_version": PROMPT_TEMPLATE_VERSION,
+        "translator_provider_id": provider.id if provider else None,
+        "translator_provider_type": provider.provider_type if provider else None,
+        "translator_model_id": provider.model_id if provider else None,
+        "genre": novel_meta.get("genre"),
+        "custom_brief_present": bool(novel_meta.get("custom_style_brief")),
+        "free_draft_included": free_draft_included,
+        "previous_context_included": previous_context_included,
+        "style_note_included": style_note_included,
+        "style_edits_included": style_edits_included,
+        "flags": {
+            "PROMPT_INCLUDE_FREE_DRAFT": PROMPT_INCLUDE_FREE_DRAFT,
+            "PROMPT_INCLUDE_STYLE_NOTE": PROMPT_INCLUDE_STYLE_NOTE,
+            "PROMPT_INCLUDE_STYLE_EDITS": PROMPT_INCLUDE_STYLE_EDITS,
+            "PROMPT_INCLUDE_REFINER": PROMPT_INCLUDE_REFINER,
+            "PREVIOUS_CONTEXT_ENABLED": PREVIOUS_CONTEXT_ENABLED,
+            "DEEPSEEK_REVISION_ENABLED": DEEPSEEK_REVISION_ENABLED,
+        },
+    }, sort_keys=True)
+
+
+def _extend_snapshot_with_refiner(
+    existing_json: str | None, refiner: Provider
+) -> str:
+    """Merge refiner_* keys into the existing prompt_config_snapshot blob.
+    Tolerant of None / empty / malformed JSON: starts from {} so the refiner
+    provenance is recorded even when the translator-side stamp is missing
+    (legacy rows or migration boundary)."""
+    import json  # noqa: PLC0415
+    try:
+        base = json.loads(existing_json) if existing_json else {}
+        if not isinstance(base, dict):
+            base = {}
+    except (TypeError, ValueError):
+        base = {}
+    base["refiner_provider_id"] = refiner.id
+    base["refiner_provider_type"] = refiner.provider_type
+    base["refiner_model_id"] = refiner.model_id
+    return json.dumps(base, sort_keys=True)
 
 
 def _body_correctness_observations(
@@ -451,8 +518,9 @@ async def _translate_chapter_in_db(
         # PEMT layer: pass the mechanical NMT free draft (Google Translate)
         # to the LLM as a fidelity reference. NULL when the draft hasn't run
         # yet (or failed); the prompt omits the REFERENCE TRANSLATION section
-        # in that case.
-        free_draft = r["free_draft_text"]
+        # in that case. PROMPT_INCLUDE_FREE_DRAFT=false is the A/B kill-switch
+        # for the REFERENCE TRANSLATION block.
+        free_draft = r["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             r["original_text"], r["title_zh"], glossary,
@@ -582,8 +650,9 @@ async def _translate_chapter_in_db(
         # pass when the novel has refinement_provider_id set — single
         # transaction so a crash between translator-commit and pending-flag
         # cannot leave a chapter with status='done' but no refinement signal.
-        refinement_pending = await _novel_has_refinement_provider(
-            conn, novel_id
+        refinement_pending = (
+            PROMPT_INCLUDE_REFINER
+            and await _novel_has_refinement_provider(conn, novel_id)
         )
         new_refinement_status = "pending" if refinement_pending else "none"
         # translated_by_provider_id is stamped on every successful commit so
@@ -681,6 +750,26 @@ async def _translate_chapter_in_db(
                     "queue: failed to record translation attempt for ch %d",
                     r["chapter_num"],
                 )
+            # Prompt-assembly provenance. Same transaction as the chapter
+            # commit so an A/B run can recover "what config produced this
+            # row" later via SQL. The blob distinguishes flag-state from
+            # block-emitted-state, so a flag-on-but-data-empty translation
+            # is queryable separately from a flag-off translation.
+            snapshot_json = _build_prompt_config_snapshot(
+                provider=provider,
+                novel_meta=novel_meta,
+                free_draft_included=bool(free_draft and free_draft.strip()),
+                previous_context_included=bool(
+                    previous_context and previous_context.strip()
+                ),
+                style_note_included=bool(style_note and style_note.strip()),
+                style_edits_included=bool(style_edits),
+            )
+            await conn.execute(
+                "UPDATE chapters SET prompt_config_snapshot = ? "
+                "WHERE id = ? AND novel_id = ?",
+                (snapshot_json, chapter_id, novel_id),
+            )
             # Initiative 5: refresh the TM rows for this chapter in the
             # same transaction. Failed alignment skips the chapter
             # silently — better than persisting wrong-paragraph pairs.
@@ -924,13 +1013,25 @@ async def _refine_chapter_in_db(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",
         r["chapter_num"], elapsed, provider.name, len(draft), len(refined),
     )
+    # Extend the prompt-config snapshot so the refined chapter records which
+    # refiner produced the final visible English. Tolerant of a missing /
+    # malformed translator-side snapshot so legacy rows still get refiner
+    # provenance recorded.
+    snap_cur = await conn.execute(
+        "SELECT prompt_config_snapshot FROM chapters WHERE id = ?",
+        (chapter_id,),
+    )
+    snap_row = await snap_cur.fetchone()
+    existing_snapshot = snap_row["prompt_config_snapshot"] if snap_row else None
+    merged_snapshot = _extend_snapshot_with_refiner(existing_snapshot, provider)
     await conn.execute(
         "UPDATE chapters SET refinement_status = 'done', "
         "refined_text = ?, refined_at = datetime('now'), "
         "refined_by_provider_id = ?, "
-        "refinement_error = NULL "
+        "refinement_error = NULL, "
+        "prompt_config_snapshot = ? "
         "WHERE id = ? AND refinement_status = 'in_progress'",
-        (refined, provider.id, chapter_id),
+        (refined, provider.id, merged_snapshot, chapter_id),
     )
     await conn.commit()
 
@@ -984,9 +1085,12 @@ async def _fetch_style_edits(
     prompt — the LLM learns the user's phrasing over time without manual
     prompt engineering.
 
-    Returns [] when the style_edits table doesn't exist (older DB) or there
-    are no captured edits yet. Edits are against the canonical translation
-    (refined_text when present, else translated_text)."""
+    Returns [] when the style_edits table doesn't exist (older DB), no edits
+    are captured yet, or PROMPT_INCLUDE_STYLE_EDITS is disabled. Edits are
+    against the canonical translation (refined_text when present, else
+    translated_text)."""
+    if not PROMPT_INCLUDE_STYLE_EDITS:
+        return []
     try:
         cur = await conn.execute(
             "SELECT before_text, after_text FROM style_edits "
@@ -1066,8 +1170,11 @@ async def _fetch_style_note(
     conn: aiosqlite.Connection, novel_id: int
 ) -> str | None:
     """Pull the per-novel style brief (250-300 word voice anchor). Returns
-    None when the novel hasn't had one generated yet — the prompt drops the
-    block entirely."""
+    None when the novel hasn't had one generated yet, or when
+    PROMPT_INCLUDE_STYLE_NOTE is disabled — the prompt drops the block
+    entirely in either case."""
+    if not PROMPT_INCLUDE_STYLE_NOTE:
+        return None
     try:
         cur = await conn.execute(
             "SELECT style_note FROM novels WHERE id = ?", (novel_id,)

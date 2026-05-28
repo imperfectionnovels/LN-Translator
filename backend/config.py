@@ -148,6 +148,21 @@ PREVIOUS_CONTEXT_ENABLED = _bool_env("PREVIOUS_CONTEXT_ENABLED", True)
 PREVIOUS_CONTEXT_PARAGRAPHS = _int_env("PREVIOUS_CONTEXT_PARAGRAPHS", 4)
 PREVIOUS_CONTEXT_MAX_GAP = _int_env("PREVIOUS_CONTEXT_MAX_GAP", 10)
 
+# Prompt-assembly A/B knobs. Each gates one dynamic block of the runtime
+# user-prompt at the queue worker's fetch site. Default true (parity with
+# current behavior); flip via env (e.g. PROMPT_INCLUDE_FREE_DRAFT=false) for
+# a single-variable A/B run against a ground-truth rewrite. See CLAUDE.md
+# "Prompt-assembly A/B knobs" for the graduation rule (no default flips
+# without a sample-confirmed A/B arm).
+PROMPT_INCLUDE_FREE_DRAFT = _bool_env("PROMPT_INCLUDE_FREE_DRAFT", True)
+PROMPT_INCLUDE_STYLE_NOTE = _bool_env("PROMPT_INCLUDE_STYLE_NOTE", True)
+PROMPT_INCLUDE_STYLE_EDITS = _bool_env("PROMPT_INCLUDE_STYLE_EDITS", True)
+# Global refiner kill-switch. When false, the worker skips refinement
+# regardless of the per-novel refinement_provider_id. The per-novel column
+# remains the long-term product gate; this flag is the testing instrument
+# for an A/B arm that removes the refiner pass across the board.
+PROMPT_INCLUDE_REFINER = _bool_env("PROMPT_INCLUDE_REFINER", True)
+
 # Hard cap on how many LLM completion calls one chapter is allowed to
 # make at the BaseTranslator level (counted at _complete + _complete_plain
 # call sites, NOT inside an SDK's own transient-retry loop). Belt-and-

@@ -185,6 +185,13 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- without re-deriving from novels.translator_provider_id (which can
     -- change after the chapter was translated).
     translated_by_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+    -- 2026-05-28 prompt-assembly provenance. JSON blob written on every
+    -- successful translate commit and extended on every refine commit:
+    -- which prompt blocks shipped, which env flags were set, which
+    -- translator + refiner produced the visible English. Lets A/B runs
+    -- across PROMPT_INCLUDE_* flags stay recoverable per-output. See
+    -- services/queue.py::_build_prompt_config_snapshot for the writer.
+    prompt_config_snapshot TEXT NOT NULL DEFAULT '{}',
     UNIQUE (novel_id, chapter_num)
 );
 
@@ -715,6 +722,16 @@ _ADDITIVE_MIGRATIONS = (
     # vs LLM PEMT-merged) without re-deriving from novels.translator_provider_id
     # (which can change after the chapter was translated).
     "ALTER TABLE chapters ADD COLUMN translated_by_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL",
+    # 2026-05-28 — prompt-assembly provenance. JSON blob stamped on every
+    # successful translate commit (and extended on every successful refine
+    # commit) recording the full pipeline config that produced this row:
+    # PROMPT_TEMPLATE_VERSION, translator + refiner provider/model, genre,
+    # which dynamic prompt blocks shipped (free_draft / previous_context /
+    # style_note / style_edits), and the env-flag state at translation time.
+    # Lets A/B runs across PROMPT_INCLUDE_* flags stay recoverable per-output
+    # via SQL (`json_extract(prompt_config_snapshot, '$.flags...')`). See
+    # services/queue.py::_build_prompt_config_snapshot for the writer.
+    "ALTER TABLE chapters ADD COLUMN prompt_config_snapshot TEXT NOT NULL DEFAULT '{}'",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed
