@@ -71,6 +71,7 @@
             <span class="qs-pulse"></span>
             <span>Translating…</span>
             <a class="qs-link" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open in reader</a>
+            <button class="qs-row-btn" data-act="cancel" type="button" title="Cancel this translation">Cancel</button>
           </div>
         </div>
       </div>`;
@@ -126,6 +127,20 @@
     }
   }
 
+  async function cancelActive(novelId, chapterNum, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = "Cancelling…"; }
+    try {
+      // Same endpoint as dequeue; for an in-flight row the backend also
+      // interrupts the running worker and resets the chapter.
+      await api.cancelQueueChapter(novelId, chapterNum);
+      showToast(`Cancelled chapter ${chapterNum}.`, "ok");
+      await refresh();
+    } catch (e) {
+      showToast(`Cancel failed: ${e.message}`, "err");
+      if (btn) { btn.disabled = false; btn.textContent = "Cancel"; }
+    }
+  }
+
   async function retryChapter(novelId, chapterNum, btn) {
     if (btn) btn.disabled = true;
     try {
@@ -169,6 +184,14 @@
     sumEl.textContent = `${inFlight.length} translating · ${upNext.length} queued · ${recent.length} recent`;
 
     // Wire row actions.
+    nowEl.querySelectorAll(".qs-active-card[data-novel]").forEach(card => {
+      const cx = card.querySelector("[data-act='cancel']");
+      if (cx) cx.addEventListener("click", () => cancelActive(
+        parseInt(card.dataset.novel, 10),
+        parseInt(card.dataset.ch, 10),
+        cx,
+      ));
+    });
     nextEl.querySelectorAll(".qs-row[data-novel]").forEach(row => {
       const dq = row.querySelector("[data-act='dequeue']");
       if (dq) dq.addEventListener("click", () => dequeueChapter(

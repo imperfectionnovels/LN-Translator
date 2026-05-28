@@ -324,10 +324,14 @@ async def cancel_chapter_queue(
     chapter_num: int,
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> dict:
-    """Remove a chapter from the queue. Clears `translate_queued` so the
-    waiting worker task skips the row when it eventually acquires the lock.
-    A chapter currently being processed (status='translating') cannot be
-    cancelled mid-LLM-call."""
+    """Remove a chapter from the queue, or cancel it mid-flight.
+
+    For a queued-but-not-started chapter this clears `translate_queued` so the
+    waiting worker skips the row when it acquires the lock. For a chapter
+    currently being processed (status='translating') it also cancels the
+    running worker task; the worker's CancelledError handler resets the row
+    out of 'translating' (back to 'done' if it had a prior translation, else
+    'pending') and releases the translator lock for the next chapter."""
     cur = await conn.execute(
         "SELECT id, status, translate_queued FROM chapters "
         "WHERE novel_id = ? AND chapter_num = ?",
@@ -346,6 +350,12 @@ async def cancel_chapter_queue(
             (r["id"],),
         )
         await conn.commit()
+
+    if in_flight_translate:
+        # Interrupt the running worker. The worker resets the row's status
+        # itself; we only clear the durable queue flag here so a cancelled
+        # chapter doesn't get re-spawned.
+        await queue_svc.cancel_translate(r["id"])
 
     return {
         "cancelled_translate": 1 if cancelled_translate else 0,

@@ -1,5 +1,8 @@
 const params = new URLSearchParams(location.search);
 const novelId = parseInt(params.get("novel"), 10);
+// Was a chapter explicitly requested in the URL? Deep links and "continue
+// from library" links carry ?ch=N and must win over the resume breadcrumb.
+const hadExplicitCh = params.has("ch");
 let currentCh = parseInt(params.get("ch") || "1", 10);
 
 // --- DOM HANDLES ---
@@ -179,6 +182,7 @@ function _resetNotFoundCount(num) {
 const chapterLoader = document.getElementById("chapter-loader");
 const loaderLabel   = document.getElementById("chapter-loader-label");
 const loaderElapsed = document.getElementById("chapter-loader-elapsed");
+const loaderCancel  = document.getElementById("chapter-loader-cancel");
 
 // IDs hidden when rendering the chapter "queued — waiting" card, so only the
 // waiting message shows (not the prior chapter's body or end matter).
@@ -1914,12 +1918,12 @@ async function cancelOneFromQueue(chapterNum, btn) {
   if (btn) btn.disabled = true;
   try {
     const res = await api.cancelQueueChapter(novelId, chapterNum);
-    if (res.cancelled_translate) {
+    if (res.in_flight_translate) {
+      statusEl.className = "status info";
+      statusEl.textContent = `Cancelled chapter ${chapterNum}'s translation.`;
+    } else if (res.cancelled_translate) {
       statusEl.className = "status info";
       statusEl.textContent = `Chapter ${chapterNum} removed from the translation queue.`;
-    } else if (res.in_flight_translate) {
-      statusEl.className = "status info";
-      statusEl.textContent = `Chapter ${chapterNum} is currently being translated. Can't cancel mid-call. It will finish on its own.`;
     }
     loadChapters();
     if (chapterNum === currentCh) loadChapter(currentCh);
@@ -1977,6 +1981,15 @@ function startLoader(ch, stage) {
   // The bar is a CSS indeterminate animation — nothing to reset between poll
   // ticks. Only the real elapsed counter needs seeding on a fresh stage.
   if (!sameStage) loaderElapsed.textContent = "0s elapsed";
+  // Re-arm the cancel button each time the loader appears (a prior cancel
+  // leaves it disabled). Refinement isn't user-cancellable, so only offer
+  // cancel for the translate stage.
+  if (loaderCancel) {
+    const cancelable = stage === "translate";
+    loaderCancel.hidden = !cancelable;
+    loaderCancel.disabled = false;
+    loaderCancel.textContent = "Cancel translation";
+  }
   chapterLoader.classList.remove("hidden");
   // Hide the entire reading column (Chinese pane, chapter mark/seal, English
   // body) so the loading screen shows nothing but the progress bar.
@@ -2255,7 +2268,11 @@ async function loadChapter(num) {
         }
         bodyEn.innerHTML =
           `<p class="muted"><strong>Queued for translation. Waiting on the translator.</strong> The translator processes one chapter at a time; this chapter will start as soon as it's its turn.</p>` +
+          `<p><button type="button" class="btn-ghost" id="cancel-queued">Cancel</button></p>` +
           zhDetails;
+        document.getElementById("cancel-queued")?.addEventListener("click", (e) => {
+          cancelOneFromQueue(num, e.currentTarget);
+        });
         // Re-poll so we flip to the translate loader once this chapter
         // claims the lock.
         pollHandle = setTimeout(() => loadChapter(num), pollInterval(num, 3000));
@@ -2872,6 +2889,14 @@ nextCard.addEventListener("click", (e) => {
 });
 rereadBtn.addEventListener("click", () => loadChapter(currentCh));
 
+// Cancel the in-flight translation from the loading screen. activeLoader
+// carries the chapter currently being processed.
+loaderCancel?.addEventListener("click", () => {
+  const num = activeLoader ? activeLoader.chapterNum : currentCh;
+  loaderCancel.textContent = "Cancelling…";
+  cancelOneFromQueue(num, loaderCancel);
+});
+
 // Swap the icon for a spinner while a queue request is in flight; the
 // existing chapter polling (pollHandle) will refresh the body when the
 // status flips back to done.
@@ -3390,6 +3415,26 @@ window.addEventListener("resize", requestScrollPct);
       bodyEn.innerHTML = `<p class="muted">This novel has no chapters yet. <a href="/?novel=${novelId}">Import chapters</a> to begin.</p>`;
       bodyZh.innerHTML = "";
       return;
+    }
+    // Resume position: when the URL didn't pin a chapter, land on the last
+    // chapter the reader finished rendering (the persistLastRead breadcrumb)
+    // instead of always defaulting to chapter 1.
+    if (!hadExplicitCh) {
+      try {
+        const raw = localStorage.getItem(`lastRead:${novelId}`);
+        if (raw) {
+          const savedCh = Number(JSON.parse(raw)?.ch);
+          if (Number.isFinite(savedCh) && chaptersCache.some(c => c.chapter_num === savedCh)) {
+            currentCh = savedCh;
+          }
+        }
+      } catch (_) { /* corrupt breadcrumb — fall through to the default */ }
+    }
+    // Guard against a non-existent target: default `1` on a partial import
+    // that starts at 296, or a deletion gap. chaptersCache is ordered, so
+    // [0] is the first chapter.
+    if (!chaptersCache.some(c => c.chapter_num === currentCh)) {
+      currentCh = chaptersCache[0].chapter_num;
     }
     await loadChapter(currentCh);
   } catch (err) {

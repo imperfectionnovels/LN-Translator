@@ -187,6 +187,41 @@ def _spawn(coro) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+# Maps chapter_id -> the in-flight _run_translate task, so an explicit cancel
+# request can find and interrupt the worker. At most one task per chapter is
+# ever active (the serial translator lock guarantees it), so a plain
+# chapter_id key is unambiguous.
+_translate_tasks: dict[int, asyncio.Task] = {}
+
+
+def _spawn_translate(novel_id: int, chapter_id: int) -> None:
+    """Spawn a translate worker and register it under its chapter id so it can
+    be cancelled mid-flight. Mirrors _spawn's strong-ref bookkeeping."""
+    task = asyncio.create_task(_run_translate(novel_id, chapter_id))
+    _background_tasks.add(task)
+    _translate_tasks[chapter_id] = task
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        # Only clear the registry slot if it still points at THIS task — a
+        # rapid retranslate could have already registered a newer one.
+        if _translate_tasks.get(chapter_id) is t:
+            _translate_tasks.pop(chapter_id, None)
+
+    task.add_done_callback(_done)
+
+
+async def cancel_translate(chapter_id: int) -> bool:
+    """Cancel an in-flight translate worker for this chapter, if one is
+    running. Returns True if a cancel was issued. The worker's CancelledError
+    handler resets the row out of the 'translating' state."""
+    task = _translate_tasks.get(chapter_id)
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
 # Batch size for IN(...) clauses in reset_chapters_for_retranslate and
 # queue_translations. SQLite caps parameters at 999 on pre-3.32 builds and
 # 32766 on newer; 500 is comfortably under both.
@@ -216,7 +251,7 @@ def spawn_translate_worker(novel_id: int, chapter_id: int) -> None:
     """Spawn a translator worker task without touching the DB. Caller is
     responsible for having already set translate_queued=1 in a prior
     transaction. Used by the retranslate paths."""
-    _spawn(_run_translate(novel_id, chapter_id))
+    _spawn_translate(novel_id, chapter_id)
 
 
 async def queue_translation(novel_id: int, chapter_id: int) -> None:
@@ -229,7 +264,7 @@ async def queue_translation(novel_id: int, chapter_id: int) -> None:
         )
         await conn.commit()
     if (cur.rowcount or 0) > 0:
-        _spawn(_run_translate(novel_id, chapter_id))
+        _spawn_translate(novel_id, chapter_id)
 
 
 async def queue_translations(novel_id: int, chapter_ids: list[int]) -> None:
@@ -255,7 +290,7 @@ async def queue_translations(novel_id: int, chapter_ids: list[int]) -> None:
             spawned.extend(r["id"] for r in await cur.fetchall())
         await conn.commit()
     for cid in spawned:
-        _spawn(_run_translate(novel_id, cid))
+        _spawn_translate(novel_id, cid)
 
 
 async def reset_chapters_for_retranslate(
@@ -359,7 +394,7 @@ async def drain_on_startup() -> None:
         )
         refine_rows = await cur.fetchall()
     for r in translate_rows:
-        _spawn(_run_translate(r["novel_id"], r["id"]))
+        _spawn_translate(r["novel_id"], r["id"])
     for r in refine_rows:
         _spawn(_run_refine(r["novel_id"], r["id"]))
     if translate_rows:
@@ -390,6 +425,35 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
                 # for any other status, so this branch costs a single SELECT
                 # when refinement isn't configured.
                 await _refine_chapter_in_db(conn, novel_id, chapter_id)
+        except asyncio.CancelledError:
+            # User cancelled mid-flight (see cancel_translate). The LLM call,
+            # or a chained refine, was interrupted at its await point; nothing
+            # was committed. Reset the row so it isn't stuck in 'translating':
+            # back to 'done' if a prior translation is still on the row (a
+            # cancelled retranslate must not destroy good work), else 'pending'.
+            # The translator lock is released by the surrounding `async with`
+            # unwinding, so the next queued chapter proceeds immediately. The
+            # provider's underlying subprocess may take a few seconds to
+            # actually abort, but that does not block the queue.
+            logger.info("queue translate ch_id=%d cancelled by user", chapter_id)
+            try:
+                async with open_conn() as recovery:
+                    await recovery.execute(
+                        "UPDATE chapters SET "
+                        "status = CASE WHEN translated_text IS NOT NULL "
+                        " AND translated_text != '' THEN 'done' ELSE 'pending' END, "
+                        "translate_queued = 0, force_retranslate = 0, error_msg = NULL "
+                        "WHERE id = ? AND status = 'translating'",
+                        (chapter_id,),
+                    )
+                    await recovery.commit()
+            except Exception:
+                logger.exception(
+                    "translate cancel cleanup failed for ch_id=%d; row may be "
+                    "stuck in 'translating' until next server restart",
+                    chapter_id,
+                )
+            raise
         except Exception:
             logger.exception("queue translate ch_id=%d crashed", chapter_id)
             try:

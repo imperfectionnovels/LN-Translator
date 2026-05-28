@@ -1685,6 +1685,8 @@ body.has-selection .reading-rail {
   font-variant-numeric: tabular-nums;
 }
 .chapter-loader-meta .dot { opacity: 0.5; }
+.chapter-loader-cancel { margin-top: 18px; }
+.chapter-loader-cancel[hidden] { display: none; }
 
 /* ===== Bilingual paragraph rows (legacy compat) ===== */
 .bilingual { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
