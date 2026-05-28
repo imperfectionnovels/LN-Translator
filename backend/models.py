@@ -167,6 +167,28 @@ class NovelUpdate(BaseModel):
     series_index: int | None = Field(default=None, ge=0)
 
 
+class MassQueueRequest(BaseModel):
+    """Body for POST /novels/{id}/queue.
+
+    Bulk version of POST /novels/{id}/chapters/{n}/retranslate. Lets the user
+    queue many chapters in a single click instead of clicking each one.
+
+    Modes:
+      - 'all_untranslated' — every chapter that isn't done and isn't already
+        translating. Skips chapters already flagged translate_queued=1.
+      - 'range' — chapter_num in [from_chapter, to_chapter]. Same skip rules.
+
+    `include_errors`: when False, chapters with status='error' are left alone
+    (the user explicitly wants to retry only via the Retry-all banner). When
+    True (the default), errored chapters are reset to pending and re-queued
+    through the same path as a per-chapter retranslate."""
+
+    mode: Literal["all_untranslated", "range"] = "all_untranslated"
+    from_chapter: int | None = Field(default=None, ge=1)
+    to_chapter: int | None = Field(default=None, ge=1)
+    include_errors: bool = True
+
+
 class Chapter(BaseModel):
     id: int
     novel_id: int

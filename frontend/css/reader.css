@@ -349,6 +349,48 @@
 .toc-jump:hover { background: var(--bg-tint); color: var(--fg); }
 .toc-jump[hidden] { display: none; }
 
+/* Mass-queue dialog (TOC rail "Queue chapters for translation"). */
+.mass-queue-form { font-size: 13px; }
+.mass-queue-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 12px 10px;
+  margin: 0;
+}
+.mass-queue-fieldset legend { padding: 0 4px; }
+.mass-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.mass-queue-row input[type="radio"],
+.mass-queue-row input[type="checkbox"] { margin: 0; }
+.mass-queue-range {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 0 24px;
+  font-size: 12.5px;
+}
+.mass-queue-range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.mass-queue-range input[type="number"] {
+  width: 5.5em;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+}
+.mass-queue-range[hidden] { display: none; }
+
 /* TOC body-search snippet rows */
 .toc-row.toc-fts-row { flex-direction: column; align-items: flex-start; }
 .toc-row .toc-snippet {

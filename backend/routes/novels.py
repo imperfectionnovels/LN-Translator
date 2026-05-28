@@ -9,6 +9,7 @@ from backend.db import get_conn, open_conn
 from backend.genres import is_known_genre
 from backend.models import (
     AddNovelGenreRequest,
+    MassQueueRequest,
     Novel,
     NovelGenresResponse,
     NovelUpdate,
@@ -16,6 +17,7 @@ from backend.models import (
 )
 from backend.services import genres_novel as genres_novel_svc
 from backend.services import providers as providers_svc
+from backend.services import queue as queue_svc
 from backend.services.covers import resolve_cover_path
 from backend.services.epub_export import build_epub
 from backend.services.providers import load_provider
@@ -515,6 +517,96 @@ async def get_delete_counts(
         "tm_segments": counts.tm_segments,
         "fr_snapshots": counts.fr_snapshots,
         "total_cost_usd": counts.total_cost_usd,
+    }
+
+
+@router.post("/{novel_id}/queue")
+async def mass_queue_chapters(
+    novel_id: int,
+    body: MassQueueRequest,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Queue many chapters for translation in one call.
+
+    Routes pending chapters through queue_translations (just flips the flag
+    and spawns a worker, no force_retranslate). Errored chapters take the
+    reset path so the worker can claim them again (status='error' isn't
+    claimable directly). Already-queued / in-flight / done chapters are
+    skipped and counted, so the UI can surface what actually happened.
+    """
+    cur = await conn.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
+    if await cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+
+    if body.mode == "range":
+        if body.from_chapter is None or body.to_chapter is None:
+            raise HTTPException(
+                status_code=400,
+                detail="from_chapter and to_chapter are required for range mode",
+            )
+        if body.from_chapter > body.to_chapter:
+            raise HTTPException(
+                status_code=400,
+                detail="from_chapter must be less than or equal to to_chapter",
+            )
+        cur = await conn.execute(
+            "SELECT id, chapter_num, status, translate_queued FROM chapters "
+            "WHERE novel_id = ? AND chapter_num >= ? AND chapter_num <= ? "
+            "ORDER BY chapter_num",
+            (novel_id, body.from_chapter, body.to_chapter),
+        )
+    else:
+        cur = await conn.execute(
+            "SELECT id, chapter_num, status, translate_queued FROM chapters "
+            "WHERE novel_id = ? ORDER BY chapter_num",
+            (novel_id,),
+        )
+    rows = await cur.fetchall()
+
+    pending_ids: list[int] = []
+    error_ids: list[int] = []
+    skipped_done = 0
+    skipped_in_flight = 0
+    skipped_already_queued = 0
+    skipped_errors = 0
+
+    for r in rows:
+        status = r["status"]
+        if status == "translating":
+            skipped_in_flight += 1
+            continue
+        if status == "done":
+            skipped_done += 1
+            continue
+        if r["translate_queued"]:
+            skipped_already_queued += 1
+            continue
+        if status == "error":
+            if body.include_errors:
+                error_ids.append(r["id"])
+            else:
+                skipped_errors += 1
+            continue
+        pending_ids.append(r["id"])
+
+    queued_count = 0
+    if pending_ids:
+        await queue_svc.queue_translations(novel_id, pending_ids)
+        queued_count += len(pending_ids)
+    if error_ids:
+        reset_ids = await queue_svc.reset_chapters_for_retranslate(
+            conn, novel_id, error_ids
+        )
+        for cid in reset_ids:
+            queue_svc.spawn_translate_worker(novel_id, cid)
+        queued_count += len(reset_ids)
+
+    return {
+        "queued_count": queued_count,
+        "skipped_done": skipped_done,
+        "skipped_in_flight": skipped_in_flight,
+        "skipped_already_queued": skipped_already_queued,
+        "skipped_errors": skipped_errors,
     }
 
 

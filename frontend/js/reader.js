@@ -734,6 +734,17 @@ function renderToc() {
       jumpBtn.hidden = true;
     }
   }
+  // Mass-queue button. Visible whenever at least one chapter is queueable
+  // (i.e. not currently translating, not already done, and not already
+  // waiting in the queue). Errored chapters count too because the dialog's
+  // include-errors checkbox lets the user opt them in.
+  const massQueueBtn = document.getElementById("toc-mass-queue");
+  if (massQueueBtn) {
+    const queueable = chaptersCache.some(c =>
+      c.status !== "done" && c.status !== "translating" && !c.translate_queued
+    );
+    massQueueBtn.hidden = !queueable;
+  }
   // 2026-05-25: error banner. Counts chapters in `error` status and
   // surfaces a one-click Retry-all action. Replaces the old stale-
   // chapter banner — per user feedback the stale concept stayed
@@ -756,6 +767,154 @@ function renderToc() {
   const active = tocList.querySelector(".toc-row.active");
   if (active && !tocUserScrolling()) active.scrollIntoView({ block: "nearest" });
 }
+
+/* ---- Mass-queue dialog ---- */
+// One-click bulk translate. Lets the user queue many chapters from the TOC
+// rail in one gesture instead of clicking each chapter's Retranslate. The
+// preview count is derived from chaptersCache so we don't pay a round-trip
+// before the user commits — chaptersCache is also what /api uses, so the
+// preview matches the server's view as long as the page isn't stale.
+(function bindMassQueueDialog() {
+  const openBtn = document.getElementById("toc-mass-queue");
+  const dialog = document.getElementById("mass-queue-dialog");
+  if (!openBtn || !dialog) return;
+  const rangeBox = dialog.querySelector("#mass-queue-range");
+  const fromInput = dialog.querySelector("#mass-queue-from");
+  const toInput = dialog.querySelector("#mass-queue-to");
+  const includeErrorsCb = dialog.querySelector("#mass-queue-include-errors");
+  const preview = dialog.querySelector("#mass-queue-preview");
+  const errorEl = dialog.querySelector("#mass-queue-error");
+  const submitBtn = dialog.querySelector("#mass-queue-submit");
+  const cancelBtn = dialog.querySelector("#mass-queue-cancel");
+
+  function selectedMode() {
+    const checked = dialog.querySelector("input[name='mass-queue-mode']:checked");
+    return checked ? checked.value : "all_untranslated";
+  }
+
+  function clearError() {
+    errorEl.style.display = "none";
+    errorEl.textContent = "";
+  }
+  function showError(msg) {
+    errorEl.style.display = "";
+    errorEl.textContent = msg;
+  }
+
+  function refreshPreview() {
+    clearError();
+    const mode = selectedMode();
+    rangeBox.hidden = mode !== "range";
+    const includeErrors = includeErrorsCb.checked;
+    let candidates = chaptersCache;
+    if (mode === "range") {
+      const from = parseInt(fromInput.value, 10);
+      const to = parseInt(toInput.value, 10);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) {
+        preview.textContent = "Enter a From and To chapter number to see the count.";
+        return;
+      }
+      if (from > to) {
+        preview.textContent = "From chapter must be less than or equal to To.";
+        return;
+      }
+      candidates = chaptersCache.filter(c =>
+        c.chapter_num >= from && c.chapter_num <= to
+      );
+    }
+    let willQueue = 0;
+    let skipDone = 0, skipInFlight = 0, skipAlreadyQueued = 0, skipError = 0;
+    for (const c of candidates) {
+      if (c.status === "translating") { skipInFlight++; continue; }
+      if (c.status === "done") { skipDone++; continue; }
+      if (c.translate_queued) { skipAlreadyQueued++; continue; }
+      if (c.status === "error") {
+        if (includeErrors) willQueue++;
+        else skipError++;
+        continue;
+      }
+      willQueue++;
+    }
+    const parts = [`${willQueue} chapter${willQueue === 1 ? "" : "s"} will be queued.`];
+    const skipBits = [];
+    if (skipDone) skipBits.push(`${skipDone} already done`);
+    if (skipInFlight) skipBits.push(`${skipInFlight} translating now`);
+    if (skipAlreadyQueued) skipBits.push(`${skipAlreadyQueued} already queued`);
+    if (skipError) skipBits.push(`${skipError} failed (skipped)`);
+    if (skipBits.length) parts.push(`Skipping ${skipBits.join(", ")}.`);
+    preview.textContent = parts.join(" ");
+    submitBtn.disabled = willQueue === 0;
+  }
+
+  function openDialog() {
+    clearError();
+    // Default range bounds = full chapter span. Saves the user typing on the
+    // common case ("queue chapters 50–200") and makes the preview meaningful
+    // immediately when the user flips to Range.
+    const nums = chaptersCache.map(c => c.chapter_num);
+    if (nums.length) {
+      fromInput.value = Math.min(...nums);
+      toInput.value = Math.max(...nums);
+    }
+    // Always reset to the default mode on open so a previous Range selection
+    // doesn't surprise the user the next time they open the dialog.
+    const allRadio = dialog.querySelector("input[name='mass-queue-mode'][value='all_untranslated']");
+    if (allRadio) allRadio.checked = true;
+    includeErrorsCb.checked = true;
+    rangeBox.hidden = true;
+    refreshPreview();
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  }
+
+  function closeDialog() {
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  openBtn.addEventListener("click", openDialog);
+  cancelBtn.addEventListener("click", closeDialog);
+  dialog.querySelectorAll("input[name='mass-queue-mode']").forEach(r => {
+    r.addEventListener("change", refreshPreview);
+  });
+  fromInput.addEventListener("input", refreshPreview);
+  toInput.addEventListener("input", refreshPreview);
+  includeErrorsCb.addEventListener("change", refreshPreview);
+
+  submitBtn.addEventListener("click", async () => {
+    const mode = selectedMode();
+    const body = { mode, include_errors: includeErrorsCb.checked };
+    if (mode === "range") {
+      const from = parseInt(fromInput.value, 10);
+      const to = parseInt(toInput.value, 10);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+        showError("Enter a valid From / To range.");
+        return;
+      }
+      body.from_chapter = from;
+      body.to_chapter = to;
+    }
+    submitBtn.disabled = true;
+    const oldLabel = submitBtn.textContent;
+    submitBtn.textContent = "Queueing…";
+    try {
+      const res = await api.massQueueChapters(novelId, body);
+      closeDialog();
+      // Refresh the TOC so the queued glyphs appear immediately.
+      if (typeof loadChapters === "function") await loadChapters();
+      // Best-effort toast through the existing status pipeline. Falls back to
+      // a quiet console line when the toast helper isn't on this page.
+      const msg = `Queued ${res.queued_count} chapter${res.queued_count === 1 ? "" : "s"} for translation.`;
+      if (typeof window.toast === "function") window.toast(msg);
+      else console.info(msg);
+    } catch (err) {
+      showError(`Queue failed: ${err.message || err}`);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = oldLabel;
+    }
+  });
+})();
 
 // Retry-all handler for the error banner. Loops through every `error`
 // chapter and re-queues it via /retranslate; failures don't abort the

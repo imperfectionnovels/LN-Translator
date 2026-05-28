@@ -198,6 +198,17 @@ const api = {
   refreshFreeDraft: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/refresh-free-draft`, { method: "POST" }),
   cancelQueueChapter: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/queue`, { method: "DELETE" }),
   cancelQueueAll: (id) => apiFetch(`/api/novels/${id}/queue`, { method: "DELETE" }),
+  // Mass-queue chapters for translation. `body` shape:
+  //   { mode: "all_untranslated" | "range",
+  //     from_chapter?: number, to_chapter?: number,
+  //     include_errors?: boolean }
+  // Pending chapters get queue_translations (no force_retranslate); errored
+  // chapters take the reset path so the worker can re-claim them. Done /
+  // in-flight / already-queued chapters are skipped and counted.
+  massQueueChapters: (id, body) => apiFetch(`/api/novels/${id}/queue`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   globalQueue: () => apiFetch(`/api/novels/queue/all`),
   cancelGlobalQueue: () => apiFetch(`/api/novels/queue/all`, { method: "DELETE" }),
   glossary: (id) => apiFetch(`/api/novels/${id}/glossary`),

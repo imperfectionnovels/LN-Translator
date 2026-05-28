@@ -52,6 +52,7 @@
       </div>
       <div class="toc-extras">
         <button type="button" class="toc-jump" id="toc-jump-pending" hidden>Jump to next pending →</button>
+        <button type="button" class="toc-jump toc-mass-queue" id="toc-mass-queue" hidden>Queue chapters for translation…</button>
         <!-- Error banner: visible in both Read and Edit mode. Hidden via
              [hidden] when no chapters are in `error` state. The status
              legend was removed (user feedback: cryptic icons cluttered
@@ -322,6 +323,53 @@
     </div>
     <div class="dialog-actions">
       <button type="button" class="btn-primary" id="observations-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Mass-queue dialog. Opened from the TOC rail's "Queue chapters for
+       translation" button. Lets the user queue many chapters in one click:
+       either every not-yet-done chapter, or a specific chapter-number range.
+       Live preview count comes from chaptersCache so there's no extra
+       fetch before the user commits. -->
+  <dialog id="mass-queue-dialog" class="dialog" aria-labelledby="mass-queue-title">
+    <h3 id="mass-queue-title">Queue chapters for translation</h3>
+    <p class="muted" style="margin: 4px 0 12px; font-size: 12.5px;">
+      Picks the chapters and adds them to the translate queue. Chapters
+      currently being translated, already finished, or already waiting in the
+      queue are skipped automatically.
+    </p>
+    <div class="mass-queue-form">
+      <fieldset class="mass-queue-fieldset">
+        <legend class="muted" style="font-size: 12px;">Which chapters</legend>
+        <label class="mass-queue-row">
+          <input type="radio" name="mass-queue-mode" value="all_untranslated" checked>
+          <span>All not-yet-translated chapters</span>
+        </label>
+        <label class="mass-queue-row">
+          <input type="radio" name="mass-queue-mode" value="range">
+          <span>A chapter range</span>
+        </label>
+        <div class="mass-queue-range" id="mass-queue-range" hidden>
+          <label>From
+            <input type="number" id="mass-queue-from" min="1" step="1" inputmode="numeric">
+          </label>
+          <label>to
+            <input type="number" id="mass-queue-to" min="1" step="1" inputmode="numeric">
+          </label>
+        </div>
+      </fieldset>
+      <label class="mass-queue-row" style="margin-top: 10px;">
+        <input type="checkbox" id="mass-queue-include-errors" checked>
+        <span>Also re-queue chapters that previously failed</span>
+      </label>
+      <div class="mass-queue-preview muted" id="mass-queue-preview" style="margin-top: 10px; font-size: 12.5px;">
+        …
+      </div>
+      <div class="status err" id="mass-queue-error" style="display: none; margin-top: 8px;"></div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="mass-queue-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="mass-queue-submit">Queue chapters</button>
     </div>
   </dialog>
 
