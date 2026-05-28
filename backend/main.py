@@ -319,25 +319,51 @@ async def _probe_backends(default_provider: Provider | None) -> None:
     await _probe_one("translator", default_provider)
 
 
+# config_kv sentinel that records the OPUS-MT → Google Translate migration
+# has already run. Absence = pre-migration; '1' = done. Lets the chapter-
+# state reset (destructive) fire exactly once after the upgrade.
+_OPUS_MT_MIGRATION_SENTINEL = "free_draft_engine_migrated_to_google"
+
+
 async def _migrate_opus_mt_remnants() -> None:
     """One-shot OPUS-MT removal cleanup.
 
     The old free-tier backend (OPUS-MT, CTranslate2, ~78MB per language pair)
     was replaced by Google Translate (via deep-translator) when its quality
-    proved unusable for literary CJK prose. This function:
+    proved unusable for literary CJK prose. This function, gated by a
+    config_kv sentinel so it runs exactly once after upgrade:
       1. Rewrites any ``providers.provider_type='opus_mt'`` row to
          ``'google_translate_free'`` so existing default-provider selections
          keep working without manual reconfiguration.
       2. Deletes ``USER_DATA_ROOT/opus_mt/`` if it exists, reclaiming 78-300MB
          per installed language pair from disk.
+      3. Resets every chapter's free-draft state to 'none' and clears
+         ``free_draft_text`` — those rows hold OPUS-MT-era output that the
+         user already rejected as garbage, and clearing them lets the new
+         Google Translate worker regenerate fresh on next chapter open.
 
-    Both steps are wrapped in try/except and never fail the boot — worst case
-    the user manually re-adds a provider or deletes the directory.
+    All steps are wrapped in try/except and never fail the boot — worst case
+    the user manually re-adds a provider, deletes the directory, or hits
+    the Refresh free draft button per chapter.
     """
     import shutil
 
     from backend.config import USER_DATA_ROOT
     from backend.db import open_conn
+
+    try:
+        async with open_conn() as conn:
+            cur = await conn.execute(
+                "SELECT value FROM config_kv WHERE key = ?",
+                (_OPUS_MT_MIGRATION_SENTINEL,),
+            )
+            sentinel_row = await cur.fetchone()
+            if sentinel_row is not None and sentinel_row["value"] == "1":
+                return
+    except Exception:
+        logger.exception(
+            "opus_mt migration sentinel check failed (continuing anyway)"
+        )
 
     try:
         async with open_conn() as conn:
@@ -361,6 +387,38 @@ async def _migrate_opus_mt_remnants() -> None:
             logger.info("removed stale opus_mt model directory at %s", opus_mt_dir)
     except Exception:
         logger.exception("opus_mt directory cleanup failed (non-fatal)")
+
+    try:
+        async with open_conn() as conn:
+            cur = await conn.execute(
+                "UPDATE chapters SET "
+                "free_draft_text = NULL, "
+                "free_draft_status = 'none', "
+                "free_draft_error = NULL, "
+                "free_draft_completed_at = NULL "
+                "WHERE free_draft_status != 'none'"
+            )
+            await conn.commit()
+        if cur.rowcount:
+            logger.info(
+                "reset %d chapter row(s) free-draft state for Google Translate regeneration",
+                cur.rowcount,
+            )
+    except Exception:
+        logger.exception("opus_mt chapter-state reset failed (non-fatal)")
+
+    try:
+        async with open_conn() as conn:
+            await conn.execute(
+                "INSERT INTO config_kv (key, value) VALUES (?, '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (_OPUS_MT_MIGRATION_SENTINEL,),
+            )
+            await conn.commit()
+    except Exception:
+        logger.exception(
+            "opus_mt migration sentinel write failed — migration will run again next boot"
+        )
 
 
 @asynccontextmanager

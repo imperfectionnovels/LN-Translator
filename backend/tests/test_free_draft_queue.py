@@ -166,16 +166,30 @@ async def test_worker_records_error_message(monkeypatch):
 # maybe_queue_for_open_chapter contract
 # ---------------------------------------------------------------------------
 
-async def test_maybe_queue_skips_when_status_done(monkeypatch):
+async def test_maybe_queue_runs_even_when_chapter_translated(monkeypatch):
+    """The Polished / Free draft toggle depends on free_draft_text being
+    set; the user wants the toggle on already-translated chapters too, so
+    the trigger must NOT gate on chapter.status."""
     novel_id, chapter_id = await _make_novel_and_chapter(status="done")
+    _install_stub_translator(monkeypatch, output="lazy-drafted")
     spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
-    assert spawned is False
+    assert spawned is True
 
 
 async def test_maybe_queue_skips_when_already_done(monkeypatch):
     novel_id, chapter_id = await _make_novel_and_chapter(free_draft_status="done")
     spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
     assert spawned is False
+
+
+async def test_maybe_queue_retries_when_previous_attempt_errored(monkeypatch):
+    """A chapter whose previous free-draft attempt errored (network blip,
+    Google rate-limit) should get retried on the next reader open. Mirrors
+    queue_free_draft's WHERE clause that accepts both 'none' and 'error'."""
+    novel_id, chapter_id = await _make_novel_and_chapter(free_draft_status="error")
+    _install_stub_translator(monkeypatch, output="retry-drafted")
+    spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
+    assert spawned is True
 
 
 async def test_maybe_queue_spawns_on_happy_path(monkeypatch):

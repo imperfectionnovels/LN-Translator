@@ -75,9 +75,13 @@ async def queue_free_draft(novel_id: int, chapter_id: int) -> bool:
 async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
     """Convenience trigger for the reader's open-chapter hook.
 
-    Spawns a free-draft worker only when:
-      * the chapter is not already translated (status != 'done');
-      * the chapter's free draft hasn't started yet (free_draft_status='none').
+    Spawns a free-draft worker when the chapter's free draft hasn't been
+    successfully filled in yet (status in 'none', 'error'). The reader's
+    Polished / Free draft toggle depends on ``chapters.free_draft_text``
+    being non-null, so we want the draft to fill in even for chapters that
+    are already LLM-translated — the user wants the toggle on those too.
+    Previously-errored attempts get a retry on every open, mirroring the
+    Refresh free draft button's effect.
 
     Google Translate has no per-language install step — if the network is
     down, the worker fails cleanly and we surface the error in the UI.
@@ -85,7 +89,7 @@ async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
     """
     async with open_conn() as conn:
         cur = await conn.execute(
-            "SELECT c.status, c.free_draft_status "
+            "SELECT c.free_draft_status "
             "FROM chapters c JOIN novels n ON n.id = c.novel_id "
             "WHERE c.id = ? AND c.novel_id = ?",
             (chapter_id, novel_id),
@@ -93,9 +97,7 @@ async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
         row = await cur.fetchone()
     if row is None:
         return False
-    if row["status"] == "done":
-        return False
-    if row["free_draft_status"] != "none":
+    if row["free_draft_status"] not in ("none", "error"):
         return False
     return await queue_free_draft(novel_id, chapter_id)
 
