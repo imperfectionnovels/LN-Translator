@@ -1,6 +1,6 @@
 # LN-Translator
 
-Local single-user app that translates foreign-language light novels into English. Paste text, upload `.txt` / `.docx` / `.epub` / `.html` files (single or bulk), or paste a public URL. The backend parses chapters, translates each one through a user-selected AI provider, auto-builds a per-novel glossary so terminology stays consistent, and serves a browser reader with bilingual side-by-side mode. Runs as a Windows desktop app or as a local web server.
+Local single-user app that translates foreign-language light novels into English. Paste text, upload a single `.txt` / `.docx` / `.epub` / `.html` file (or many `.txt` files in bulk, one chapter each), or paste a public URL. The backend parses chapters, translates each one through a user-selected AI provider, auto-builds a per-novel glossary so terminology stays consistent, and serves a browser reader with bilingual side-by-side mode. Runs as a Windows desktop app or as a local web server.
 
 ## Download (Windows beta-1)
 
@@ -21,11 +21,11 @@ The EXE is unsigned for the beta. Windows SmartScreen will show "Windows protect
 
 ## What it does
 
-- **Per-novel AI provider selection.** Pick a translator + an optional refinement provider per novel from the Settings page. Refinement runs a second LLM over each draft chapter for surface polish before the reader sees it.
+- **Per-novel AI provider selection.** Each novel carries its own translator + optional refinement provider, set from the novel's overview page or the Add Novel dialog on the library card. Refinement runs a second LLM over each draft chapter for surface polish before the reader sees it. The Settings page sets the defaults that new novels start with; existing novels keep what they were configured with.
 - **Genre-aware prompts.** Ten genres ship: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri/BL. The system prompt is composed from a base layer plus a per-genre overlay plus worked examples; pick the right genre on the novel page or accept the default.
 - **Three import paths.** Paste raw text, upload a single file (`.txt`, `.docx`, `.epub`, `.html`) or many `.txt` files in bulk (one chapter per file), or paste a public URL and let the scraper extract and queue the chapter. EPUB imports also pull the embedded cover.
 - **Per-novel glossary.** Auto-extraction admits a term when it appears inside a `【...】` system-interface span or recurs at least twice in the chapter body. Manual edits lock a row against future auto-overwrites. Click any highlighted term in the reader to open the **inline term editor** and rename it across every chapter and chapter title in that novel. "Retranslate affected chapters" replays prior chapters when a term changes mid-novel.
-- **Mechanical NMT reference draft for fidelity.** Every chapter first gets a Google-Translate mechanical draft in the background (separate lock, runs in parallel with the LLM lane). The LLM call then sees that draft as a `REFERENCE TRANSLATION` block in its prompt and uses it as a fidelity anchor (event order, named entities, quantities) while writing its own natural prose on top. Requires internet; if Google is unreachable the LLM call still runs without the reference.
+- **Mechanical NMT reference draft for fidelity.** When you open a chapter in the reader, a Google-Translate mechanical draft is queued in the background on its own lane (independent of the LLM queue, so the two run in parallel). When you then click Translate, the LLM call sees that draft as a `REFERENCE TRANSLATION` block in its prompt and uses it as a fidelity anchor (event order, named entities, quantities) while writing its own natural prose on top. Requires internet; the LLM call still runs without the reference if Google is unreachable.
 - **Reader.** Two modes per session. A clean **read mode** for normal reading, and an **edit mode** that exposes per-paragraph editing, the glossary inspector, and a forced bilingual layout (your edits are captured as future style guidance for the translator). Chapter navigation, bilingual toggle, and dark mode work in both.
 - **Downloads.** Plain `.txt`, `.md`, or `.epub` per novel.
 
