@@ -326,25 +326,24 @@ _CATALOG: tuple[TypeEntry, ...] = (
             ModelEntry("deepseek-r1:70b", "DeepSeek R1 70B"),
         ),
     ),
-    # Free-tier offline NMT (OPUS-MT via CTranslate2). The "model" choices
-    # here are really language pairs — the catalog UI treats them as a
-    # dropdown for now, with supports_custom_model=False because users
-    # don't paste arbitrary CT2 model paths. Model files are lazy-downloaded
-    # per pair from Settings; see backend/routes/opus_mt.py.
+    # Free-tier online MT (Google Translate via deep-translator). No API
+    # key, no per-month quota — hits Google's public web Translate endpoint.
+    # Source language is taken from the novel, not the provider, so there is
+    # only one model id (`google-web`). Used both as a main translator (free
+    # rough draft) and as the free-draft engine that the LLM PEMT pass reads
+    # back as a fidelity anchor.
     TypeEntry(
-        type="opus_mt",
-        display="Free tier (OPUS-MT, offline)",
+        type="google_translate_free",
+        display="Free tier (Google Translate, online)",
         group="Local",
         auth="none",
         base_url_default=None,
         secret_ref_hint=None,
         supports_custom_model=False,
-        install_hint="Free / offline rough draft. Download a language-pair model from Settings → Providers. Translation runs on CPU; quality is below the LLM backends but no API key is required.",
+        install_hint="Free / online rough draft. No API key. Translation goes through Google's public web endpoint via the `deep-translator` library; quality is below the LLM backends but well above the old offline OPUS-MT free tier.",
         auth_command=None,
         models=(
-            ModelEntry("zh-en", "Chinese → English"),
-            ModelEntry("ja-en", "Japanese → English"),
-            ModelEntry("ko-en", "Korean → English"),
+            ModelEntry("google-web", "Google Translate (web)"),
         ),
     ),
 )

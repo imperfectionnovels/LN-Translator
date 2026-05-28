@@ -1,16 +1,17 @@
-"""Free-draft worker: fills chapters.free_draft_text via OPUS-MT.
+"""Free-draft worker: fills chapters.free_draft_text via Google Translate.
 
-Independent of the main translator queue. Owns its own ``OPUS_MT_LOCK`` so
+Independent of the main translator queue. Owns its own ``FREE_DRAFT_LOCK`` so
 free-draft work runs in parallel with LLM translations of *different*
-chapters — local CPU NMT doesn't fight API rate limits or subscription
-windows. The lock still serializes OPUS-MT calls against each other
-because CTranslate2 instances are not thread-safe per-translator.
+chapters — Google Translate doesn't fight API rate limits or subscription
+windows the same way LLM backends do, but the lock still serializes
+free-draft calls against each other to keep traffic to Google's public
+endpoint modest and reduce throttle risk.
 
 Triggered by two paths:
     * Reader open (``GET /api/chapters/{id}``) on a ``free_draft_status='none'``
-      chapter when the novel's source language has an installed OPUS-MT model.
+      chapter.
     * Translate click — the main translate worker drains a free draft first
-      so the LLM PEMT pass has it as a reference input (Phase 5).
+      so the LLM PEMT pass has it as a reference input.
 
 State machine on ``chapters.free_draft_status``:
     none → pending → in_progress → done   (happy path)
@@ -22,21 +23,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
 
 import aiosqlite
 
 from backend.db import open_conn
-from backend.services import global_glossary as global_glossary_svc
-from backend.services import opus_mt_models
 from backend.services.providers import Provider, load_provider
-from backend.services.translators.opus_mt import OpusMTTranslator
+from backend.services.translators.google_translate_free import (
+    GoogleTranslateFreeTranslator,
+)
 
 logger = logging.getLogger(__name__)
 
 # Process-global lock — independent of the LLM TRANSLATOR_LOCK so free-draft
 # work and LLM translation can run concurrently for different chapters.
-OPUS_MT_LOCK = asyncio.Lock()
+FREE_DRAFT_LOCK = asyncio.Lock()
 
 # Strong refs for fire-and-forget worker tasks. Same pattern as queue.py.
 _background_tasks: set[asyncio.Task] = set()
@@ -77,16 +77,15 @@ async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
 
     Spawns a free-draft worker only when:
       * the chapter is not already translated (status != 'done');
-      * the chapter's free draft hasn't started yet (free_draft_status='none');
-      * the novel's source language has an OPUS-MT pair *installed* on disk
-        — if the pair isn't installed we silently no-op rather than queue
-        and fail on every reader open.
+      * the chapter's free draft hasn't started yet (free_draft_status='none').
 
+    Google Translate has no per-language install step — if the network is
+    down, the worker fails cleanly and we surface the error in the UI.
     Caller doesn't care about the result; this is best-effort eager fill.
     """
     async with open_conn() as conn:
         cur = await conn.execute(
-            "SELECT c.status, c.free_draft_status, n.source_language "
+            "SELECT c.status, c.free_draft_status "
             "FROM chapters c JOIN novels n ON n.id = c.novel_id "
             "WHERE c.id = ? AND c.novel_id = ?",
             (chapter_id, novel_id),
@@ -97,9 +96,6 @@ async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
     if row["status"] == "done":
         return False
     if row["free_draft_status"] != "none":
-        return False
-    pair = opus_mt_models.pair_for_language(row["source_language"] or "zh")
-    if pair is None or not opus_mt_models.is_installed(pair):
         return False
     return await queue_free_draft(novel_id, chapter_id)
 
@@ -135,19 +131,14 @@ async def drain_on_startup() -> None:
 # Worker
 # ---------------------------------------------------------------------------
 
-async def _resolve_opus_mt_provider_for_novel(
-    conn: aiosqlite.Connection, source_language: str
+async def _resolve_free_draft_provider(
+    conn: aiosqlite.Connection,
 ) -> Provider | None:
-    """Find an existing opus_mt Provider row whose model_id matches the
-    novel's source language. Returns the first match; users typically only
-    have one OPUS-MT provider per pair."""
-    pair = opus_mt_models.pair_for_language(source_language)
-    if pair is None:
-        return None
+    """Find the first ``google_translate_free`` Provider row. Returns None
+    if none exists; the caller synthesizes an ephemeral one (no auth needed)."""
     cur = await conn.execute(
-        "SELECT id FROM providers WHERE provider_type = 'opus_mt' AND model_id = ? "
-        "ORDER BY id LIMIT 1",
-        (pair,),
+        "SELECT id FROM providers WHERE provider_type = 'google_translate_free' "
+        "ORDER BY id LIMIT 1"
     )
     row = await cur.fetchone()
     if row is None:
@@ -156,13 +147,13 @@ async def _resolve_opus_mt_provider_for_novel(
 
 
 async def _run_free_draft(novel_id: int, chapter_id: int) -> None:
-    """One free-draft task: acquire the OPUS-MT lock, then do the work.
+    """One free-draft task: acquire the free-draft lock, then do the work.
 
     Errors here ONLY affect the free-draft column — the LLM translation
     queue is untouched. A free-draft failure means the reader sees no
-    pre-translate draft AND the LLM call (Phase 5) runs without the
-    reference layer; both are graceful degrades."""
-    async with OPUS_MT_LOCK:
+    pre-translate draft AND the LLM call runs without the reference layer;
+    both are graceful degrades."""
+    async with FREE_DRAFT_LOCK:
         try:
             async with open_conn() as conn:
                 await _free_draft_chapter_in_db(conn, novel_id, chapter_id)
@@ -188,7 +179,7 @@ async def _run_free_draft(novel_id: int, chapter_id: int) -> None:
 async def _free_draft_chapter_in_db(
     conn: aiosqlite.Connection, novel_id: int, chapter_id: int,
 ) -> None:
-    """Claim the row, run OPUS-MT, write free_draft_text + completed_at."""
+    """Claim the row, run Google Translate, write free_draft_text + completed_at."""
     cur = await conn.execute(
         "SELECT c.original_text, c.title_zh, c.free_draft_status, n.source_language "
         "FROM chapters c JOIN novels n ON n.id = c.novel_id "
@@ -211,31 +202,19 @@ async def _free_draft_chapter_in_db(
         return
 
     source_language = row["source_language"] or "zh"
-    pair = opus_mt_models.pair_for_language(source_language)
-    if pair is None:
-        await _persist_free_draft_error(
-            conn, chapter_id,
-            f"no OPUS-MT pair supports source_language={source_language!r}",
-        )
-        return
-    if not opus_mt_models.is_installed(pair):
-        await _persist_free_draft_error(
-            conn, chapter_id,
-            f"OPUS-MT pair {pair!r} not installed — download from Settings.",
-        )
-        return
 
-    provider = await _resolve_opus_mt_provider_for_novel(conn, source_language)
+    provider = await _resolve_free_draft_provider(conn)
     if provider is None:
         # Synthesize an ephemeral Provider so the translator class can
-        # construct with model_id=<pair>. This lets the reader's eager free
-        # draft fill in even when no opus_mt provider row exists yet.
+        # construct. This lets the reader's eager free draft fill in even
+        # when no google_translate_free provider row exists yet (fresh
+        # install, no Settings → Providers walk yet).
         provider = Provider(
             id=-1,
-            name=f"opus_mt-ephemeral-{pair}",
-            provider_type="opus_mt",
+            name="google_translate_free-ephemeral",
+            provider_type="google_translate_free",
             base_url=None,
-            model_id=pair,
+            model_id="google-web",
             params={},
             secret_ref=None,
             is_default=False,
@@ -245,24 +224,18 @@ async def _free_draft_chapter_in_db(
         )
 
     try:
-        translator = OpusMTTranslator(provider=provider)
-        # Glossary: union of per-novel + global, same as the main queue. The
-        # OPUS-MT translator only honors locked entries via placeholder
-        # substitution; unlocked entries pass through.
-        glossary = await global_glossary_svc.list_for_novel_with_globals(
-            conn, novel_id,
-        )
+        translator = GoogleTranslateFreeTranslator(provider=provider)
         t0 = time.perf_counter()
         result = await translator.translate_chapter(
             chapter_zh=row["original_text"],
             title_zh=row["title_zh"],
-            glossary=glossary,
+            glossary=[],
             source_language=source_language,
         )
         elapsed = time.perf_counter() - t0
         logger.info(
             "free-draft: chapter %d (%s) translated in %.1fs",
-            chapter_id, pair, elapsed,
+            chapter_id, source_language, elapsed,
         )
         await conn.execute(
             "UPDATE chapters SET "
@@ -273,7 +246,7 @@ async def _free_draft_chapter_in_db(
         )
         await conn.commit()
     except Exception as exc:
-        logger.exception("free-draft: chapter %d OPUS-MT call failed", chapter_id)
+        logger.exception("free-draft: chapter %d Google Translate call failed", chapter_id)
         await _persist_free_draft_error(conn, chapter_id, str(exc)[:4000])
 
 

@@ -61,10 +61,10 @@ def test_subscription_and_local_types_ship_an_auth_command():
     Provider dialog needs to tell the user "run this command in your
     terminal" — they have no API key field. Most local/subscription types
     therefore ship a shell auth_command. A type that handles its install
-    flow entirely in the UI (e.g. opus_mt: per-pair download buttons in
-    Settings) is allowed to skip auth_command as long as it ships an
-    install_hint so the dialog still renders a meaningful row instead of
-    a blank command box."""
+    flow entirely in the UI (or needs no install at all, e.g.
+    google_translate_free) is allowed to skip auth_command as long as it
+    ships an install_hint so the dialog still renders a meaningful row
+    instead of a blank command box."""
     for entry in all_types():
         if entry.auth in ("subscription", "none"):
             has_command = bool(entry.auth_command)

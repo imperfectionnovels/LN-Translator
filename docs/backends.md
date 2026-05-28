@@ -112,8 +112,8 @@ DeepSeek auto-caches the glossary-heavy prefix server-side. Log line
 
 ## Other backends
 
-The four detailed backends above (plus `opus_mt` further down) are the ones
-with real per-backend tuning surface. The catalog in
+The four detailed backends above (plus `google_translate_free` further down)
+are the ones with real per-backend tuning surface. The catalog in
 `backend/services/translator_catalog.py::_CATALOG` also lists 14 more types,
 most of which are thin OpenAI-compatible wrappers with no custom knobs. They live under `backend/services/translators/openai_compatible.py` (the
 shared base) plus a tiny per-vendor subclass that sets `name`,
@@ -155,11 +155,11 @@ Grouped by the catalog's `group` field:
   - `openai_compatible` — generic fallback for any vendor exposing the OpenAI
     `/chat/completions` shape. User sets the Base URL themselves; no curated
     model list.
-- **Local** (no key, no internet round-trip):
+- **Local / Free** (no API key):
   - `ollama` — Ollama local server (`http://localhost:11434/v1` by default).
-    Pull the model with `ollama pull <name>` first. Curated suggestions:
-    `llama3.3:70b`, `qwen2.5:72b`, `deepseek-r1:70b`.
-  - `opus_mt` — also in this group; covered in detail below.
+    Fully offline. Pull the model with `ollama pull <name>` first. Curated
+    suggestions: `llama3.3:70b`, `qwen2.5:72b`, `deepseek-r1:70b`.
+  - `google_translate_free` — also in this group; covered in detail below.
 
 All of these share the global `_translator_lock`, the `BACKOFF_SCHEDULE` from
 `base.py`, and the same delimited-envelope output shape, so they don't get
@@ -176,48 +176,46 @@ compatibility but doesn't loosen the lock. Do **not** replace the lock with
 a Semaphore — Claude burns the subscription window in parallel, Gemini /
 DeepSeek burn tokens.
 
-## opus_mt (free tier, offline NMT)
+## google_translate_free (free tier, online NMT)
 
-Offline OPUS-MT (Helsinki-NLP) running via CTranslate2, no API key. Quality is
-substantially below the LLM backends — mechanical NMT can't follow a glossary
-instruction, ignores the genre overlay, ignores `style_note`, ignores the
-previous-chapter tail. It's positioned as a **rough draft** so users without
-an LLM provider can sample the app, and as a **fidelity reference** that the
-LLM PEMT pass layers on top of (see below).
+Google Translate via the `deep-translator` library, which hits Google's public
+web Translate endpoint without authentication. No API key, no per-month quota.
+Quality is below the LLM backends but well above the older offline OPUS-MT
+predecessor; mechanical NMT still can't follow a glossary instruction, ignores
+the genre overlay, ignores `style_note`, ignores the previous-chapter tail.
+It's positioned as a **rough draft** so users without an LLM provider can
+sample the app, and as a **fidelity reference** that the LLM PEMT pass layers
+on top of (see below).
 
-| Var | Default | Notes |
-|---|---|---|
-| `OPUS_MT_RELEASE_TAG` | `opus-mt-v1` | GitHub release tag on this repo that hosts the pre-converted `.tar.gz` bundles. Override for dev/staging. |
-| `OPUS_MT_ZH_EN_URL` / `_SHA256` | (from release tag) | Per-pair URL + checksum override. Useful when iterating on a new bundle before promoting it to the production tag. |
-| `OPUS_MT_JA_EN_URL` / `_SHA256` | (from release tag) | Japanese → English. |
-| `OPUS_MT_KO_EN_URL` / `_SHA256` | (from release tag) | Korean → English. |
+No environment variables. The translator's only knob is the per-call chunk
+size (4500 chars, conservative under Google's ~5000-char web-endpoint limit),
+configured as `_CHUNK_LIMIT` in
+`backend/services/translators/google_translate_free.py`.
 
-Per-pair models land under `USER_DATA_ROOT/opus_mt/<pair>/` and are
-lazy-downloaded from Settings → Providers. The installer stays small
-(~30 MB delta from the `ctranslate2` + `sentencepiece` wheels); users
-download only the language pairs they need.
+`GoogleTranslateFreeTranslator` overrides `BaseTranslator.translate_chapter`
+rather than implementing `_complete`. The literary prompt assembled by
+`build_prompt` is NOT fed to Google — that prompt is genre-aware and
+English-instruction based, neither of which an MT model can act on. Instead
+the source text is chunked at paragraph boundaries to stay under the per-call
+limit, each chunk is sent through `deep_translator.GoogleTranslator.translate`
+inside `asyncio.to_thread`, and the outputs are rejoined with `\n\n` between
+chunks.
 
-`OpusMTTranslator` overrides `BaseTranslator.translate_chapter` rather than
-implementing `_complete`. The literary prompt assembled by `build_prompt` is
-NOT fed to OPUS-MT — that prompt is genre-aware and English-instruction
-based, neither of which an NMT model can act on. Instead the source text is
-segmented into paragraphs+sentences (regex-only CJK splitter, no Stanza
-dependency) and batched through `ctranslate2.Translator.translate_batch` with
-`compute_type="int8"`.
+**Source-language mapping**: novel `source_language` → Google language code
+via `_lang_for_google` (`zh → zh-CN`, `ja`/`ko` pass through, unknown falls
+back to `auto`).
 
-**Locked-glossary terminology** survives via placeholder substitution: every
-locked entry whose `term_zh` appears in the source is replaced with a unique
-sentinel (`ZX001`, `ZX002`, …), translated, then restored. The sentinel
-format is chosen at model-load time by probing SentencePiece roundtrip
-survival; if no format survives the probe, substitution is skipped and the
-translator accepts terminology drift. Sentinels that leak through (NMT
-dropped them, SentencePiece split them despite the probe) are left **visible**
-in the output so the failure is obvious rather than silent.
+**TOS note**: the unauthenticated web endpoint is in a TOS gray area for
+unattended programmatic use. For a single-user local app translating one
+chapter at a time the enforcement risk is near zero. Users running burst
+jobs (50+ chapters in seconds) may trip per-IP throttling — the worker
+surfaces a clean `Google Translate rate-limited` message and the row lands
+in `free_draft_status='error'`, retriable from the reader.
 
-**Lock model**: own `OPUS_MT_LOCK` in `services/free_draft_queue.py`,
+**Lock model**: own `FREE_DRAFT_LOCK` in `services/free_draft_queue.py`,
 independent of the LLM `_translator_lock` in `services/queue.py`. Free-draft
-work and LLM translation can run concurrently for different chapters —
-they don't share API rate limits or CPU contention pathways.
+work and LLM translation can run concurrently for different chapters — they
+don't share API rate limits.
 
 ### PEMT (LLM post-editing of NMT)
 
@@ -234,6 +232,6 @@ invalidates the LLM cache for that chapter automatically. `PROMPT_TEMPLATE_VERSI
 was bumped to `phase3-pemt` at the rollout to force-miss pre-PEMT entries.
 
 **Cost note**: PEMT grows the LLM prompt by roughly the chapter length
-(~50%). Worth it for the quality lift when terminology fidelity matters;
-opt out per-novel by removing the OPUS-MT provider from that novel's
-configuration (its drafts won't run, prompt stays slim).
+(~50%). Worth it for the quality lift when terminology fidelity matters; if
+you want to skip the draft for a specific chapter, click the "Refresh free
+draft" menu item in the reader's overflow menu and dismiss the result.

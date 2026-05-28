@@ -16,7 +16,7 @@ The EXE is unsigned for the beta. Windows SmartScreen will show "Windows protect
 2. Pick a translator provider. The dropdown groups them three ways:
    - **Subscription** (no API key, log in via the vendor's own CLI): **Claude Agent SDK** (recommended quality, install [Claude Code](https://docs.claude.com/claude-code) and run `claude login`), **Claude CLI** (same subscription, subprocess flavor), **OpenAI Codex CLI** (ChatGPT Plus/Pro/Team via `npm i -g @openai/codex` + `codex login`), **Gemini CLI** (Google account via `npm i -g @google/gemini-cli`), and **OpenCode** (multi-provider router covering Anthropic / OpenAI / Google / GitHub Copilot via `opencode auth login`).
    - **API key** (paste a key, stored in the OS credential store): Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, Mistral, OpenRouter (aggregator), Alibaba Qwen, Zhipu GLM, Moonshot Kimi, Groq, or any other OpenAI-compatible vendor via a generic Base-URL entry. The key is stored in the Windows Credential Manager (or the macOS Keychain / Secret Service on those platforms), never written to disk in plaintext, never sent anywhere except the provider you picked.
-   - **Local** (no key, no internet round-trip): **Ollama** (talks to a local Ollama server at `http://localhost:11434`) and **OPUS-MT free tier** (offline NMT via CTranslate2; triggers a one-time ~200 MB model download per language pair on first use). Lower quality than the LLM providers, but fully offline after setup.
+   - **Local / free** (no API key needed): **Ollama** (talks to a local Ollama server at `http://localhost:11434`, fully offline) and **Google Translate free tier** (online, via the `deep-translator` library hitting Google's public web Translate endpoint, no key, no per-month quota). Lower quality than the LLM providers, but no API key to set up.
 3. Paste a chapter or upload a file. Click Translate. The reader opens when the chapter is done.
 
 ## What it does
@@ -25,7 +25,7 @@ The EXE is unsigned for the beta. Windows SmartScreen will show "Windows protect
 - **Genre-aware prompts.** Ten genres ship: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri/BL. The system prompt is composed from a base layer plus a per-genre overlay plus worked examples; pick the right genre on the novel page or accept the default.
 - **Three import paths.** Paste raw text, upload a single file (`.txt`, `.docx`, `.epub`, `.html`) or many `.txt` files in bulk (one chapter per file), or paste a public URL and let the scraper extract and queue the chapter. EPUB imports also pull the embedded cover.
 - **Per-novel glossary.** Auto-extraction admits a term when it appears inside a `【...】` system-interface span or recurs at least twice in the chapter body. Manual edits lock a row against future auto-overwrites. Click any highlighted term in the reader to open the **inline term editor** and rename it across every chapter and chapter title in that novel. "Retranslate affected chapters" replays prior chapters when a term changes mid-novel.
-- **OPUS-MT reference draft for fidelity.** If you have the OPUS-MT free tier installed for the novel's source language alongside an LLM provider, every chapter first gets a mechanical OPUS-MT draft in the background (separate lock, runs in parallel with the LLM lane). The LLM call then sees that draft as a `REFERENCE TRANSLATION` block in its prompt and uses it as a fidelity anchor (event order, named entities, quantities) while writing its own natural prose on top. Quality lift comes free with the offline model already downloaded; opt out by removing OPUS-MT from the novel's provider configuration.
+- **Mechanical NMT reference draft for fidelity.** Every chapter first gets a Google-Translate mechanical draft in the background (separate lock, runs in parallel with the LLM lane). The LLM call then sees that draft as a `REFERENCE TRANSLATION` block in its prompt and uses it as a fidelity anchor (event order, named entities, quantities) while writing its own natural prose on top. Requires internet; if Google is unreachable the LLM call still runs without the reference.
 - **Reader.** Two modes per session. A clean **read mode** for normal reading, and an **edit mode** that exposes per-paragraph editing, the glossary inspector, and a forced bilingual layout (your edits are captured as future style guidance for the translator). Chapter navigation, bilingual toggle, and dark mode work in both.
 - **Downloads.** Plain `.txt`, `.md`, or `.epub` per novel.
 
@@ -33,7 +33,7 @@ The EXE is unsigned for the beta. Windows SmartScreen will show "Windows protect
 
 - The app runs entirely on your machine. Novels, chapters, glossaries, and translations live in a SQLite database under `%APPDATA%\LN-Translator\`.
 - API keys go into the OS credential store (Windows Credential Manager / macOS Keychain / Secret Service), never to disk in plaintext, never logged.
-- The only outbound network calls are to the AI provider you configured (for translation) and to GitHub release assets (for the optional OPUS-MT model download). No telemetry, no analytics, no account.
+- The only outbound network calls are to the AI provider you configured (for translation) and to Google Translate's public web endpoint (for the mechanical NMT reference draft, if enabled). No telemetry, no analytics, no account.
 - The downloaded EXE bundle contains no user data of any kind. Your library lives under `%APPDATA%\LN-Translator\` on your own machine and is never bundled, shared, or uploaded.
 
 ### Testing as a fresh user
@@ -49,7 +49,7 @@ The app uses that directory instead of `%APPDATA%\LN-Translator\` for that sessi
 
 ## For developers
 
-The same codebase runs as a local Uvicorn server. Requires Python 3.11+ and a C++ build toolchain for the OPUS-MT native dependencies.
+The same codebase runs as a local Uvicorn server. Requires Python 3.11+.
 
 ```powershell
 pip install -e .

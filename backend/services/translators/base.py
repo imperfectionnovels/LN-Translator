@@ -309,18 +309,19 @@ def build_prompt(
             f"{style_note.strip()}\n\n"
         )
     # PEMT: REFERENCE TRANSLATION block. Inserted only when a non-empty
-    # OPUS-MT free draft is available. The instruction frames the draft as
-    # a fidelity anchor — NMT preserves event order and named entities more
-    # literally than LLMs do — while telling the LLM to produce its own
-    # natural prose. "DO NOT TRANSLATE OR COPY VERBATIM" guards against the
-    # LLM either re-translating the draft or echoing its awkward phrasings.
+    # mechanical NMT free draft is available. The instruction frames the
+    # draft as a fidelity anchor — NMT preserves event order and named
+    # entities more literally than LLMs do — while telling the LLM to
+    # produce its own natural prose. "DO NOT TRANSLATE OR COPY VERBATIM"
+    # guards against the LLM either re-translating the draft or echoing its
+    # awkward phrasings.
     free_draft_block = ""
     if free_draft and free_draft.strip():
         free_draft_block = (
             "REFERENCE TRANSLATION (mechanical NMT — for fidelity comparison only, "
             "DO NOT TRANSLATE OR COPY VERBATIM):\n"
             f"{free_draft.strip()}\n\n"
-            "This reference was produced offline by a machine-translation model. "
+            "This reference was produced by a machine-translation model. "
             "It tends to be more literal than necessary and may sound awkward, but "
             "it preserves event order, named entities, and quantities faithfully. "
             "As you translate the Chinese source, consult this reference: where "
@@ -513,11 +514,10 @@ class BaseTranslator(ABC):
         source_language: str | None = None,
     ) -> TranslationResult:
         # ``source_language`` is accepted by the BaseTranslator surface so
-        # downstream backends (notably OpusMTTranslator) can validate it
-        # against the configured pair. LLM backends ignore it — they read
-        # the language implicitly from the source text. ``free_draft`` is
-        # the optional OPUS-MT reference layer threaded into build_prompt
-        # for PEMT mode.
+        # downstream MT-only backends can route it to their underlying
+        # engine. LLM backends ignore it — they read the language implicitly
+        # from the source text. ``free_draft`` is the optional mechanical-NMT
+        # reference layer threaded into build_prompt for PEMT mode.
 
         # Reset the per-chapter LLM call counter + usage accumulator at
         # the start of each translate_chapter. _check_call_budget() ticks

@@ -96,7 +96,7 @@
           </div>
           <!-- 2026-05-27: Translation source toggle. Reveals only when the
                current chapter has BOTH a polished translation (translated_text
-               or refined_text) AND an OPUS-MT free draft (free_draft_text).
+               or refined_text) AND a mechanical-NMT free draft (free_draft_text).
                Click handler + visibility live in reader.js. -->
           <div class="seg" id="toggle-source" role="group" aria-label="Translation source" hidden>
             <button type="button" data-source="polished" aria-pressed="true">Polished</button>
@@ -120,7 +120,7 @@
               <button class="util-menu-item" id="bookmark-add" title="Bookmark the paragraph at the current scroll position" aria-label="Add bookmark here"><span class="ico">☆</span>Add bookmark</button>
               <button class="util-menu-item" id="bookmarks-open" title="Open the bookmarks panel for this novel" aria-label="Show bookmarks"><span class="ico">☰♡</span>Bookmarks</button>
               <button class="util-menu-item edit-only" id="retranslate" title="Re-translate this chapter with the current glossary" aria-label="Re-translate this chapter"><span class="ico">⟲</span>Retranslate chapter</button>
-              <button class="util-menu-item edit-only" id="refresh-free-draft" title="Regenerate the offline OPUS-MT rough draft for this chapter (clears the existing one). Use after fixing or replacing the OPUS-MT model." aria-label="Refresh free draft"><span class="ico">⟳</span>Refresh free draft</button>
+              <button class="util-menu-item edit-only" id="refresh-free-draft" title="Regenerate the Google Translate rough draft for this chapter (clears the existing one). Use when the draft is stale or was rate-limited mid-fetch." aria-label="Refresh free draft"><span class="ico">⟳</span>Refresh free draft</button>
               <button class="util-menu-item" id="copy-chapter" title="Copy this chapter's English text to the clipboard" aria-label="Copy chapter"><span class="ico">⧉</span>Copy chapter</button>
               <button class="util-menu-item edit-only" id="edit-mode" title="Edit paragraphs so your rewrites teach the translator your preferred style" aria-label="Edit paragraphs"><span class="ico">✎</span>Edit paragraphs</button>
               <a class="util-menu-item" id="append-chapters" href="#" title="Append more raw chapters to this novel" aria-label="Append more chapters"><span class="ico">＋</span>Append chapters</a>

@@ -26,7 +26,7 @@
     gemini:       { name: "Google Gemini",     glyph: "G", hue: "#4a6da8" },
     deepseek:     { name: "DeepSeek",          glyph: "D", hue: "#2f6a5e" },
     openai_compatible: { name: "OpenAI-compatible", glyph: "O", hue: "#3a6e60" },
-    opus_mt:      { name: "OPUS-MT (offline)", glyph: "免", hue: "#8a6a3a" },
+    google_translate_free: { name: "Google Translate (free)", glyph: "免", hue: "#8a6a3a" },
   };
 
   // Curated one-liners shown under each provider card. Falls back to a
@@ -105,9 +105,8 @@
   // C18: catalog-driven provider grid. The 3-button HTML stays as a no-
   // network fallback; on successful fetch we replace it so newly-added
   // provider types (e.g. openai_compatible) show up here without an HTML
-  // edit. Skip "opus_mt" — it's the offline free-tier draft, configured
-  // on the Settings page after setup; surfacing it in onboarding's
-  // "translator" picker confuses the choice.
+  // edit. google_translate_free IS shown here — it's the "no API key
+  // needed" first-run option, and the user can upgrade to an LLM later.
   async function _hydrateProviderGrid() {
     const grid = document.getElementById("ob-provider-grid");
     if (!grid) return;
@@ -116,7 +115,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const catalog = await res.json();
       if (!Array.isArray(catalog) || catalog.length === 0) return;
-      const usable = catalog.filter(e => e.type !== "opus_mt");
+      const usable = catalog;
       if (!usable.length) return;
       grid.innerHTML = "";
       for (const entry of usable) {

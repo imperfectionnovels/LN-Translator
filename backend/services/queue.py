@@ -448,9 +448,10 @@ async def _translate_chapter_in_db(
         style_note = await _fetch_style_note(conn, novel_id)
         provider = await _resolve_translator_provider(conn, novel_id)
         novel_meta = await _fetch_novel_genre_brief(conn, novel_id)
-        # PEMT layer: pass the OPUS-MT free draft to the LLM as a fidelity
-        # reference. NULL when the draft hasn't run yet (or failed); the
-        # prompt omits the REFERENCE TRANSLATION section in that case.
+        # PEMT layer: pass the mechanical NMT free draft (Google Translate)
+        # to the LLM as a fidelity reference. NULL when the draft hasn't run
+        # yet (or failed); the prompt omits the REFERENCE TRANSLATION section
+        # in that case.
         free_draft = r["free_draft_text"]
         translate_t0 = time.perf_counter()
         result = await translate_chapter(

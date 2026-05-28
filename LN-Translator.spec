@@ -75,9 +75,7 @@ datas += collect_data_files("zhconv")
 # catalog-parity test catches drift between catalog/dispatch but does
 # not see this spec file.
 hiddenimports = [
-    "backend.services.opus_mt_models",
     "backend.services.free_draft_queue",
-    "backend.routes.opus_mt",
     # Subscription / CLI subprocess backends.
     "backend.services.translators.claude_agent",
     "backend.services.translators.claude_cli",
@@ -101,28 +99,19 @@ hiddenimports = [
     "backend.services.translators.openai_compatible_generic",
     # Local.
     "backend.services.translators.ollama",
-    "backend.services.translators.opus_mt",
+    "backend.services.translators.google_translate_free",
     # keyring backends — pick whichever module the platform actually has.
     # The frozen build needs at least one or set_secret returns 503.
     "keyring.backends.Windows",
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
 ]
-# Free-tier OPUS-MT backend: ctranslate2 + sentencepiece both ship compiled
-# extensions (libctranslate2.dll on Windows; sentencepiece bundles its own
-# native binaries). collect_dynamic_libs picks up the .pyd / .dll files
-# PyInstaller's static analysis otherwise misses. Without these the EXE
-# raises ImportError the first time a free-draft worker tries to load.
-try:
-    binaries_opus_mt = collect_dynamic_libs("ctranslate2")
-    binaries_opus_mt += collect_dynamic_libs("sentencepiece")
-    hiddenimports += collect_submodules("ctranslate2")
-    hiddenimports += collect_submodules("sentencepiece")
-except Exception:
-    # The wheels aren't installed in this build environment — leave the
-    # bundle without OPUS-MT support and let the runtime probe surface
-    # the missing-import error on first use.
-    binaries_opus_mt = []
+# Free-tier mechanical NMT backend: deep-translator (pure Python, wraps
+# Google's web Translate endpoint). No compiled extensions — collect_submodules
+# is enough to bundle the package. The 5K-char chunking and exception handling
+# live in backend/services/translators/google_translate_free.py.
+hiddenimports += collect_submodules("deep_translator")
+binaries_free_draft: list = []
 # httpx + trafilatura sometimes import their submodules dynamically.
 hiddenimports += collect_submodules("httpx")
 hiddenimports += collect_submodules("trafilatura")
@@ -160,7 +149,7 @@ hiddenimports += collect_submodules("bs4")
 a = Analysis(
     ["backend/app_entry.py"],
     pathex=[],
-    binaries=binaries_opus_mt,
+    binaries=binaries_free_draft,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -174,11 +163,15 @@ a = Analysis(
         # via try/except imports inside huggingface-related packages, but
         # this app never calls into them. torch alone is ~360 MB of the
         # bundle (torch_cpu.dll is 293 MB). Excluding here reclaims that.
-        # If a future OPUS-MT path actually needs torch, lift this exclude.
         "torch",
         "transformers",
         "transformers.models",
         "huggingface_hub",
+        # ctranslate2 + sentencepiece: only used by the removed OPUS-MT
+        # backend. Excluded so a stray dev install in the build env
+        # doesn't pull them into the bundle.
+        "ctranslate2",
+        "sentencepiece",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

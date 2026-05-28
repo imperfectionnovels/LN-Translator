@@ -52,7 +52,10 @@ _DISPATCH: dict[str, tuple[str, str]] = {
     "openai_compatible": ("backend.services.translators.openai_compatible_generic", "OpenAICompatibleGenericTranslator"),
     # Local.
     "ollama": ("backend.services.translators.ollama", "OllamaTranslator"),
-    "opus_mt": ("backend.services.translators.opus_mt", "OpusMTTranslator"),
+    "google_translate_free": (
+        "backend.services.translators.google_translate_free",
+        "GoogleTranslateFreeTranslator",
+    ),
 }
 
 

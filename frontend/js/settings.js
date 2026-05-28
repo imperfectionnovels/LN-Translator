@@ -832,7 +832,7 @@ function renderThemes() {
 // ============================================================
 // §04 · Sticky TOC + J/K/Enter navigation
 // ============================================================
-const _TOC_SECTIONS = ["providers", "opus-mt", "themes", "keyboard", "about"];
+const _TOC_SECTIONS = ["providers", "themes", "keyboard", "about"];
 
 function _setTocCount(key, value) {
   const el = els.tocList?.querySelector(`[data-cnt="${key}"]`);
@@ -1002,7 +1002,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   _renderKeyboardRef();
   _renderAbout();
-  _renderOpusMTPairs();
 
   document.getElementById("about-copy-btn")?.addEventListener("click", _copyDiagnostics);
   document.getElementById("about-log-btn")?.addEventListener("click", _openLogFolder);
@@ -1011,115 +1010,3 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 
-// ---------------------------------------------------------------------------
-// OPUS-MT pair management (free tier)
-// ---------------------------------------------------------------------------
-//
-// Lists supported pairs, surfaces install state, drives Download / Remove.
-// Downloads stream via SSE on /api/opus-mt/pairs/{pair}/status; the panel
-// updates inline as bytes arrive. A new download replaces the panel's
-// "Download" button with a progress bar; Remove deletes the on-disk dir.
-
-async function _renderOpusMTPairs() {
-  const host = document.getElementById("opus-mt-pairs");
-  if (!host) return;
-  try {
-    const res = await fetch("/api/opus-mt/pairs");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const pairs = await res.json();
-    if (!pairs.length) {
-      host.innerHTML = `<div class="empty-state">No OPUS-MT pairs available.</div>`;
-      return;
-    }
-    host.innerHTML = pairs.map(p => `
-      <div class="provider-card" data-pair="${p.pair}">
-        <div class="provider-card-head">
-          <div class="pcard-title">${escapeHtml(p.pair)} <span class="muted">${escapeHtml(p.source_language)} → ${escapeHtml(p.target_language)}</span></div>
-          <div class="pcard-meta">
-            ${p.installed
-              ? `<span class="chip ok">Installed · ${p.size_mb_installed} MB</span>`
-              : `<span class="chip warn">Not downloaded · ~${p.size_mb_expected} MB</span>`}
-          </div>
-        </div>
-        <div class="provider-card-foot">
-          <div class="opus-mt-progress" id="opus-mt-progress-${p.pair}"></div>
-          ${p.installed
-            ? `<button type="button" class="btn-secondary" data-action="remove" data-pair="${p.pair}">Remove</button>`
-            : `<button type="button" class="btn-primary" data-action="download" data-pair="${p.pair}">↓ Download</button>`}
-        </div>
-      </div>
-    `).join("");
-    host.querySelectorAll("button[data-action]").forEach(btn => {
-      btn.addEventListener("click", _onOpusMTAction);
-    });
-  } catch (e) {
-    host.innerHTML = `<div class="empty-state err">Failed to load OPUS-MT pairs: ${escapeHtml(String(e))}</div>`;
-  }
-}
-
-async function _onOpusMTAction(ev) {
-  const btn = ev.currentTarget;
-  const pair = btn.dataset.pair;
-  const action = btn.dataset.action;
-  btn.disabled = true;
-  if (action === "remove") {
-    btn.textContent = "Removing…";
-    try {
-      const res = await fetch(`/api/opus-mt/pairs/${pair}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    } catch (e) {
-      alert(`Remove failed: ${e}`);
-    }
-    _renderOpusMTPairs();
-    return;
-  }
-  // action === "download"
-  btn.textContent = "Starting…";
-  const progEl = document.getElementById(`opus-mt-progress-${pair}`);
-  try {
-    const res = await fetch(`/api/opus-mt/pairs/${pair}/download`, { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch (e) {
-    alert(`Download failed to start: ${e}`);
-    btn.disabled = false;
-    btn.textContent = "↓ Download";
-    return;
-  }
-  // Subscribe to the SSE progress stream.
-  const stream = new EventSource(`/api/opus-mt/pairs/${pair}/status`);
-  stream.onmessage = (msg) => {
-    let data;
-    try { data = JSON.parse(msg.data); } catch { return; }
-    const total = data.bytes_total || 0;
-    const done = data.bytes_done || 0;
-    const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-    if (data.phase === "downloading") {
-      progEl.innerHTML = `<span class="muted">Downloading · ${pct}% (${_humanBytes(done)} / ${_humanBytes(total)})</span>`;
-    } else if (data.phase === "verifying") {
-      progEl.innerHTML = `<span class="muted">Verifying checksum…</span>`;
-    } else if (data.phase === "extracting") {
-      progEl.innerHTML = `<span class="muted">Extracting…</span>`;
-    } else if (data.phase === "done") {
-      progEl.innerHTML = `<span class="chip ok">Done</span>`;
-      stream.close();
-      _renderOpusMTPairs();
-    } else if (data.phase === "error") {
-      progEl.innerHTML = `<span class="chip err">Failed: ${escapeHtml(data.detail || "unknown error")}</span>`;
-      stream.close();
-      btn.disabled = false;
-      btn.textContent = "↻ Retry";
-    }
-  };
-  stream.onerror = () => {
-    stream.close();
-    progEl.innerHTML = `<span class="chip err">Connection lost. Reload to retry.</span>`;
-  };
-}
-
-function _humanBytes(n) {
-  if (!n) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
-}

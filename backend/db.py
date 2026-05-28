@@ -170,8 +170,8 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- Set when original_text was written by the runner's fill phase.
     -- NULL on a skeleton row = "still pending fetch / decode."
     import_fetched_at TEXT,
-    -- 2026-05-26 free-tier OPUS-MT NMT backend.
-    -- `free_draft_text` holds the OPUS-MT mechanical draft; the LLM
+    -- 2026-05-26 free-tier mechanical NMT backend (Google Translate as of 2026-05-28).
+    -- `free_draft_text` holds the mechanical draft; the LLM
     -- translation reads it as a REFERENCE TRANSLATION fidelity layer
     -- (see services/translators/base.py::build_prompt). free_draft_status
     -- gates the on-demand free-draft worker (services/free_draft_queue.py).
@@ -695,15 +695,16 @@ _ADDITIVE_MIGRATIONS = (
     "CREATE INDEX IF NOT EXISTS idx_chapters_import_pending "
     "ON chapters(novel_id) "
     "WHERE import_fetched_at IS NULL AND import_source_url IS NOT NULL",
-    # 2026-05-26 — free-tier OPUS-MT NMT backend + LLM post-editing of NMT.
-    # `free_draft_text` holds the OPUS-MT mechanical draft, separate from
-    # `translated_text` (the LLM PEMT-merged final). The reader can show
-    # `free_draft_text` while the LLM call is in flight, the LLM call uses it
-    # as a fidelity-reference input (REFERENCE TRANSLATION section in the
-    # prompt — see services/translators/base.py::build_prompt), and the draft
-    # survives across LLM retranslations. For free-tier-only novels (no LLM
-    # provider configured) the queue worker writes the OPUS-MT output to BOTH
-    # `free_draft_text` and `translated_text` so the reader path is uniform.
+    # 2026-05-26 — free-tier mechanical NMT backend + LLM post-editing of NMT.
+    # `free_draft_text` holds the mechanical draft (Google Translate as of
+    # 2026-05-28; OPUS-MT before that), separate from `translated_text` (the
+    # LLM PEMT-merged final). The reader can show `free_draft_text` while the
+    # LLM call is in flight, the LLM call uses it as a fidelity-reference
+    # input (REFERENCE TRANSLATION section in the prompt — see
+    # services/translators/base.py::build_prompt), and the draft survives
+    # across LLM retranslations. For free-tier-only novels (no LLM provider
+    # configured) the queue worker writes the MT output to BOTH `free_draft_text`
+    # and `translated_text` so the reader path is uniform.
     "ALTER TABLE chapters ADD COLUMN free_draft_text TEXT",
     "ALTER TABLE chapters ADD COLUMN free_draft_status TEXT NOT NULL DEFAULT 'none'",
     "ALTER TABLE chapters ADD COLUMN free_draft_error TEXT",

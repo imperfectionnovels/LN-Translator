@@ -57,12 +57,12 @@ async def get_chapter(
     if r is None:
         raise HTTPException(status_code=404, detail="chapter not found")
     # On-demand free-draft trigger. When the reader opens a chapter that
-    # doesn't have a draft yet AND the novel's language has an installed
-    # OPUS-MT pair, kick off the worker so a draft is ready by the time the
-    # user clicks Translate (or as a standalone "rough draft" for free-tier
-    # users). Best-effort: failures are silent here — the user can always
-    # click Translate explicitly. Spawns into the free-draft lane (its own
-    # OPUS_MT_LOCK), so this does not delay any in-flight LLM translation.
+    # doesn't have a draft yet, kick off the worker so a draft is ready by
+    # the time the user clicks Translate (or as a standalone "rough draft"
+    # for free-tier users). Best-effort: failures are silent here — the user
+    # can always click Translate explicitly. Spawns into the free-draft lane
+    # (its own FREE_DRAFT_LOCK), so this does not delay any in-flight LLM
+    # translation.
     try:
         from backend.services import free_draft_queue
         # _spawn (not bare asyncio.create_task) keeps a strong reference
@@ -268,21 +268,17 @@ async def refresh_free_draft(
     chapter_num: int,
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> dict:
-    """Clear this chapter's existing OPUS-MT free draft and re-queue
-    generation.
+    """Clear this chapter's existing free draft and re-queue generation.
 
-    Useful when the OPUS-MT model output is broken (placeholder tokens,
-    repeated phrases, garbage) and the user has installed a working model.
-    Without this route, the stuck `free_draft_text` would otherwise pollute
-    every retranslate via the PEMT reference block — there is no other
-    path to overwrite it short of a direct SQL UPDATE.
+    Useful when the mechanical draft is broken or stale and the user wants a
+    fresh attempt. Without this route, the stuck `free_draft_text` would
+    otherwise pollute every retranslate via the PEMT reference block —
+    there is no other path to overwrite it short of a direct SQL UPDATE.
 
-    Refuses (409) when a free-draft worker is already in flight or when
-    the novel's source language has no OPUS-MT pair installed (resetting
-    would just leave the row stuck at 'pending' with an unrunnable worker).
+    Refuses (409) when a free-draft worker is already in flight.
     """
     cur = await conn.execute(
-        "SELECT c.id, c.free_draft_status, n.source_language "
+        "SELECT c.id, c.free_draft_status "
         "FROM chapters c JOIN novels n ON n.id = c.novel_id "
         "WHERE c.novel_id = ? AND c.chapter_num = ?",
         (novel_id, chapter_num),
@@ -296,16 +292,6 @@ async def refresh_free_draft(
             detail=(
                 "free draft is currently being generated — wait for it to "
                 "finish, then retry."
-            ),
-        )
-    from backend.services import opus_mt_models  # noqa: PLC0415
-    pair = opus_mt_models.pair_for_language(r["source_language"] or "zh")
-    if pair is None or not opus_mt_models.is_installed(pair):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"no OPUS-MT model installed for source_language="
-                f"{r['source_language']!r}. Install one from Settings, then retry."
             ),
         )
     # Clear the body so the reader doesn't display stale garbage during the

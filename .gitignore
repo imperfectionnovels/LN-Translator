@@ -33,5 +33,5 @@ ln-migration-check-*/
 # Local PyInstaller release zips. Built artifacts belong on the GitHub
 # release page, not in git.
 LN-Translator-*.zip
-# Scratch dir for release-asset shuffling (OPUS-MT tarball mirroring etc).
+# Scratch dir for release-asset shuffling.
 .release-tmp/

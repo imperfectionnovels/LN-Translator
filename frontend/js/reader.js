@@ -121,7 +121,7 @@ if (!VALID_MODES.includes(viewMode)) viewMode = "english";
 let dualMode = viewMode === "bilingual";
 
 // 2026-05-27: per-reader-session pick between the polished translation
-// (translated_text / refined_text) and the OPUS-MT free draft
+// (translated_text / refined_text) and the mechanical NMT free draft
 // (free_draft_text) when a chapter has both. Per-novel scope mirrors
 // VIEW_MODE_KEY so "I'm comparing on novel A" doesn't leak into novel B.
 // Legacy-fallback: scoped key, then unscoped key, then "polished". The
@@ -1722,8 +1722,8 @@ function providerNameById(id) {
 }
 
 // Mirror for the banner-copy branch: the reader needs to distinguish
-// "free-tier rough draft" (provider_type='opus_mt') from "LLM polished" so
-// the quality banner can say something honest. Returns null when the
+// "free-tier rough draft" (provider_type='google_translate_free') from "LLM
+// polished" so the quality banner can say something honest. Returns null when the
 // provider can't be resolved (cache miss / pre-migration row).
 function providerTypeById(id) {
   if (!id || !_providersCache) return null;
@@ -2194,10 +2194,10 @@ async function loadChapter(num) {
     } else {
       endBlock.classList.add("hidden");
     }
-    // 2026-05-26 — keep polling while the OPUS-MT free draft is in flight so
-    // the reader switches from "nothing to display" to free_draft_text once
-    // the worker finishes (typically 30-60s warm). Same pattern as the
-    // refinement continuation poll above.
+    // 2026-05-26 — keep polling while the mechanical-NMT free draft is in
+    // flight so the reader switches from "nothing to display" to
+    // free_draft_text once the worker finishes (typically a few seconds for
+    // Google Translate). Same pattern as the refinement continuation poll above.
     if (
       ch.free_draft_status === "pending"
       || ch.free_draft_status === "in_progress"
@@ -2239,7 +2239,7 @@ async function loadChapter(num) {
 // here so a single change point handles the switch.
 function _displayedEnglish(ch) {
   if (!ch) return "";
-  // 2026-05-27 — explicit "show me the OPUS-MT mechanical draft" branch.
+  // 2026-05-27 — explicit "show me the mechanical NMT draft" branch.
   // Only fires when the user has flipped #toggle-source to "free_draft" AND
   // the chapter actually has a free_draft body. If free_draft_text is
   // missing on this chapter (e.g., user picked Free draft on a chapter that
@@ -2262,9 +2262,9 @@ function _displayedEnglish(ch) {
   }
   if (ch.translated_text) return ch.translated_text;
   // 2026-05-26 — free-tier rough draft fallback. When the LLM translation
-  // hasn't completed (or hasn't been requested), but the OPUS-MT free draft
-  // is ready, render that so the reader has something to read. The
-  // applyQualityBanner branch above renders the matching banner.
+  // hasn't completed (or hasn't been requested), but the mechanical NMT
+  // free draft is ready, render that so the reader has something to read.
+  // The applyQualityBanner branch above renders the matching banner.
   if (ch.free_draft_text) return ch.free_draft_text;
   return "";
 }
@@ -2553,9 +2553,9 @@ function applyGlossaryMergeBanner(ch) {
 // 2026-05-26 — split copy by provider provenance:
 //   * Free-tier draft only (translated_text NULL + free_draft_text set):
 //     "Reading free-tier draft. Translate with [provider] for polish."
-//   * Final translation came from opus_mt (translation_degraded=1 +
-//     provider_type='opus_mt'): "Free-tier rough draft. Switch to an LLM
-//     provider for polished prose."
+//   * Final translation came from google_translate_free (translation_degraded=1 +
+//     provider_type='google_translate_free'): "Free-tier rough draft. Switch
+//     to an LLM provider for polished prose."
 //   * Final translation degraded for any other reason: existing
 //     plain-text-fallback copy.
 //   * refinement_status='done' suppresses the banner entirely (the
@@ -2577,7 +2577,7 @@ function applyQualityBanner(ch) {
     card.className = "alert-banner quality-banner";
     card.setAttribute("role", "alert");
     card.innerHTML = `
-      <span class="msg">Reading free-tier draft (offline OPUS-MT, mechanical translation). <span class="muted">Translate with your LLM provider for polish.</span></span>
+      <span class="msg">Reading free-tier draft (Google Translate, mechanical). <span class="muted">Translate with your LLM provider for polish.</span></span>
       <button type="button" class="retry" id="quality-recover">▶ Translate now</button>
     `;
     bodyEn.parentElement.insertBefore(card, bodyEn);
@@ -2593,14 +2593,14 @@ function applyQualityBanner(ch) {
   card.className = "alert-banner quality-banner";
   card.setAttribute("role", "alert");
 
-  // Case 2: the final translation ITSELF came from opus_mt (free-tier
-  // user, no LLM provider configured). Banner copy admits it's a rough
-  // draft and points at switching providers — not at retranslating with
-  // the same backend.
+  // Case 2: the final translation ITSELF came from google_translate_free
+  // (free-tier user, no LLM provider configured). Banner copy admits it's
+  // a rough draft and points at switching providers — not at retranslating
+  // with the same backend.
   const translatorType = providerTypeById(ch.translated_by_provider_id);
-  if (translatorType === "opus_mt") {
+  if (translatorType === "google_translate_free") {
     card.innerHTML = `
-      <span class="msg">Free-tier rough draft (OPUS-MT, no LLM). <span class="muted">Switch to an LLM provider in Settings → Providers for polished prose.</span></span>
+      <span class="msg">Free-tier rough draft (Google Translate, no LLM). <span class="muted">Switch to an LLM provider in Settings → Providers for polished prose.</span></span>
       <button type="button" class="retry" id="quality-recover">↻ Retranslate</button>
     `;
     bodyEn.parentElement.insertBefore(card, bodyEn);
@@ -2785,12 +2785,11 @@ retranslateBtn.addEventListener("click", async () => {
   );
 });
 
-// 2026-05-27 — manual refresh of the OPUS-MT free draft. The free draft is
-// generated lazily on chapter open and otherwise has no in-app recompute
-// path; if the OPUS-MT model was misconfigured when the draft was first
-// produced (placeholder tokens, repeated phrases, garbage output), the
-// stuck text would otherwise pollute the PEMT reference forever. This
-// button clears free_draft_text and re-queues the worker.
+// 2026-05-27 — manual refresh of the mechanical-NMT free draft. The free
+// draft is generated lazily on chapter open and otherwise has no in-app
+// recompute path; if Google Translate was rate-limited or returned stale
+// output, the stuck text would otherwise pollute the PEMT reference forever.
+// This button clears free_draft_text and re-queues the worker.
 const refreshFreeDraftBtn = document.getElementById("refresh-free-draft");
 if (refreshFreeDraftBtn) {
   refreshFreeDraftBtn.addEventListener("click", async () => {

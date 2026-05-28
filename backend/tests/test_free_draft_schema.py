@@ -1,4 +1,4 @@
-"""Schema test for the OPUS-MT free-tier columns added in 2026-05-26.
+"""Schema test for the free-tier mechanical-NMT columns added in 2026-05-26.
 
 Pins the chapters-table additions for the free-draft worker + LLM PEMT path:
 

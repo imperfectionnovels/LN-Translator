@@ -41,13 +41,14 @@ dependencies = [
     # the trafilatura main-article pipeline because per-site selectors are
     # the whole point of a recipe.
     "beautifulsoup4>=4.12,<5.0",
-    # ctranslate2 + sentencepiece: powers the free-tier OPUS-MT NMT backend
-    # (backend/services/translators/opus_mt.py). Loaded lazily — boot does
-    # not depend on these. CTranslate2 ships x86_64 Windows wheels on PyPI
-    # (≥ 4.0). The PyInstaller spec uses collect_dynamic_libs to bundle
-    # both native libraries; see LN-Translator.spec.
-    "ctranslate2>=4.4",
-    "sentencepiece>=0.2",
+    # deep-translator: powers the free-tier mechanical NMT backend
+    # (backend/services/translators/google_translate_free.py). Hits Google's
+    # public web Translate endpoint — no API key, no per-month quota, but
+    # ~5K char per call and occasional IP throttling. Single-user serial
+    # usage under FREE_DRAFT_LOCK keeps the traffic profile modest enough
+    # that throttling is rare. Version-pinned because the library wraps
+    # Google's web HTML and breaks if the API drifts.
+    "deep-translator>=1.11,<2.0",
 ]
 
 [project.optional-dependencies]

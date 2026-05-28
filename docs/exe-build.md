@@ -22,7 +22,7 @@ default-target platform is Windows because that's where the user runs.
    same info for bug reports.
 6. **Uninstall**: delete the extracted EXE folder, and delete
    `%APPDATA%\LN-Translator\` to remove user data (novels DB, glossary,
-   downloaded OPUS-MT models, cached translations).
+   cached translations).
 7. **Test as a fresh user**: to run the app with an empty library
    without touching your real data, set
    `$env:LN_TRANSLATOR_DATA = "$env:TEMP\ln-translator-fresh"` before
@@ -78,7 +78,7 @@ The entry point (`backend/app_entry.py`) supports three UI modes:
 The wizard itself lives at `frontend/onboarding.html` + `frontend/js/onboarding.js`.
 It walks the user through:
 
-1. Picking a provider type from the catalog dropdown (19 types, sourced from `backend/services/translator_catalog.py`). The dropdown groups them as Subscription (Claude Agent SDK / Claude CLI / Codex CLI / Gemini CLI / OpenCode), API key (Anthropic / OpenAI / Gemini / DeepSeek / xAI / Mistral / OpenRouter / Qwen / Zhipu / Moonshot / Groq / generic OpenAI-compatible), and Local (Ollama / OPUS-MT).
+1. Picking a provider type from the catalog dropdown (19 types, sourced from `backend/services/translator_catalog.py`). The dropdown groups them as Subscription (Claude Agent SDK / Claude CLI / Codex CLI / Gemini CLI / OpenCode), API key (Anthropic / OpenAI / Gemini / DeepSeek / xAI / Mistral / OpenRouter / Qwen / Zhipu / Moonshot / Groq / generic OpenAI-compatible), and Local / Free (Ollama / Google Translate free).
 2. Naming the provider and entering a `model_id`.
 3. Pasting the API key — stored in the OS keychain via
    `POST /api/providers/{id}/secret` (Windows Credential Manager / macOS
@@ -322,7 +322,7 @@ the catalog's `group` field:
 | --- | --- | --- |
 | Subscription | `claude_agent`, `claude_cli`, `codex_cli`, `gemini_cli`, `opencode` | Backend code is bundled, but auth requires the vendor's own CLI installed separately and logged in (`claude login`, `codex login`, `gemini`, `opencode auth login`). The provider "Test" button surfaces a clear error if the CLI is missing or unauthenticated. |
 | API key | `anthropic_api`, `gemini`, `openai`, `deepseek`, `xai`, `mistral`, `openrouter`, `qwen`, `zhipu`, `moonshot`, `groq`, `openai_compatible` | Works out of the box. User pastes the key in the wizard; it goes to the OS keychain (env-var fallback for headless / dev). The catalog's `secret_ref_hint` names the canonical env var (e.g. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). |
-| Local | `ollama`, `opus_mt` | No external account needed. `ollama` requires a running local Ollama server and a pre-pulled model. `opus_mt` lazy-downloads CTranslate2 language-pair models on first use from Settings → Providers. |
+| Local / Free | `ollama`, `google_translate_free` | No external account needed. `ollama` requires a running local Ollama server and a pre-pulled model (fully offline). `google_translate_free` hits Google's public web Translate endpoint via the `deep-translator` library — no key, no quota, but requires internet. |
 
 For users who only have API keys (any vendor in the API-key row), the EXE
 works standalone. For users who want a subscription-CLI backend, they install

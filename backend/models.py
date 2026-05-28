@@ -191,10 +191,11 @@ class Chapter(BaseModel):
     # reader's bilingual pane label show a "refined by X" attribution chip.
     # NULL for pre-migration rows and chapters that never refined.
     refined_by_provider_id: int | None = None
-    # 2026-05-26 free-tier OPUS-MT draft. ``free_draft_text`` holds the
-    # mechanical NMT draft; the LLM PEMT pass reads it as a fidelity
-    # reference (see services/translators/base.py::build_prompt). The reader
-    # may render this while ``translated_text`` is still NULL.
+    # 2026-05-26 free-tier mechanical NMT draft (Google Translate as of
+    # 2026-05-28). ``free_draft_text`` holds the draft; the LLM PEMT pass
+    # reads it as a fidelity reference (see
+    # services/translators/base.py::build_prompt). The reader may render
+    # this while ``translated_text`` is still NULL.
     free_draft_text: str | None = None
     free_draft_status: str = "none"
     free_draft_error: str | None = None

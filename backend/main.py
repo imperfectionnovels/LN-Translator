@@ -27,7 +27,6 @@ from backend.routes import (
     imports,
     novels,
     observations,
-    opus_mt as opus_mt_routes,
     providers,
     stats,
     tm,
@@ -210,31 +209,15 @@ async def _probe_one(role: str, provider: Provider) -> None:
         LAST_PROBE_STATE[role] = "ok"
         return
 
-    if backend == "opus_mt":
-        # Offline CPU NMT. Boot must never fail when a pair isn't installed —
-        # the user may have created the provider via the wizard and skipped
-        # the model download; the first translate call (or the explicit
-        # Download button in Settings) handles installation.
-        from backend.services import opus_mt_models
-        pair = provider.model_id or ""
-        if pair not in opus_mt_models.SUPPORTED_PAIRS:
-            logger.warning(
-                "%s probe: opus_mt provider %r has unsupported model_id %r; "
-                "the first translate call will fail until it's set to one of %s.",
-                role, provider.name, pair,
-                sorted(opus_mt_models.SUPPORTED_PAIRS),
-            )
-            LAST_PROBE_STATE[role] = "warn"
-            return
-        if not opus_mt_models.is_installed(pair):
-            logger.warning(
-                "%s probe: opus_mt pair %r is not installed yet — open Settings "
-                "→ Providers to download the model. Boot continues.",
-                role, pair,
-            )
-            LAST_PROBE_STATE[role] = "warn"
-            return
-        logger.info("%s probe ok (opus_mt %s, local)", role, pair)
+    if backend == "google_translate_free":
+        # Online MT via deep-translator (no API key). Boot must never fail —
+        # the user may have created the provider without internet, or Google
+        # may be temporarily unreachable. The first translate call surfaces
+        # the network error; we just log warn here.
+        logger.info(
+            "%s probe ok (google_translate_free, online — first call will "
+            "verify Google Translate is reachable)", role,
+        )
         LAST_PROBE_STATE[role] = "ok"
         return
 
@@ -336,6 +319,50 @@ async def _probe_backends(default_provider: Provider | None) -> None:
     await _probe_one("translator", default_provider)
 
 
+async def _migrate_opus_mt_remnants() -> None:
+    """One-shot OPUS-MT removal cleanup.
+
+    The old free-tier backend (OPUS-MT, CTranslate2, ~78MB per language pair)
+    was replaced by Google Translate (via deep-translator) when its quality
+    proved unusable for literary CJK prose. This function:
+      1. Rewrites any ``providers.provider_type='opus_mt'`` row to
+         ``'google_translate_free'`` so existing default-provider selections
+         keep working without manual reconfiguration.
+      2. Deletes ``USER_DATA_ROOT/opus_mt/`` if it exists, reclaiming 78-300MB
+         per installed language pair from disk.
+
+    Both steps are wrapped in try/except and never fail the boot — worst case
+    the user manually re-adds a provider or deletes the directory.
+    """
+    import shutil
+
+    from backend.config import USER_DATA_ROOT
+    from backend.db import open_conn
+
+    try:
+        async with open_conn() as conn:
+            cur = await conn.execute(
+                "UPDATE providers SET provider_type = 'google_translate_free', "
+                "model_id = 'google-web' WHERE provider_type = 'opus_mt'"
+            )
+            await conn.commit()
+        if cur.rowcount:
+            logger.info(
+                "migrated %d opus_mt provider row(s) to google_translate_free",
+                cur.rowcount,
+            )
+    except Exception:
+        logger.exception("opus_mt provider migration failed (non-fatal)")
+
+    try:
+        opus_mt_dir = USER_DATA_ROOT / "opus_mt"
+        if opus_mt_dir.is_dir():
+            shutil.rmtree(opus_mt_dir, ignore_errors=True)
+            logger.info("removed stale opus_mt model directory at %s", opus_mt_dir)
+    except Exception:
+        logger.exception("opus_mt directory cleanup failed (non-fatal)")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Multi-worker check. The translate queue holds a process-global
@@ -356,6 +383,11 @@ async def lifespan(app: FastAPI):
             worker_signal,
         )
     await init_db()
+    # One-shot OPUS-MT → Google Translate migration. Idempotent (UPDATE WHERE
+    # clause matches nothing on the second boot; shutil.rmtree(ignore_errors)
+    # no-ops if the dir is gone). Runs early so the provider table is
+    # consistent before _probe_backends touches it.
+    await _migrate_opus_mt_remnants()
     # Probe bundled-package data files before anything tries to use them.
     # Logs (and surfaces in startup.log) if zhconv/chardet/cloudscraper data
     # is missing from the frozen bundle. Cheap; runs at most once per boot.
@@ -402,10 +434,6 @@ app.include_router(novels.router, prefix="/api/novels", tags=["novels"])
 app.include_router(chapters.router, prefix="/api", tags=["chapters"])
 app.include_router(glossary.router, prefix="/api", tags=["glossary"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
-# Top-level /api/opus-mt/ for model-lifecycle endpoints. Kept off the
-# /api/providers/{id}/ prefix so the dynamic-segment route in routes/providers.py
-# cannot shadow these paths.
-app.include_router(opus_mt_routes.router, prefix="/api/opus-mt", tags=["opus-mt"])
 app.include_router(genres.router, prefix="/api/genres", tags=["genres"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
 app.include_router(observations.router, prefix="/api", tags=["observations"])

@@ -1,26 +1,25 @@
 """Tests for backend.services.free_draft_queue.
 
-Stubs out ``OpusMTTranslator.translate_chapter`` so we don't need the
-ctranslate2 wheel or a model on disk. Verifies:
+Stubs out ``GoogleTranslateFreeTranslator.translate_chapter`` so we don't
+need network access. Verifies:
   * queue_free_draft only spawns when free_draft_status is 'none' or 'error'.
   * the worker writes free_draft_text + flips status to 'done'.
-  * a failing OPUS-MT call lands free_draft_status='error' with the message.
-  * maybe_queue_for_open_chapter skips when status='done' or pair not installed.
+  * a failing Google Translate call lands free_draft_status='error' with the message.
+  * maybe_queue_for_open_chapter skips when status='done'.
   * drain_on_startup re-queues 'pending' rows and resets stuck 'in_progress'.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
 
 import aiosqlite
 import pytest
 
 from backend.db import init_db, open_conn
 from backend.models import TranslationResult
-from backend.services import free_draft_queue, opus_mt_models
-from backend.services.translators import opus_mt as opus_mt_module
+from backend.services import free_draft_queue
+from backend.services.translators import google_translate_free as gt_module
 
 pytestmark = pytest.mark.asyncio
 
@@ -72,8 +71,8 @@ async def _make_novel_and_chapter(
 def _install_stub_translator(
     monkeypatch, *, output: str = "drafted body", raise_exc: Exception | None = None,
 ):
-    """Replace OpusMTTranslator.translate_chapter with a coroutine that
-    returns a TranslationResult (or raises) without touching ctranslate2."""
+    """Replace GoogleTranslateFreeTranslator.translate_chapter with a coroutine
+    that returns a TranslationResult (or raises) without touching the network."""
 
     async def _fake_translate_chapter(
         self,
@@ -86,6 +85,7 @@ def _install_stub_translator(
         style_note=None,
         genre=None,
         custom_brief=None,
+        free_draft=None,
         source_language=None,
     ):
         if raise_exc is not None:
@@ -98,13 +98,11 @@ def _install_stub_translator(
         )
 
     monkeypatch.setattr(
-        opus_mt_module.OpusMTTranslator,
+        gt_module.GoogleTranslateFreeTranslator,
         "translate_chapter",
         _fake_translate_chapter,
         raising=True,
     )
-    # Also pretend the pair is installed so the worker takes the happy path.
-    monkeypatch.setattr(opus_mt_models, "is_installed", lambda pair: True)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +146,7 @@ async def test_queue_free_draft_retries_from_error(monkeypatch):
 
 async def test_worker_records_error_message(monkeypatch):
     novel_id, chapter_id = await _make_novel_and_chapter()
-    _install_stub_translator(monkeypatch, raise_exc=RuntimeError("model is missing"))
+    _install_stub_translator(monkeypatch, raise_exc=RuntimeError("Google rate-limited"))
     await free_draft_queue.queue_free_draft(novel_id, chapter_id)
     for _ in range(50):
         await asyncio.sleep(0.01)
@@ -161,7 +159,7 @@ async def test_worker_records_error_message(monkeypatch):
         if row["free_draft_status"] == "error":
             break
     assert row["free_draft_status"] == "error"
-    assert "model is missing" in (row["free_draft_error"] or "")
+    assert "rate-limited" in (row["free_draft_error"] or "")
 
 
 # ---------------------------------------------------------------------------
@@ -170,21 +168,12 @@ async def test_worker_records_error_message(monkeypatch):
 
 async def test_maybe_queue_skips_when_status_done(monkeypatch):
     novel_id, chapter_id = await _make_novel_and_chapter(status="done")
-    monkeypatch.setattr(opus_mt_models, "is_installed", lambda pair: True)
     spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
     assert spawned is False
 
 
-async def test_maybe_queue_skips_when_pair_not_installed(monkeypatch):
-    novel_id, chapter_id = await _make_novel_and_chapter()
-    monkeypatch.setattr(opus_mt_models, "is_installed", lambda pair: False)
-    spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
-    assert spawned is False
-
-
-async def test_maybe_queue_skips_for_unsupported_language(monkeypatch):
-    novel_id, chapter_id = await _make_novel_and_chapter(source_language="en")
-    monkeypatch.setattr(opus_mt_models, "is_installed", lambda pair: True)
+async def test_maybe_queue_skips_when_already_done(monkeypatch):
+    novel_id, chapter_id = await _make_novel_and_chapter(free_draft_status="done")
     spawned = await free_draft_queue.maybe_queue_for_open_chapter(novel_id, chapter_id)
     assert spawned is False
 
@@ -231,10 +220,6 @@ async def test_translator_provenance_column_written(monkeypatch):
     on provider_type without re-deriving from novels.translator_provider_id.
     """
     from backend.services import queue as queue_svc
-    from backend.services.providers import (
-        Provider,
-        create_provider as create_provider_svc,
-    )
 
     # Make a chapter and a provider row.
     novel_id, chapter_id = await _make_novel_and_chapter()
