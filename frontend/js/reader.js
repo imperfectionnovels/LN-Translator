@@ -2276,6 +2276,7 @@ function applyRefinementBanner(ch) {
   const prior = document.getElementById("refinement-banner");
   if (prior) prior.remove();
   if (!ch || !ch.refinement_status || ch.refinement_status === "none") return;
+  if (ch.refinement_status === "done") return;
   const card = document.createElement("div");
   card.id = "refinement-banner";
   card.className = "alert-banner refinement-banner";
@@ -2290,10 +2291,6 @@ function applyRefinementBanner(ch) {
       <span class="msg">Refinement failed: <span class="muted">${escapeHtml(msg)}</span></span>
       <button type="button" class="retry" id="refinement-retry">↻ Retry refinement</button>
     `;
-  } else if (ch.refinement_status === "done") {
-    // Optional small badge — keeps the user aware the displayed body is
-    // the refined version, not the raw translator draft.
-    card.innerHTML = `<span class="msg muted">✓ Refined</span>`;
   }
   bodyEn.parentElement.insertBefore(card, bodyEn);
   const retryBtn = card.querySelector("#refinement-retry");
