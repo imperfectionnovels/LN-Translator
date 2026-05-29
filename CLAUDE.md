@@ -12,7 +12,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 
 - **Backend**: Python 3.11+, FastAPI, Uvicorn, `aiosqlite`.
 - **Default translator**: `claude_agent` backend — in-process Claude Agent SDK, Opus 4.7, `effort=high`. Burns the local Claude subscription window; serial (one chapter at a time).
-- **Other supported translators** (configurable per-novel via the providers table; bootstrap-seeded from `TRANSLATOR_BACKEND`): `claude_cli` (subprocess, no thinking-config), `gemini` (Gemini API), `deepseek` (OpenAI-compatible at api.deepseek.com, runs an internal translate→revise pass), `google_translate_free` (free tier — Google Translate via the `deep-translator` library, no API key; hits Google's public web endpoint). Plus 14 more provider types in the catalog (`codex_cli`, `gemini_cli`, `opencode`, `anthropic_api`, `openai`, `xai`, `mistral`, `openrouter`, `qwen`, `zhipu`, `moonshot`, `groq`, `openai_compatible`, `ollama`); the single source of truth is `backend/services/translator_catalog.py::_CATALOG`, which `services/providers.py::KNOWN_PROVIDER_TYPES` and `services/translators/factory.py::_DISPATCH` derive from (catalog-parity test pins both ends). See `docs/backends.md` for tuning knobs on the primary backends.
+- **Other supported translators** (configurable per-novel via the providers table; bootstrap-seeded from `TRANSLATOR_BACKEND`): `claude_cli` (subprocess, no thinking-config), `gemini` (Gemini API), `deepseek` (OpenAI-compatible single-pass translator at api.deepseek.com), `google_translate_free` (free tier — Google Translate via the `deep-translator` library, no API key; hits Google's public web endpoint). Plus 14 more provider types in the catalog (`codex_cli`, `gemini_cli`, `opencode`, `anthropic_api`, `openai`, `xai`, `mistral`, `openrouter`, `qwen`, `zhipu`, `moonshot`, `groq`, `openai_compatible`, `ollama`); the single source of truth is `backend/services/translator_catalog.py::_CATALOG`, which `services/providers.py::KNOWN_PROVIDER_TYPES` and `services/translators/factory.py::_DISPATCH` derive from (catalog-parity test pins both ends). See `docs/backends.md` for tuning knobs on the primary backends.
 - **Encoding detection**: `chardet` for uploaded `.txt` files (often arrive as GBK / GB18030).
 - **Frontend**: plain HTML + vanilla JS, no framework, no build step.
 - **Storage**: SQLite at `<USER_DATA_ROOT>/novels.db` in WAL mode (`data/novels.db` in dev, `%APPDATA%\LN-Translator\novels.db` when frozen).
@@ -67,15 +67,14 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │       ├── claude_agent.py    # Claude Agent SDK (subscription auth)
 │   │       ├── claude_cli.py      # claude subprocess wrapper
 │   │       ├── gemini.py          # Google Gemini API
-│   │       ├── deepseek.py        # OpenAI-compatible; orchestrates translate→revise
-│   │       └── deepseek_revise.py # reflect / improve / revise prompts
+│   │       └── deepseek.py        # OpenAI-compatible single-pass translator
 │   ├── prompts/                   # genre-aware prompt hierarchy (ships in the EXE bundle)
 │   │   ├── base.md                # genre-agnostic literary translator core
 │   │   ├── genres/<key>.md        # 10 overlays: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl (+ generic as legacy fallback)
 │   │   └── examples/<key>.md      # per-genre worked examples
 │   ├── scripts/
 │   │   └── load_glossary_md.py    # active: load data/glossary.md preset
-│   └── tests/                     # 40+ pytest modules
+│   └── tests/                     # 70+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, find-replace.html, onboarding.html
@@ -147,7 +146,6 @@ The runtime user prompt stacks several dynamic blocks on top of the static `base
   - `PROMPT_INCLUDE_STYLE_NOTE` — STYLE NOTE block (per-novel voice anchor).
   - `PROMPT_INCLUDE_STYLE_EDITS` — USER STYLE PREFERENCES block (captured paragraph edits).
   - `PROMPT_INCLUDE_REFINER` — global refiner kill-switch (overrides per-novel `refinement_provider_id` when false).
-  - `DEEPSEEK_REVISION_ENABLED` — DeepSeek's internal translate→revise pass (provider-specific).
 - **Product settings** (defaults chosen for product reasons, **not** part of the A/B grid):
   - `PREVIOUS_CONTEXT_ENABLED` — previous-chapter tail is doing real continuity work (pronoun reference, honorific consistency) that the glossary does not carry. Stays default `true`; do not put it in the A/B sequence.
   - `novels.refinement_provider_id` — per-novel column; long-term opt-in surface for the refiner.
@@ -176,11 +174,11 @@ The composed string is LRU-cached on `(resolved_genre, sha256(custom_brief)[:16]
 
 The composed instruction text is part of `llm_cache.translation_key` via `BaseTranslator.system_instruction` (set per-call by `translate_chapter`), so prompt edits invalidate cached translations automatically. The class-level `PROMPT_TEMPLATE_VERSION` token folds into `cache_identity` separately for cache-shape changes that don't show up in the prompt body.
 
-`NULL novels.genre` resolves through `DEFAULT_GENRE` (env, defaults to `xianxia`); unknown genres fall back to `generic` inside the loader so a bad DB value cannot crash the translator. `resolve_genre` in `backend/genres.py` owns the resolution; **all stages of one call must use the same resolution path** — see `deepseek.py::translate_chapter` for how the revision pipeline keeps `self._genre` aligned with the system prompt's genre.
+`NULL novels.genre` resolves through `DEFAULT_GENRE` (env, defaults to `xianxia`); unknown genres fall back to `generic` inside the loader so a bad DB value cannot crash the translator. `resolve_genre` in `backend/genres.py` owns the resolution, and the same resolved genre drives both the system instruction and its worked examples.
 
 All backends use the **delimited envelope** (TITLE_EN / =====BODY===== / =====TERMS=====) — JSON mode was removed because it forced the chapter body into one escaped string, which compressed the prose. The body rides as raw text; only the small TERMS block is JSON.
 
-DeepSeek runs its own translate→revise pass internally (`deepseek.py` orchestrates; `deepseek_revise.py` carries the reflect/improve prompts). The revise prompts use `get_worked_examples(genre)` so the examples match the system prompt's genre.
+DeepSeek is a single-pass translator (`deepseek.py`): one delimited-envelope call per chapter on the provider's model, with a parse-retry and a plain-text fallback. A second polish pass, when wanted, is the per-novel refiner (`refinement_provider_id`), not a DeepSeek-internal stage.
 
 ## Glossary rules
 
@@ -215,7 +213,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 517 tests.
+- `pytest backend/tests`. Currently 870 tests.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

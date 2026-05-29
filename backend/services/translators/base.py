@@ -105,9 +105,8 @@ def get_genre_overlay(genre: str) -> str:
 
 
 def get_worked_examples(genre: str) -> str:
-    """Read the genre-specific worked-examples file. Used by both base.py's
-    system-instruction builder and (for DeepSeek) the revise prompts so both
-    stages see the same examples for the same novel."""
+    """Read the genre-specific worked-examples file, layered into the system
+    instruction so the model sees worked examples matching the novel's genre."""
     resolved = resolve_genre(genre, DEFAULT_GENRE)
     path = _EXAMPLES_DIR / f"{resolved}.md"
     if not path.is_file() and resolved != "generic":

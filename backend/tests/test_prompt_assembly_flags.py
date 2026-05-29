@@ -93,7 +93,6 @@ def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
     monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_EDITS", True)
     monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_REFINER", True)
     monkeypatch.setattr(queue_module, "PREVIOUS_CONTEXT_ENABLED", True)
-    monkeypatch.setattr(queue_module, "DEEPSEEK_REVISION_ENABLED", True)
 
     provider = Provider(
         id=7, name="p", provider_type="deepseek",
@@ -128,7 +127,6 @@ def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
     assert parsed["flags"]["PROMPT_INCLUDE_STYLE_EDITS"] is True
     assert parsed["flags"]["PROMPT_INCLUDE_REFINER"] is True
     assert parsed["flags"]["PREVIOUS_CONTEXT_ENABLED"] is True
-    assert parsed["flags"]["DEEPSEEK_REVISION_ENABLED"] is True
     assert "prompt_template_version" in parsed
 
 

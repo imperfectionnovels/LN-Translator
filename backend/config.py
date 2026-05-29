@@ -128,17 +128,9 @@ if CLAUDE_AGENT_TRANSLATOR_EFFORT not in ("", "low", "medium", "high", "xhigh", 
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_TRANSLATOR_MODEL = os.getenv("DEEPSEEK_TRANSLATOR_MODEL", "deepseek-v4-pro").strip()
-DEEPSEEK_DRAFT_MODEL = (
-    os.getenv("DEEPSEEK_DRAFT_MODEL", "deepseek-chat").strip()
-    or DEEPSEEK_TRANSLATOR_MODEL
-)
 DEEPSEEK_TRANSLATOR_TEMPERATURE = _float_env("DEEPSEEK_TRANSLATOR_TEMPERATURE", 0.7)
-DEEPSEEK_REVISION_ENABLED = _bool_env("DEEPSEEK_REVISION_ENABLED", True)
 DEEPSEEK_MAX_OUTPUT_TOKENS = _int_env("DEEPSEEK_MAX_OUTPUT_TOKENS", 8192)
 DEEPSEEK_REQUEST_TIMEOUT = _float_env("DEEPSEEK_REQUEST_TIMEOUT", 240.0)
-DEEPSEEK_REVISION_MODE = os.getenv("DEEPSEEK_REVISION_MODE", "single").strip().lower()
-if DEEPSEEK_REVISION_MODE not in ("single", "reflect_improve"):
-    DEEPSEEK_REVISION_MODE = "single"
 
 # When true, the translator sees the previous chapter's final 3-5 paragraphs
 # (English) as a tone reference for cross-chapter continuity. Opt-out for

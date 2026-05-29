@@ -24,7 +24,6 @@ import time
 import aiosqlite
 
 from backend.config import (
-    DEEPSEEK_REVISION_ENABLED,
     PREVIOUS_CONTEXT_ENABLED,
     PREVIOUS_CONTEXT_MAX_GAP,
     PREVIOUS_CONTEXT_PARAGRAPHS,
@@ -108,7 +107,6 @@ def _build_prompt_config_snapshot(
             "PROMPT_INCLUDE_STYLE_EDITS": PROMPT_INCLUDE_STYLE_EDITS,
             "PROMPT_INCLUDE_REFINER": PROMPT_INCLUDE_REFINER,
             "PREVIOUS_CONTEXT_ENABLED": PREVIOUS_CONTEXT_ENABLED,
-            "DEEPSEEK_REVISION_ENABLED": DEEPSEEK_REVISION_ENABLED,
         },
     }, sort_keys=True)
 

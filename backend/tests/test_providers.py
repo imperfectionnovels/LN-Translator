@@ -526,12 +526,10 @@ async def test_gemini_translator_raises_when_secret_missing(monkeypatch):
         gemini_mod.GeminiTranslator(provider=p)
 
 
-async def test_deepseek_draft_model_follows_provider(monkeypatch):
-    """When a Provider is passed and params.draft_model is unset, the draft
-    pass must use provider.model_id — not the legacy DEEPSEEK_DRAFT_MODEL
-    env var. Otherwise DEEPSEEK_REVISION_ENABLED=False would silently run
-    a different model than the user selected.
-    """
+async def test_deepseek_single_pass_uses_provider_model(monkeypatch):
+    """A DeepSeek provider's model_id is the translation model. With the
+    internal revise pass removed there is no separate draft model — the single
+    translation pass runs on provider.model_id."""
     monkeypatch.setenv("FAKE_DEEPSEEK_KEY", "k")
     import backend.services.translators.deepseek as ds_mod
     # Stub the OpenAI client so we don't try to reach DeepSeek.
@@ -545,29 +543,7 @@ async def test_deepseek_draft_model_follows_provider(monkeypatch):
     )
     t = ds_mod.DeepSeekTranslator(provider=p)
     assert t.model_id == "deepseek-v4-pro"
-    assert t._draft_model == "deepseek-v4-pro", (
-        "draft model must follow provider.model_id, not DEEPSEEK_DRAFT_MODEL"
-    )
-
-
-async def test_deepseek_draft_model_override_via_params(monkeypatch):
-    """params.draft_model overrides the default draft model. This preserves
-    the cheap-draft + expensive-revise workflow for power users without
-    coupling it to a global env var."""
-    monkeypatch.setenv("FAKE_DEEPSEEK_KEY", "k")
-    import backend.services.translators.deepseek as ds_mod
-    monkeypatch.setattr(ds_mod.openai, "AsyncOpenAI", lambda **kwargs: object())
-
-    p = await providers_svc.create_provider(
-        name="ds-split",
-        provider_type="deepseek",
-        model_id="deepseek-v4-pro",
-        secret_ref="FAKE_DEEPSEEK_KEY",
-        params={"draft_model": "deepseek-chat"},
-    )
-    t = ds_mod.DeepSeekTranslator(provider=p)
-    assert t.model_id == "deepseek-v4-pro"
-    assert t._draft_model == "deepseek-chat"
+    assert not hasattr(t, "_draft_model")
 
 
 async def test_provider_secret_does_not_fall_back_to_global(monkeypatch):

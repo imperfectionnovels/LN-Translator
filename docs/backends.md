@@ -85,27 +85,24 @@ once.
 
 ## deepseek
 
-OpenAI-compatible API at `api.deepseek.com`. Runs an internal
-**translate → revise** pass per chapter (so its own internal logic provides
-the source-aware second look that the deleted bilingual reviewer used to do
-for other backends).
+OpenAI-compatible API at `api.deepseek.com`. A single translation pass per
+chapter on the provider's model (delimited free-form envelope, not JSON mode),
+with a parse-retry and a plain-text fallback. A second polish pass, when wanted,
+is configured as a per-novel refinement provider (`refinement_provider_id`),
+which can point at DeepSeek or any other provider; DeepSeek the translator no
+longer runs an internal revise stage.
 
 | Var | Default | Notes |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | — | Required. |
-| `DEEPSEEK_TRANSLATOR_MODEL` | `deepseek-v4-pro` | Reasoning model; used for the revision pass. |
-| `DEEPSEEK_DRAFT_MODEL` | `deepseek-chat` | Faster non-reasoning model for the draft pass. Blank → falls back to the translator model. |
-| `DEEPSEEK_TRANSLATOR_TEMPERATURE` | `0.7` | Draft pass only. Reflect / improve passes use fixed `0.3` / `0.5`. |
-| `DEEPSEEK_REVISION_ENABLED` | `1` | Set to `0` for draft-only. |
-| `DEEPSEEK_REVISION_MODE` | `single` | `single` (one combined critique+rewrite call, 2 LLM calls total) or `reflect_improve` (3 LLM calls: draft + reflect + improve). |
+| `DEEPSEEK_TRANSLATOR_MODEL` | `deepseek-v4-pro` | The translation model. |
+| `DEEPSEEK_TRANSLATOR_TEMPERATURE` | `0.7` | Sampling temperature for the translation call. |
 | `DEEPSEEK_MAX_OUTPUT_TOKENS` | `8192` | Hard `max_tokens`. A response that hits the cap fails the chapter rather than committing a truncated translation. |
 | `DEEPSEEK_REQUEST_TIMEOUT` | `240` | Per-request timeout. |
 
-`cache_identity` folds `rev{N}{mode}` into the cache key so flipping
-`DEEPSEEK_REVISION_MODE` invalidates entries cleanly. **Bump the `revN` token
-in `cache_identity` whenever any of the reflect / improve / revise prompts in
-`deepseek.py` change** — the revision prompts are NOT part of the
-content-addressed cache key (only the draft prompt + system instruction are).
+`cache_identity` folds the model + temperature into the cache key; the
+genre-aware system instruction is in the content-addressed key separately, so a
+prompt edit invalidates cached translations automatically.
 
 DeepSeek auto-caches the glossary-heavy prefix server-side. Log line
 `deepseek X usage: prompt=N (cached=M), completion=...` shows the hit rate.
@@ -218,6 +215,13 @@ work and LLM translation can run concurrently for different chapters — they
 don't share API rate limits.
 
 ### PEMT (LLM post-editing of NMT)
+
+**Disabled by default (2026-05-29):** `PROMPT_INCLUDE_FREE_DRAFT` defaults
+`false`. The mechanical reference anchored the prose toward literal phrasing,
+which works against novel-quality output, so the `REFERENCE TRANSLATION` block
+is off by default. The free-draft generation lane still fills `free_draft_text`
+on chapter open; set `PROMPT_INCLUDE_FREE_DRAFT=true` to feed it into the
+prompt. The rest of this section describes the feature when enabled.
 
 When a chapter has both a free draft AND an LLM provider configured, the LLM
 prompt picks up a `REFERENCE TRANSLATION` section assembled by

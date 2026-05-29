@@ -5,8 +5,7 @@ Roadmap for upcoming work on LN-Translator.
 ## Translation quality
 
 - [ ] Optimize translator and refinement prompts
-  - Tighten `backend/prompts/base.md` and the per-genre overlays in `backend/prompts/genres/`.
-  - Audit `backend/services/translators/deepseek_revise.py` reflect/improve/revise prompts for redundancy and drift.
+  - [x] Reframe `backend/prompts/base.md` and the per-genre overlays into a concise novelist's brief (2026-05-29); refiner prompt reframed the same way.
   - Expand `backend/prompts/examples/<genre>.md` worked examples where coverage is thin.
   - Re-baseline against a fixture chapter per genre after each prompt revision.
 

@@ -87,7 +87,6 @@ hiddenimports = [
     "backend.services.translators.gemini",
     "backend.services.translators.openai",
     "backend.services.translators.deepseek",
-    "backend.services.translators.deepseek_revise",
     "backend.services.translators.xai",
     "backend.services.translators.mistral",
     "backend.services.translators.openrouter",
