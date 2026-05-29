@@ -501,11 +501,12 @@ if (readerMode === "edit" && translationSource !== "polished") {
 }
 
 /* ---- Edit-mode discoverability ----
- * The select-to-add-glossary popover already works in Edit mode without
- * entering Edit-paragraphs (which only flips paragraphs to contenteditable
- * for style learning). But that's invisible until you happen to drag-
- * select something. The hint banner + the always-visible "+ Term" button
- * make the action discoverable. */
+ * The select-to-add-glossary popover is Edit-mode only (gated in
+ * showPopoverForSelection — read mode keeps selection as plain native
+ * copy). It works without entering Edit-paragraphs (which only flips
+ * paragraphs to contenteditable for style learning). But that's invisible
+ * until you happen to drag-select something. The hint banner + the
+ * always-visible "+ Term" button make the action discoverable. */
 const EDIT_HINT_SEEN_KEY = "editModeHintSeen";
 const editModeHint = document.getElementById("edit-mode-hint");
 const editModeHintDismiss = document.getElementById("edit-mode-hint-dismiss");
@@ -1154,6 +1155,13 @@ function clearPopover() {
 }
 function showPopoverForSelection() {
   clearPopover();
+  // Read mode = clean reading view: native selection only, no popover.
+  // The selection toolbar (glossary / bookmark / concordance / copy) is a
+  // translator's-workbench affordance and stays edit-mode only. In read mode
+  // text behaves like any other app: drag-select, then Ctrl+C or right-click
+  // → Copy. clearPopover() above still runs so flipping edit → read tears
+  // down any open popover.
+  if (readerMode !== "edit") return;
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed) return;
   const text = sel.toString().trim();
@@ -1624,7 +1632,9 @@ function showAddForm(text, inZh, rect, paragraphIdx) {
       panel.classList.remove("flash-fill");
       void panel.offsetWidth; /* restart animation */
       panel.classList.add("flash-fill");
-      sel.removeAllRanges();
+      // Leave the selection intact (don't removeAllRanges) so the reference
+      // text stays copyable with Ctrl+C / right-click → Copy after the
+      // click-to-fill. The fill is additive; copy must still work here.
     });
   });
 
