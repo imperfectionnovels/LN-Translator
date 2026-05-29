@@ -7,7 +7,7 @@ Target prose: clean, taut, atmospheric xianxia fiction. Direct when the source i
 Voice register stack (three registers, not one):
 - Narrator: dry, sardonic, slightly worldly; aphoristic when the source goes there.
 - External dialogue: xianxia-formal, honorific-heavy disciple-elder speech, formality from honorifics and indirection (not "thee/thou" archaisms; contractions are fine).
-- Internal italicized thought: the POV character's voice; may carry modern-cynic or webnovel-meme register when the raw thought has corresponding crude, colloquial, gaming, or meme markers. Short bursts like 挂来！, 溜了溜了！, 卧龙凤雏, and 人在曹营心在汉-style jokes should land as readable English jokes, not literal calques. When the raw italic is straightforward strategic reasoning, render naturally; do not impose slang or gamer vocabulary.
+- Internal italicized thought (first-person inner monologue ONLY): when the raw breaks to a first-person pronoun (我 / 吾 / 我的 / 在下) with no speech tag or quote glyph, render it italic in the POV character's voice; it may carry modern-cynic or webnovel-meme register when the raw thought has corresponding crude, colloquial, gaming, or meme markers. Short bursts like 挂来！, 溜了溜了！, 卧龙凤雏, and 人在曹营心在汉-style jokes should land as readable English jokes, not literal calques. Strategic reasoning the raw keeps in the third person (他 / 她, no first-person break) is free indirect discourse: leave it roman and in the third person per base.md, render it naturally, and do not impose slang. Italics is a formatting choice and NEVER changes grammatical person, do not rewrite a 他/她 reflection into a first-person *I* thought.
 
 Scene mode (orthogonal to voice register: voice is who is speaking; scene mode is what the scene is doing):
 - Action mode: fights, chases, escapes, sudden reversals. Short percussive sentences, single-verb beats, frequent paragraph breaks, minimal modification. Alternate short percussive beats with medium-length explanatory clauses; do not run long here, do not stack subordinate clauses to imitate Chinese parataxis.
@@ -35,6 +35,7 @@ Casing of role labels and relational honorifics:
 - Title Case when the role label is functioning as a singular identifier for a specific addressee or referent: `Senior Sister [Surname]`, `Junior Brother [Surname]`, `Martial Uncle [Surname]`, `Master`, `True Person [Name]`, `True Monarch [Name]`, `Dao Lord [Name]`, `Patriarch`, `Ancestor`, `Fellow Daoist [Surname]`, `Elder [Surname]`. When the label stands in as the only identifier for one specific character across the chapter (a black-robed daoist referred to only as "the Daoist," a hall-master referred to only as "the Hall Master"), Title Case the label as a named identifier.
 - lowercase when the role label is generic, plural, descriptive, or refers to a class rather than a specific person: `the registered disciples`, `official disciples`, `inner disciples`, `outer disciples`, `the four outer halls`, `the inner sect`, `the outer sect`, `senior cultivators`, `junior cultivators`, `fellow daoists` (plural collective), `the elders` (plural collective), `the disciples below`. Even in vocative use, plural collective labels stay lowercase: `Fellow junior brothers, do not misunderstand.` (collective, lowercase) versus `Junior Brother [Surname], step forward.` (singular with a specific addressee, Title Case).
 - The test: is the label doing the work of a name for one specific character right now? Title Case. Or is it labeling a class, a group, or a role abstractly? lowercase.
+- Reverent capitalization for the supreme tier: a pronoun referring to a Dao Lord / World-Honored One / Buddha / other exalted supreme being is reverently capitalized (He / His / Him / They / Their / Them), the way English capitalizes deific pronouns. Ordinary cultivators (True Persons, True Monarchs, elders, disciples) take ordinary lowercase pronouns.
 
 Stock dramatic declarations, translate literally:
 - "Are you looking to die?!" / "How dare you!" / "Don't push your luck!" / "Spare me!" / "Senior, spare me!" / "Who are you?!" / "You brat, you dare to ...?!"
@@ -77,7 +78,7 @@ Reaction beats live alone. When a face pales, an onlooker gasps, a patriarch's e
 Aphoristic generalizations at emotional peaks. When the source delivers a compact aphorism (parallel clauses, short, end-stopped, often present tense), render with the parallel structure intact and the present tense preserved. Do not expand into prose; the brevity is the point.
 
 Register-anachronism carve-out for inner monologue:
-- Generally avoid register-anachronism phrases that snap classical cultivation prose into modern colloquial English. Banned in narration and formal dialogue: "to put it bluntly", "honestly", "kinda", "sorta", "whatever", "almost stopped thinking", "his brain shut down", "awesome glare/aura/power", "epic" + combat noun.
+- Generally avoid register-anachronism phrases that snap classical cultivation prose into modern colloquial English. Banned as ARBITRARY filler in narration and formal dialogue: "kinda", "sorta", "whatever", "almost stopped thinking", "his brain shut down", "awesome glare/aura/power", "epic" + combat noun. Carve-out: a sentence-opening discourse marker that faithfully renders an explicit source marker is fine, not filler: 说实话 / 老实说 → "Honestly," / "To be honest,"; 说白了 → "To put it plainly,". The ban targets inventing a casual register the source lacks, not translating a marker the source actually wrote.
 - Carve-out: when a source raw passage is the POV character's italicized inner monologue containing deliberately modern or gaming-register terms (e.g. 新手村 → "newbie village", 重开 → "restart", 超模 → "overpowered", 功德核弹 → "Merit Bomb"), render that interior voice with controlled modern snap. "Nope, I'm out" may be right for 溜了溜了 inside the POV's panic; it is wrong in solemn narration.
 
 Watch-list calques:
@@ -85,6 +86,7 @@ Watch-list calques:
 - "human voices" (literal 人声) → "chatter" / "people's voices" / "voices."
 - "How could [X]?!" delivered in narrator voice reads flat-Victorian; restructure as a declarative narrative beat. Reserved for dialogue and explicit inner-thought beats.
 - Time-anchor density cap. "In an instant," "At this moment," "The next second"; at most twice per scene per phrase.
+- 明明 …，(此刻)却 … marks a present, simultaneous contrast (X plainly still holds, yet now Y), NOT a past state. Render the first clause as ongoing / simultaneous ("the heat still rolled around them, yet now it was cold as winter"), never as "a moment before, the heat had been ..." (which falsely makes it past).
 
 No transliterated cultivation realm names in narration. See the realm-names rule above.
 
