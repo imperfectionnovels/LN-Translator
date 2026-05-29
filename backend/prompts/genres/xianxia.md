@@ -16,7 +16,7 @@ Scene mode (orthogonal to voice register: voice is who is speaking; scene mode i
 - Do not blend modes within a paragraph; switch at paragraph breaks. The contrast between modes is itself the pacing cue.
 
 Cultivator titles:
-- A personal name followed by 真人 / 真君 / 上人 / 道人 renders title-first ("True Person Xiu Xin", "True Monarch Chongguang").
+- A personal name followed by 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]", "True Monarch [Name]").
 - A descriptive epithet followed by the same suffix renders epithet-first ("Demon-Purging True Person").
 - Keep one order per name across the whole chapter.
 
@@ -54,7 +54,7 @@ Realm/stage attribution:
 - Cultivation realm/stage modifiers attach to cultivators, people, experts, leaders, elders, ancestors, or members of a force, not to the organization itself (clan / sect / family) unless the source explicitly classifies the organization by power tier. Render 筑基初期的小家族 as "a small clan whose strongest cultivator was only at early-stage Foundation Establishment", never "early Foundation Establishment clan."
 
 Glossary-term capitalization (xianxia-specific):
-- Genuine proper nouns (sects, places, named techniques, named items / spirit-treasures, scripture / jade-slip / manual titles, formal ranks used as titles, and personal-name/title terms) keep Title Case every word (function words like "of", "and", "the" stay lowercase mid-title) wherever they appear. A descriptive-looking source title is STILL a proper noun when it names a specific work or object: 金灯玉光至明 → "Supreme Brightness of Golden Lamp and Jade Light", 拓地舟 → "Territory-Expanding Ship", 真人 → "True Person" / "True Persons".
+- Genuine proper nouns (sects, places, named techniques, named items / spirit-treasures, scripture / jade-slip / manual titles, formal ranks used as titles, and personal-name/title terms) keep Title Case every word (function words like "of", "and", "the" stay lowercase mid-title) wherever they appear. A descriptive-looking source title is STILL a proper noun when it names a specific work or object: a jade-slip manual title → "Canon of Drifting Cloud and Bright Moon", a named spirit-treasure → "Cloud-Treading Skiff", 真人 → "True Person" / "True Persons".
 - Generic metaphysical or cultivation vocabulary stays sentence-case in prose and in `new_terms`: fate / qi-shu, karma / karmic threads, spiritual power, spiritual aura, spiritual qi, sea of consciousness, five organs and six viscera, dao path, opportunity, apertures, spirit-platform, true qi, yin and yang, reincarnation, transmigration, mortal, mortal world, immortal world, mortal realm, mortal coil, soul, abyss, holy land, formation (when unnamed), spirit beast (when unnamed), academy (when unnamed), kingdom (when unnamed), life flame, life lamp, life tablet, cultivation manual, cultivation method, cultivation technique, divine ability, treasure, talent, lifespan, cultivation (as a common noun). The same nouns may appear Title Cased inside a `【】` system-interface field label or in a curated proper-noun glossary entry; that does not license Title Casing them in narrative prose. Do not Title-Case a common concept merely because it recurs.
 - Rank/grade/tier labels and other generic descriptors ("second-rank", "late-stage", "low-grade") remain common nouns: lowercase them mid-sentence, capitalize only at the start of a sentence; emit them lowercase in `new_terms`.
 
@@ -66,7 +66,7 @@ Heavenly Stem × Five-Phase and Earthly Branch × Five-Phase compounds:
 
 Fixed-term carrier syntax:
 - When a locked term creates awkward English, choose a carrier frame that preserves the term and reads natively. Allowed: "bore the title X", "was known as X", "was titled X", "the method touched X", "reached X", "was established in X", "reclaimed X", "left behind by X", "established by X", "X's domain" only when X does not already end in `'s`.
-- Forbidden: stacking `'s` on a name that already contains `'s` ("Sea's Roar's confidence"); welding two long fixed titles with `'s` ("Eternal Radiance Treasure-Light Grotto-Heaven's interior"). When a possessive pileup is unavoidable with the locked term as written, rewrite to "of [X]" or active voice. Never shorten a locked term to dodge the pileup; the term is atomic.
+- Forbidden: stacking `'s` on a name that already contains `'s` ("Storm's Edge's confidence"); welding two long fixed titles with `'s` ("Azure Void Treasure-Light Grotto-Heaven's interior"). When a possessive pileup is unavoidable with the locked term as written, rewrite to "of [X]" or active voice. Never shorten a locked term to dodge the pileup; the term is atomic.
 
 Locked idiom renderings preserve established wording, but may inflect to fit English grammar; 找死 can be "You court death" as a standalone insult and "courting death" inside "different from courting death." Never force "you court death" into a prepositional or comparative phrase.
 
@@ -91,13 +91,13 @@ Watch-list calques:
 No transliterated cultivation realm names in narration. See the realm-names rule above.
 
 Predicate preservation examples (the principle is in base.md; xianxia-specific worked cases):
-- 再遇昂霄 → "Encountering Soaring Firmament Again". WRONG: "Soaring Firmament Once Again" (drops 遇 / encounter).
-- 暗中对鸿运道人出手 → "made a move against Daoist Hong Yun from the shadows". WRONG: "Daoist Hong Yun from the shadows" (drops 出手 / made a move).
+- 再遇X (X = a locked character name) → "Encountering X Again". WRONG: "X Once Again" (drops 遇 / encounter).
+- 暗中对X出手 (X = a locked character name) → "made a move against X from the shadows". WRONG: "X from the shadows" (drops 出手 / made a move).
 - 发现这座洞天碎片 → "found this Grotto-Heaven fragment". WRONG: "this Grotto-Heaven fragment appeared" (drops 发现 / found and reverses agency).
 
 Webnovel voice and idiom examples:
 - 挂来！ after trusting a system/cheat/talent → "Cheat power, do your thing!" / "Come on, cheat power!" NOT "Bring it on!" unless the character is challenging an opponent.
 - 溜了溜了！ → "I'm out, I'm out!" / "Time to run." NOT "Slipping out, slipping out!"
-- 人在剑阁心初圣 / 人在曹营心在汉-style jokes → "in the Sword Pavilion, heart still with the Primordial Saint Sect" / "physically in X, loyal to Y." Preserve the camp-loyalty joke; do not render as a body/heart calque unless it reads naturally.
+- 人在曹营心在汉-style camp-loyalty jokes → "physically in X, loyal to Y" (e.g. "stationed at [Faction A], heart still with [Faction B]"). Preserve the camp-loyalty joke; do not render as a body/heart calque unless it reads naturally.
 - 卧龙凤雏 used sarcastically → "that pair of brilliant fools" / "that so-called genius pair" / "the crouching-dragon-and-phoenix-fledgling duo" only if the literal allusion has already been established and reads as a joke.
 - 未雨绸缪 → "prepare before the storm" / "lay plans before the rain." NOT "binding the thatch before the rain" unless the surrounding prose actually wants that rustic image.
