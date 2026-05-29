@@ -101,7 +101,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_TRANSLATOR_MODEL = os.getenv("GEMINI_TRANSLATOR_MODEL", "gemini-3-pro-preview").strip()
 GEMINI_REQUEST_TIMEOUT = _float_env("GEMINI_REQUEST_TIMEOUT", 240.0)
 
-# Default switched to claude_agent (Opus 4.7 with extended thinking) per the
+# Default switched to claude_agent (Opus 4.8 with extended thinking) per the
 # single-pass restructure: the model deliberates inside one call instead of
 # relying on a second humanizer polish pass. claude_cli stays as an option
 # but has no thinking-config surface.
@@ -116,7 +116,7 @@ CLAUDE_AGENT_TRANSLATOR_MODEL = os.getenv("CLAUDE_AGENT_TRANSLATOR_MODEL", "clau
 # wait means a hung SDK call, not progress.
 CLAUDE_AGENT_CALL_TIMEOUT = _float_env("CLAUDE_AGENT_CALL_TIMEOUT", 600.0)
 # Thinking-effort level for the Claude Agent SDK translator: low / medium /
-# high / xhigh / max. "high" enables Opus 4.7 extended thinking on the
+# high / xhigh / max. "high" enables Opus 4.8 extended thinking on the
 # translation pass — the lever for noticing-during-writing that the
 # single-pass thesis depends on. Blank → omit the option entirely and let
 # the SDK pick its default.

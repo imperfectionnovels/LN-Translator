@@ -1,7 +1,7 @@
 # Backend tuning notes
 
 Per-backend env vars and quirks. The defaults in `backend/config.py` are tuned
-for the common case (`claude_agent`, Opus 4.7, `effort=high`); this doc covers
+for the common case (`claude_agent`, Opus 4.8, `effort=high`); this doc covers
 the knobs and the reasons they exist.
 
 For the list of every var, see `.env.example`. This doc is the "why."
@@ -9,11 +9,11 @@ For the list of every var, see `.env.example`. This doc is the "why."
 ## claude_agent (default)
 
 In-process Claude Agent SDK, running against the local `claude` subscription.
-Default: Opus 4.7 with `effort=high` extended thinking.
+Default: Opus 4.8 with `effort=high` extended thinking.
 
 | Var | Default | Notes |
 |---|---|---|
-| `CLAUDE_AGENT_TRANSLATOR_MODEL` | `claude-opus-4-7` | Don't downgrade; extended thinking is plumbed for 4.7 specifically. |
+| `CLAUDE_AGENT_TRANSLATOR_MODEL` | `claude-opus-4-8` | Don't downgrade; extended thinking is plumbed for 4.8 specifically. |
 | `CLAUDE_AGENT_TRANSLATOR_EFFORT` | `high` | `low` / `medium` / `high` / `xhigh` / `max`. `xhigh` goes deeper but eats more quota; `low` effectively disables thinking. |
 | `CLAUDE_AGENT_CALL_TIMEOUT` | `600` | Long-chapter Opus + thinking finishes inside 8 min. Longer wait = hung call. |
 
@@ -47,7 +47,7 @@ SDK backend at default settings. Kept as a fallback when the SDK has issues.
 | Var | Default | Notes |
 |---|---|---|
 | `CLAUDE_CLI_PATH` | `claude` | Path to the binary on PATH. On Windows the npm shim is `claude.CMD` — `_resolve_cli_path` uses `shutil.which` so PATHEXT is applied. |
-| `CLAUDE_CLI_TRANSLATOR_MODEL` | `claude-opus-4-5` | Default is 4.5 because the CLI has no `--effort` plumbing. Switch to `claude_agent` for 4.7 + thinking. |
+| `CLAUDE_CLI_TRANSLATOR_MODEL` | `claude-opus-4-5` | Default is 4.5 because the CLI has no `--effort` plumbing. Switch to `claude_agent` for 4.8 + thinking. |
 
 Implementation: subprocess via `subprocess.Popen` + `asyncio.to_thread(proc.communicate)`.
 Uvicorn defaults to the Selector event loop on Windows, which raises

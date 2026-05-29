@@ -309,7 +309,7 @@ class ClaudeAgentTranslator(BaseTranslator):
         options = ClaudeAgentOptions(
             cli_path=_resolve_cli_path(),
             model=self.model_id if self.model_id and self.model_id != "default" else None,
-            # Thinking-effort level. "high" (default) enables Opus 4.7 extended
+            # Thinking-effort level. "high" (default) enables Opus 4.8 extended
             # thinking — the model deliberates before emitting prose, which is
             # the lever for higher first-pass fidelity and more natural English.
             # "xhigh" is Opus-4.7-exclusive and goes deeper. Blank → omit so

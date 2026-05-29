@@ -11,7 +11,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 ## Tech stack
 
 - **Backend**: Python 3.11+, FastAPI, Uvicorn, `aiosqlite`.
-- **Default translator**: `claude_agent` backend — in-process Claude Agent SDK, Opus 4.7, `effort=high`. Burns the local Claude subscription window; serial (one chapter at a time).
+- **Default translator**: `claude_agent` backend — in-process Claude Agent SDK, Opus 4.8, `effort=high`. Burns the local Claude subscription window; serial (one chapter at a time).
 - **Other supported translators** (configurable per-novel via the providers table; bootstrap-seeded from `TRANSLATOR_BACKEND`): `claude_cli` (subprocess, no thinking-config), `gemini` (Gemini API), `deepseek` (OpenAI-compatible single-pass translator at api.deepseek.com), `google_translate_free` (free tier — Google Translate via the `deep-translator` library, no API key; hits Google's public web endpoint). Plus 14 more provider types in the catalog (`codex_cli`, `gemini_cli`, `opencode`, `anthropic_api`, `openai`, `xai`, `mistral`, `openrouter`, `qwen`, `zhipu`, `moonshot`, `groq`, `openai_compatible`, `ollama`); the single source of truth is `backend/services/translator_catalog.py::_CATALOG`, which `services/providers.py::KNOWN_PROVIDER_TYPES` and `services/translators/factory.py::_DISPATCH` derive from (catalog-parity test pins both ends). See `docs/backends.md` for tuning knobs on the primary backends.
 - **Encoding detection**: `chardet` for uploaded `.txt` files (often arrive as GBK / GB18030).
 - **Frontend**: plain HTML + vanilla JS, no framework, no build step.
