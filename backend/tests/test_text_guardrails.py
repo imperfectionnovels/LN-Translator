@@ -369,6 +369,43 @@ def test_brackets_system_block_with_glossary_overlap_kept():
     assert count == 0
 
 
+def test_brackets_long_system_pane_preserved():
+    # Regression: a standalone `**【Label: long description】**` skill / talent
+    # pane is a system block, not mis-bracketed narrative. The inner text is
+    # ~150 chars and contains sentence punctuation, but neither is evidence of
+    # narrative for a bold, colon-structured standalone pane. The pane must
+    # survive verbatim. (Previously the >80-char cap deleted it.)
+    glossary = [_entry("Marionette", term_zh="提线木偶")]
+    pane = (
+        "**【Marionette: Seize another person's fortune and bear their karma. "
+        "By doing so, you may hide beneath their appearance and control them "
+        "like a puppet. No one can divine your true origins.】**"
+    )
+    text = f"He read the prompt.\n\n{pane}\n\nIf it said no one could, then no one could."
+    out, count = enforce_brackets(text, glossary=glossary)
+    assert pane in out
+    assert count == 0
+
+
+def test_brackets_long_pane_preserved_without_glossary():
+    # Same protection holds with no glossary context: bold + colon = pane.
+    pane = "**【Status: " + "a long description that runs well past eighty characters in total" + "】**"
+    text = f"Setup.\n\n{pane}\n\nFollowup."
+    out, count = enforce_brackets(text)
+    assert pane in out
+    assert count == 0
+
+
+def test_brackets_unstructured_standalone_narrative_still_stripped():
+    # A standalone span with NO bold wrapper and NO colon, carrying CN
+    # sentence punctuation, is still treated as mis-bracketed narrative.
+    text = "Setup.\n\n【这是一段被错误括起来的叙述。】\n\nFollowup."
+    out, count = enforce_brackets(text)
+    assert "【" not in out
+    assert "这是一段被错误括起来的叙述。" in out
+    assert count == 1
+
+
 def test_brackets_idempotent_on_clean_text():
     text = "He said this is my sword and turned away."
     out, count = enforce_brackets(text)

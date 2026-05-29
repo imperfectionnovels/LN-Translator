@@ -102,8 +102,10 @@ _BRACKET_SPAN_RE = re.compile(r"【([^【】]*)】")
 # corrupt a UI line, which is worse — so the trigger set is conservative.
 _NARRATIVE_TRIGGER_CHARS = set('。！？!?"“”「『」』')
 
-# Length cap: real system blocks are short tags. Anything past 80 inner chars
-# is almost certainly mis-bracketed narrative.
+# Length cap, applied ONLY to unstructured standalone spans (no bold wrapper,
+# no Field:Value colon) as a last-resort narrative signal. Structured panes
+# (`**【…】**` or `【Field: Value】`) are kept at any length — skill / status
+# descriptions are legitimately long, so length there is NOT a narrative signal.
 _SYSTEM_INNER_MAX = 80
 
 
@@ -155,19 +157,57 @@ def _looks_narrative(inner: str, glossary_terms: frozenset[str]) -> bool:
     return inner.strip() in glossary_terms
 
 
+def _should_strip_brackets(
+    inner: str,
+    glossary_terms: frozenset[str],
+    text: str,
+    run_start: int,
+    run_end: int,
+) -> bool:
+    """Decide whether a `【…】` span is narrative emphasis (strip) or a system
+    pane (keep).
+
+    Order matters, and the bias is conservative: deleting a real UI pane is
+    unrecoverable, while leaving a stray bracket is not. So a span is stripped
+    only on positive evidence of emphasis.
+
+    1. Inline span (other prose shares the paragraph) — emphasis, strip.
+    2. Standalone span whose inner text is exactly a glossary name — a name
+       used as a callout, strip (even when bold-wrapped).
+    3. Standalone span that is bold-wrapped (`**【…】**`) OR carries a
+       `Field: Value` colon — a system pane, KEEP regardless of length. Skill /
+       status descriptions are legitimately long and contain sentence
+       punctuation, so neither length nor CN punctuation is evidence of
+       narrative for a structured standalone pane. (This is the fix: the old
+       length / CN-punctuation triggers deleted long skill panes.)
+    4. Standalone, unstructured (no bold, no colon, not a glossary name) — fall
+       back to the legacy narrative heuristics for genuinely mis-bracketed prose.
+    """
+    if _is_inline_span(text, run_start, run_end):
+        return True
+    if inner.strip() in glossary_terms:
+        return True
+    bold = (
+        text[run_start - 2 : run_start] == "**"
+        and text[run_end : run_end + 2] == "**"
+    )
+    if bold or ":" in inner or "：" in inner:
+        return False
+    return _looks_narrative(inner, glossary_terms)
+
+
 def enforce_brackets(
     text: str,
     glossary: list[GlossaryEntry] | None = None,
 ) -> tuple[str, int]:
-    """Strip `【` / `】` characters from non-system bracket spans.
+    """Strip `【` / `】` characters from narrative-emphasis bracket spans, while
+    leaving genuine system-interface panes intact.
 
-    A span is treated as narrative (stripped) when any of:
-      - inner text matches a glossary term (name-in-narrative, not UI)
-      - inner contains CN sentence punctuation / quote glyphs
-      - inner is longer than 80 chars
-      - the bracketed span is inline within a paragraph (other prose on the
-        same paragraph). Standalone `**【…】**` paragraphs are kept (they
-        look like UI lines) unless one of the prior triggers fires.
+    See `_should_strip_brackets` for the decision. The headline guarantee: a
+    standalone `**【Label: value】**` pane (or any standalone bracket span with a
+    `Field: Value` colon) is kept verbatim at ANY length — a long skill / status
+    description is a pane, not mis-bracketed narrative. Only inline emphasis and
+    standalone bare-glossary-name callouts are stripped.
 
     Adjacent `**` bold wrappers are stripped with the brackets — once the
     inner text is plain narrative prose, the bold formatting that was meant
@@ -180,10 +220,7 @@ def enforce_brackets(
     out = text
     for m in reversed(matches):
         inner = m.group(1)
-        narrative = _looks_narrative(inner, glossary_terms) or _is_inline_span(
-            out, m.start(), m.end()
-        )
-        if not narrative:
+        if not _should_strip_brackets(inner, glossary_terms, out, m.start(), m.end()):
             continue
         strip_start = m.start()
         strip_end = m.end()
