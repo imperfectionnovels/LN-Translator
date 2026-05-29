@@ -148,6 +148,12 @@ applyDual();
 let chaptersCache = [];
 let glossaryCache = [];
 let novelMeta = null;
+// Session dismissal for the TOC failed-chapters banner. -1 = not dismissed;
+// otherwise the failed-count at which the user dismissed it. The banner
+// reappears only if the failed count grows beyond that (new failures), so
+// dismissing a known set of errors does not nag while still surfacing fresh
+// ones. Resets on reload.
+let _errorBannerDismissedCount = -1;
 // Providers cache for the bilingual pane label + refinement badge. Lazily
 // populated by loadProviders(); falls back to null IDs if the call fails.
 let _providersCache = null;
@@ -758,11 +764,14 @@ function renderToc() {
   const errorBanner = document.getElementById("toc-error-banner");
   const errorCount = document.getElementById("toc-error-count");
   if (errorBanner && errorCount) {
-    const failed = chaptersCache.filter(c => c.status === "error");
-    if (failed.length > 0) {
+    const failedN = chaptersCache.filter(c => c.status === "error").length;
+    // Show only when there is an actual problem AND the user hasn't dismissed
+    // this (or a smaller) failure set. New failures beyond the dismissed count
+    // re-surface it.
+    if (failedN > 0 && failedN > _errorBannerDismissedCount) {
       errorBanner.hidden = false;
       errorCount.textContent =
-        `${failed.length} failed chapter${failed.length === 1 ? "" : "s"}`;
+        `${failedN} failed chapter${failedN === 1 ? "" : "s"}`;
     } else {
       errorBanner.hidden = true;
     }
@@ -938,6 +947,15 @@ document.getElementById("toc-retry-failed")?.addEventListener("click", async () 
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Retry all"; }
   }
+});
+
+// Dismiss the failed-chapters banner for this session. Records the current
+// failed count so renderToc keeps it hidden until a NEW failure pushes the
+// count higher (see _errorBannerDismissedCount).
+document.getElementById("toc-error-dismiss")?.addEventListener("click", () => {
+  _errorBannerDismissedCount = chaptersCache.filter(c => c.status === "error").length;
+  const banner = document.getElementById("toc-error-banner");
+  if (banner) banner.hidden = true;
 });
 
 /* Suppress auto-scroll of the active TOC row when the user is actively

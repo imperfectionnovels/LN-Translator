@@ -2162,7 +2162,8 @@ body[data-reader-mode="edit"] .chapter-bar .view-group .seg#toggle-dual {
 
 /* 2026-05-25: error banner in the TOC rail. Visible in both Read and
    Edit modes (a failed translation is a state the reader cares about
-   regardless of mode). Hidden via [hidden] when error count is 0. */
+   regardless of mode). Hidden via [hidden] when error count is 0 (or
+   when the user dismisses it). */
 .toc-error-banner {
   display: flex;
   align-items: center;
@@ -2174,6 +2175,14 @@ body[data-reader-mode="edit"] .chapter-bar .view-group .seg#toggle-dual {
   border: 1px solid color-mix(in srgb, var(--signal-error) 36%, var(--border));
   color: var(--text);
   font-size: 12px;
+}
+
+/* The bare `[hidden]` UA rule (display:none) loses to `.toc-error-banner`
+   above on equal specificity, so the banner stayed visible (showing
+   "0 failed") even when JS set hidden. This higher-specificity rule makes
+   the hidden attribute actually hide it. */
+.toc-error-banner[hidden] {
+  display: none;
 }
 
 .toc-error-banner .toc-error-icon {
@@ -2197,4 +2206,20 @@ body[data-reader-mode="edit"] .chapter-bar .view-group .seg#toggle-dual {
 .toc-error-banner button {
   padding: 2px 8px;
   font-size: 11px;
+}
+
+.toc-error-banner .toc-error-dismiss {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 1;
+  background: none;
+  border: none;
+  color: var(--text-muted, currentColor);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.toc-error-banner .toc-error-dismiss:hover {
+  opacity: 1;
 }
