@@ -21,7 +21,6 @@ call and supports fault injection ("fail at chapter N").
 from __future__ import annotations
 
 import asyncio
-import urllib.parse
 
 import pytest
 

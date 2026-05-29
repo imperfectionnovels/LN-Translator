@@ -179,7 +179,7 @@ def test_stats_failure_rate_from_attempts(client: TestClient) -> None:
 def test_routed_novels_lists_translator_and_refinement(client: TestClient) -> None:
     pid = _seed_provider()
     other = _seed_provider("Other", provider_type="claude_cli")
-    n1 = _seed_novel(pid, "N1 translator")
+    _seed_novel(pid, "N1 translator")
     n2 = _seed_novel(other, "N2 other")  # not routed to pid
 
     # Mark n2 as refinement target of pid.

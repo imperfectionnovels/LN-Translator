@@ -126,6 +126,7 @@ def test_catalog_endpoint_returns_payload():
     """Hits the route end-to-end so a future router-prefix change doesn't
     silently break the form's catalog fetch."""
     from fastapi.testclient import TestClient
+
     from backend.main import app
 
     async def _no_probe(_default):

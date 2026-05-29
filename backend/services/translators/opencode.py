@@ -22,12 +22,12 @@ import logging
 
 from backend.services.providers import Provider
 
+from ._subprocess_utils import build_argv, resolve_binary, run_subprocess
 from .base import (
     BACKOFF_SCHEDULE,
     BaseTranslator,
     TransientTranslatorError,
 )
-from ._subprocess_utils import build_argv, resolve_binary, run_subprocess
 
 logger = logging.getLogger(__name__)
 

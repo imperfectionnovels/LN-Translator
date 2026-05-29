@@ -19,11 +19,9 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
 from backend.db import _ADDITIVE_MIGRATIONS, init_db
-
 
 _EXPECTED_COLUMNS: dict[str, dict[str, object]] = {
     "free_draft_text": {"type": "TEXT", "notnull": 0, "default": None},

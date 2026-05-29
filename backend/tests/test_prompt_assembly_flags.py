@@ -26,7 +26,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from backend.db import SCHEMA, _ADDITIVE_MIGRATIONS, init_db
+from backend.db import _ADDITIVE_MIGRATIONS, init_db
 from backend.services import queue as queue_module
 from backend.services.providers import Provider
 

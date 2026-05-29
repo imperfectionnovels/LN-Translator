@@ -64,7 +64,7 @@ import re
 import socket
 import urllib.parse
 from dataclasses import dataclass
-from typing import Awaitable, Callable, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Awaitable, Callable, Union
 
 import aiosqlite
 import httpx

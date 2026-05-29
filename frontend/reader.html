@@ -7,12 +7,12 @@
 <!-- Canonical FOUC bootstrap. See frontend/js/boot.js (also handles
      readerFocusMode + mobile TOC default to avoid a flash). -->
 <script src="/static/js/boot.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="/static/css/base.css?v=1">
 <link rel="stylesheet" href="/static/css/reader.css?v=1">
-<script src="https://cdn.jsdelivr.net/npm/marked@12/lib/marked.umd.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js" defer></script>
+<!-- marked + DOMPurify vendored locally (frontend/js/vendor) so the XSS
+     sanitizer is not a runtime CDN dependency and the bundle stays offline. -->
+<script src="/static/js/vendor/marked.umd.min.js" defer></script>
+<script src="/static/js/vendor/purify.min.js" defer></script>
 </head>
 <body class="reader-body">
 <a class="skip-link" href="#main">Skip to main content</a>

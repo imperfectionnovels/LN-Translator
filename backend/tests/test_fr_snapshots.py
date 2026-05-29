@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.db import SCHEMA, _ADDITIVE_MIGRATIONS
+from backend.db import _ADDITIVE_MIGRATIONS, SCHEMA
 
 DB_PATH = Path(os.environ["DB_PATH"])
 

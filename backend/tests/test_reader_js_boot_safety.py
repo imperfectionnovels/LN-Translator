@@ -33,7 +33,6 @@ occasional broadening.
 import re
 from pathlib import Path
 
-
 READER_JS = Path(__file__).resolve().parents[2] / "frontend" / "js" / "reader.js"
 
 

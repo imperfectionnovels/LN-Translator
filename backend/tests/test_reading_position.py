@@ -28,7 +28,6 @@ from fastapi.testclient import TestClient
 
 from backend.db import _ADDITIVE_MIGRATIONS, init_db, open_conn
 
-
 _EXPECTED_COLUMNS: dict[str, dict[str, object]] = {
     "last_read_chapter_num": {"type": "INTEGER", "notnull": 0, "default": None},
     "last_read_at": {"type": "TEXT", "notnull": 0, "default": None},

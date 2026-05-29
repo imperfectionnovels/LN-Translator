@@ -39,13 +39,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import urllib.parse
-from typing import Any
-
-import aiosqlite
 
 from backend.db import open_conn
 from backend.services import scrape_jobs
-from backend.services.lang_detect import detect_source_language
 from backend.services.parser import (
     ParsedChapter,
     reconcile_chapter_numbers,
@@ -55,11 +51,9 @@ from backend.services.scrapers import dispatch as recipe_dispatch
 from backend.services.scrapers.base import (
     BaseRecipe,
     PlannedChapterRef,
-    RecipePlan,
 )
 from backend.services.uploads import (
     PlannedChapter,
-    _atomic_create_novel,
     _count_pending_skeletons,
     _create_novel_skeleton,
     _fill_skeleton_chapter,
@@ -562,8 +556,8 @@ async def insert_chapters_incrementally(
     boot drain flips it to 'paused'.
     """
     from backend.services.uploads import (
-        _insert_novel_row,
         _INSERT_BATCH_SIZE,
+        _insert_novel_row,
     )
 
     if batch_size <= 0:

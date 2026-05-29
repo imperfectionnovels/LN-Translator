@@ -17,7 +17,6 @@ from backend.models import (
     ReadingPositionUpdate,
 )
 from backend.services import genres_novel as genres_novel_svc
-from backend.services import providers as providers_svc
 from backend.services import queue as queue_svc
 from backend.services.covers import resolve_cover_path
 from backend.services.epub_export import build_epub

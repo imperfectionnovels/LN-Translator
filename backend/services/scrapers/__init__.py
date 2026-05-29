@@ -68,9 +68,11 @@ def dispatch_for_url(url: str) -> BaseRecipe | None:
 # ---- Register every site recipe here. Order doesn't matter (matches() is
 # host-scoped, no overlap by design). One import per recipe.
 
-from backend.services.scrapers import sixnineshu  # noqa: E402, F401
-from backend.services.scrapers import syosetu  # noqa: E402, F401
-from backend.services.scrapers import uukanshu  # noqa: E402, F401
-from backend.services.scrapers import piaotian  # noqa: E402, F401
+from backend.services.scrapers import (  # noqa: E402
+    piaotian,  # noqa: F401
+    sixnineshu,  # noqa: F401
+    syosetu,  # noqa: F401
+    uukanshu,  # noqa: F401
+)
 
 __all__ = ["BaseRecipe", "dispatch", "dispatch_for_url", "register"]

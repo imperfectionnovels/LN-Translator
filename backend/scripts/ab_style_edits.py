@@ -179,7 +179,6 @@ async def run(novel_id: int, chapter_num: int, limit: int, write_report: bool) -
         # Snapshot every field needed outside the connection scope.
         original_text = ch["original_text"]
         title_zh = ch["title_zh"]
-        chapter_id = ch["id"]
         novel_title = novel["title"]
         uses_refiner = novel["refinement_provider_id"] is not None
 

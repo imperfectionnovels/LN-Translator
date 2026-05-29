@@ -42,7 +42,6 @@ import re
 import urllib.parse
 from typing import Any
 
-import aiosqlite
 from bs4 import BeautifulSoup
 
 from backend.services.scrapers.base import (

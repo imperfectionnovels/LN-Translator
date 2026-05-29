@@ -20,7 +20,6 @@ from backend.services.translators.base import (
     build_prompt,
 )
 
-
 # Marker strings the test scans for. Kept here so a future copy edit to the
 # prompt body lights up only one test instead of dozens.
 _REFERENCE_HEADER = "REFERENCE TRANSLATION"
@@ -158,11 +157,10 @@ def test_pemt_cap_disabled_when_non_positive(monkeypatch):
 async def test_basetranslator_threads_free_draft_into_build_prompt(monkeypatch):
     """BaseTranslator.translate_chapter must accept the new kwargs and
     pass free_draft through to build_prompt."""
-    from backend.models import TranslationResult
     from backend.services.translators.base import (
-        BaseTranslator,
         _DELIMITED_BODY_DELIMITER,
         _DELIMITED_TERMS_DELIMITER,
+        BaseTranslator,
     )
 
     captured_prompt: list[str] = []

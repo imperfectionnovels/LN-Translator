@@ -50,7 +50,6 @@ from backend.services.uploads import (
     DecodedDoc,
     _append_parsed_chapters,
     _append_with_offset,
-    _atomic_create_novel,
     _create_novel_and_chapters,
     _decode_docx,
     _decode_epub,
@@ -277,8 +276,8 @@ async def translate_upload(
     # rather than running parse_chapters over the flattened text blob.
     # Source-language detection runs on the first chapter's body.
     if decoded.pre_parsed_chapters:
-        from backend.services.lang_detect import detect_source_language  # noqa: PLC0415
         from backend.services.import_runner import insert_chapters_incrementally  # noqa: PLC0415
+        from backend.services.lang_detect import detect_source_language  # noqa: PLC0415
         chapters = decoded.pre_parsed_chapters
         detected_lang = detect_source_language(chapters[0].original_text)
         # Structured uploads (EPUB / DOCX / HTML) can carry hundreds of
@@ -356,6 +355,7 @@ async def translate_scrape(
     # whether to background. dispatch_for_url is cheap (one urlparse +
     # a few dict lookups).
     from urllib.parse import urlparse  # noqa: PLC0415
+
     from backend.services.scrapers import dispatch  # noqa: PLC0415
     parsed = urlparse(payload.url) if payload.url else None
     is_recipe_url = (
@@ -555,8 +555,8 @@ async def translate_bulk(
     # Bulk path bypasses _create_novel_and_chapters (no big-text parse),
     # so detect source_language here from the first file's chapter text
     # before INSERTing the novel row.
-    from backend.services.lang_detect import detect_source_language  # noqa: PLC0415
     from backend.services.import_runner import insert_chapters_incrementally  # noqa: PLC0415
+    from backend.services.lang_detect import detect_source_language  # noqa: PLC0415
     detected_lang = detect_source_language(parsed[0].original_text)
     # Resumable-import shape: novel row created with import_status=
     # 'in_progress'; chapters INSERTed in commit-per-batch chunks; flipped

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Iterable
 
 from backend.models import GlossaryEntry, TranslationResult
 from backend.services.providers import Provider

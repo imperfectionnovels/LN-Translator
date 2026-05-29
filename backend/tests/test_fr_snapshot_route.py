@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.db import SCHEMA, _ADDITIVE_MIGRATIONS
+from backend.db import _ADDITIVE_MIGRATIONS, SCHEMA
 from backend.main import app
 
 DB_PATH = Path(os.environ["DB_PATH"])

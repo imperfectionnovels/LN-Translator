@@ -15,7 +15,6 @@ import pytest
 
 from backend.models import TranslationResult
 from backend.services.providers import Provider
-from backend.services.translators import google_translate_free
 from backend.services.translators.google_translate_free import (
     GoogleTranslateFreeTranslator,
     _chunk_for_translate,
@@ -292,7 +291,8 @@ def test_factory_dispatch_includes_google_translate_free():
 
 def test_factory_instantiates_google_translate_free():
     from backend.services.translators.factory import (
-        get_translator, invalidate_provider_cache,
+        get_translator,
+        invalidate_provider_cache,
     )
     invalidate_provider_cache()
     provider = _make_provider("google-web", pid=999)

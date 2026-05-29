@@ -499,7 +499,6 @@ async def _refresh_observations_for_chapter(
     re-emitted by an edit either."""
     import json as _json  # noqa: PLC0415
 
-    from backend.services import glossary as glossary_svc  # noqa: PLC0415
     from backend.services import global_glossary as global_glossary_svc  # noqa: PLC0415
     from backend.services.observations import (  # noqa: PLC0415
         normalize_observer_outputs,
