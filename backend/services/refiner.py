@@ -47,13 +47,11 @@ logger = logging.getLogger(__name__)
 # The class-level system instruction is kept for backends that DO use it
 # (DeepSeek) but is no longer load-bearing.
 _REFINER_SYSTEM_INSTRUCTION = (
-    "You are a meticulous literary editor specializing in polished English "
-    "novel prose. You take a draft translation and edit it for surface "
-    "quality: rhythm, verb strength, sentence variety, dialogue clarity, "
-    "paragraphing. You do not re-translate from a source language — the "
-    "draft IS the canonical text; you trust its meaning and only smooth "
-    "the English surface. You never invent new content, never drop "
-    "details, and never mutate glossary terms."
+    "You are a meticulous literary editor of English novel prose. You take a "
+    "draft translation and polish its surface: rhythm, verb strength, sentence "
+    "variety, dialogue and thought clarity, paragraphing. The draft is the "
+    "canonical text, so you trust its meaning and never re-translate, add, "
+    "drop, reorder, or alter content or glossary terms."
 )
 
 
@@ -62,22 +60,13 @@ _REFINER_SYSTEM_INSTRUCTION = (
 # placeholder names every glossary entry so the refiner preserves them.
 # The editor role is folded in at the top because most backends' plain-text
 # completion path doesn't forward system_instruction.
-_REFINER_USER_TEMPLATE = """ROLE: You are a meticulous literary editor specializing in polished English novel prose. You take a draft translation and edit it for surface quality only — you do not re-translate. The draft IS the canonical text; you trust its meaning and only smooth the English surface. Never invent new content, drop details, or mutate glossary terms.
+_REFINER_USER_TEMPLATE = """You are a literary editor polishing one chapter of a translated web novel. Edit the draft below so it reads like a published English novel: strengthen flat or generic verbs, vary sentence rhythm and length, sharpen dialogue and interior-thought clarity, and fix paragraphing. Lift any line that still reads as translated-from-Chinese.
 
-TASK: Edit the following translated web novel passage so it reads like a polished English novel.
+The draft is the canonical text. Trust its meaning and polish only the English surface: never re-translate, and never add, drop, reorder, or reinterpret content. Keep every plot event, character name, and the point of view and tense. Keep first-person present-tense inner thought in italics. Preserve the glossary terms below exactly as written.
 
-Requirements:
-- Preserve the original meaning, plot events, character names, cultivation terms, and implied worldbuilding.
-- Do not add new information or remove important details.
-- Keep the same point of view and tense unless the original clearly needs smoothing.
-- Make the prose natural, immersive, and dramatic, like a proper novel rather than a literal translation.
-- Improve sentence flow, rhythm, dialogue/thought clarity, and paragraphing.
-- Keep internal thoughts in italics.
-- Do not use em dashes.
-- Keep genre terminology consistent.
-- Return only the edited version unless you notice a serious ambiguity.
+Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
 
-GLOSSARY (every entry, locked and auto-detected — preserve EXACTLY as written; never mutate, paraphrase, or re-case any of them):
+GLOSSARY (preserve every entry exactly as written):
 {glossary_block}
 
 DRAFT PASSAGE TO EDIT:
