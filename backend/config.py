@@ -149,12 +149,17 @@ PREVIOUS_CONTEXT_PARAGRAPHS = _int_env("PREVIOUS_CONTEXT_PARAGRAPHS", 4)
 PREVIOUS_CONTEXT_MAX_GAP = _int_env("PREVIOUS_CONTEXT_MAX_GAP", 10)
 
 # Prompt-assembly A/B knobs. Each gates one dynamic block of the runtime
-# user-prompt at the queue worker's fetch site. Default true (parity with
-# current behavior); flip via env (e.g. PROMPT_INCLUDE_FREE_DRAFT=false) for
-# a single-variable A/B run against a ground-truth rewrite. See CLAUDE.md
-# "Prompt-assembly A/B knobs" for the graduation rule (no default flips
-# without a sample-confirmed A/B arm).
-PROMPT_INCLUDE_FREE_DRAFT = _bool_env("PROMPT_INCLUDE_FREE_DRAFT", True)
+# user-prompt at the queue worker's fetch site. Most default true; flip via
+# env (e.g. PROMPT_INCLUDE_STYLE_NOTE=false) for a single-variable A/B run
+# against a ground-truth rewrite. See CLAUDE.md "Prompt-assembly A/B knobs".
+#
+# PROMPT_INCLUDE_FREE_DRAFT defaults FALSE: the mechanical NMT "REFERENCE
+# TRANSLATION" block anchored the model toward literal, machine-shaped
+# phrasing, working against novel-quality prose. It was turned off by user
+# direction as part of the prompt reframe. The free-draft generation lane and
+# the free_draft_text column stay intact, so PROMPT_INCLUDE_FREE_DRAFT=true
+# restores the PEMT reference block.
+PROMPT_INCLUDE_FREE_DRAFT = _bool_env("PROMPT_INCLUDE_FREE_DRAFT", False)
 PROMPT_INCLUDE_STYLE_NOTE = _bool_env("PROMPT_INCLUDE_STYLE_NOTE", True)
 PROMPT_INCLUDE_STYLE_EDITS = _bool_env("PROMPT_INCLUDE_STYLE_EDITS", True)
 # Global refiner kill-switch. When false, the worker skips refinement

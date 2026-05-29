@@ -1,49 +1,11 @@
-GENRE: LitRPG / system novels. Fiction where the rules of the world are explicitly gamified. The narrative surfaces stat sheets, skill trees, level-up notifications, quest logs, dungeon raids, party mechanics, drop rates, cooldowns. The protagonist's progression is quantified in numbers the reader sees. This overlaps isekai (a transmigrator dropped into a system world) and progression fantasy, but the differentiator is the visibility of the mechanics: a LitRPG chapter typically contains at least one literal system message, one numeric reference, or one explicit skill use.
+GENRE: LitRPG / system novels. The world's rules are explicitly gamified: stat sheets, skill trees, level-up notifications, quest logs, dungeon raids, party mechanics, drop rates, cooldowns, all surfaced in numbers the reader sees. This overlaps isekai and progression fantasy; the differentiator is the visible mechanics (a chapter usually carries a literal system message, a numeric reference, or an explicit skill use).
 
-Narrative mode: close third-person or first-person. The POV is usually the system-aware protagonist. System messages and stat windows interrupt the prose; they are part of the experience, not exposition.
+Narrative mode: close third or first person, the system-aware protagonist. System messages and stat windows interrupt the prose as part of the experience, not as exposition.
 
-Target prose: contemporary register laced with game vocabulary. Numbers stay numerals. UI artifacts render as UI artifacts.
+Target prose: contemporary register laced with game vocabulary. The narrator is matter-of-fact about the mechanics ("His HP dropped to 23", not "the mysterious essence of his life force dwindled to 23 units"); players speak naturally about levels, classes, drops, and cooldowns; inner thought is tactical, showing the optimization loop ("if I burn Fireball now it's down for 30 seconds, better save it for the boss").
 
-Voice register:
-- Narrator: matter-of-fact about the mechanics. The system is part of physics; the narrator does not editorialize on its weirdness unless the POV is new to it. "His HP dropped to 23." not "The mysterious essence of his life force dwindled to merely 23 units."
-- External dialogue: world-appropriate. Players / adventurers / system users speak naturally about levels, classes, drops, cooldowns. The vocabulary is part of how they talk.
-- Internal thought: tactical. The POV calculates, checks cooldowns, weighs skill choices, evaluates loot. The reader sees the optimization loop. "If I burn Fireball now, it's down for 30 seconds; better save it for the boss." Render the cost-benefit thinking clearly.
+System messages follow base.md's 【】 formatting and keep the source's line breaks: "**【Quest Accepted: Slay the Goblin King】**" (Title-Case field, bold line), "[+25 EXP]" inline. Render a multi-line stat window as one field per line, or collapse it to a slash-separated line (HP 1850 / 2000 · MP 320 / 500 · STR 88); never a markdown table. Keep ALL-CAPS emphasis (CRITICAL HIT, LEVEL UP, BOSS DEFEATED).
 
-System messages and notifications:
-- System-interface formatting follows base.md (bold 【Field: Value】 lines, ALL-CAPS for emphasis); preserve the source's line breaks. The genre cases below show how that applies to game UI.
-- "**【Quest Accepted: Slay the Goblin King】**": Title-Case the field, preserve the 【】, bold the line.
-- "[+25 EXP]": preserve the [+...] form when used; render small numerical deltas inline.
-- Status blocks (multi-line stat windows): render each field on its own line, or collapse them to a single bullet- or slash-separated line (for example, HP 1850 / 2000 · MP 320 / 500 · STR 88), as the worked examples do. Do not emit a pipe-delimited markdown table: the prose output format is one 【】 line per paragraph (base.md), not tabular layout.
-- ALL-CAPS for emphasis (CRITICAL HIT, LEVEL UP, BOSS DEFEATED): preserve.
+Numerals are strict and never spelled out: stat abbreviations uppercase (HP / MP / EXP / STR); "HP 1850 / 2000" stays exactly (no rounding, no commas the source lacks); "Level 47" or "Lv. 47" per source; "30%" not "thirty percent"; "3 second cooldown" not "three-second cooldown". Class, skill, item, and dungeon names are Title-Cased proper nouns ("Shadow Mage", "Dragon Slayer Sword +5", "Frostfang Caverns"), function words lowercase; rarity tiers (Common / Rare / Epic / Legendary / Mythic) Title-Case.
 
-Numerals, strictly preserved:
-- HP / MP / SP / EXP / STR / DEX / INT: always uppercase abbreviations.
-- "HP 1850 / 2000" stays "HP 1850 / 2000". Do not spell out, do not round, do not "1,850" with commas unless source uses commas.
-- Levels: "Level 47" or "Lv. 47", match source.
-- Percentages: "30%" not "thirty percent." "+10% crit chance" stays as displayed.
-- Time: cooldowns and durations stay numeric. "3 second cooldown" not "three-second cooldown."
-
-Class, skill, item, dungeon names are proper nouns, Title-Cased:
-- "Berserker," "Shadow Mage," "Dragon Slayer Sword +5," "Frostfang Caverns."
-- Function words mid-name stay lowercase: "Lord of the Black Mire."
-- Skill descriptions in italicized infodump blocks preserve the italics.
-- Item rarity tiers (Common / Uncommon / Rare / Epic / Legendary / Mythic) Title-Case.
-
-Party / guild / raid vocabulary:
-- "Party leader," "main tank," "off-tank," "DPS," "healer," "support," "carry."
-- Roles often appear ALL-CAPS in source (DPS, MT, OT, HOT): preserve.
-- "Aggro," "threat," "pull," "kite," "burst," "rotation," "uptime," "downtime": preserve as in-genre vocabulary; do not "translate to plain English."
-
-Progression vocabulary:
-- "Level up," "class change," "skill up," "evolve," "ascend," "transcend," "break through": render per glossary; preserve the in-system rituals.
-- "Grind," "farm," "run," "clear," "wipe," "respawn," "phase": gaming vocabulary used literally; render literal.
-
-Drop rates and probability:
-- "1% drop rate," "guaranteed drop," "RNG-dependent," "Mythic-tier RNG": preserve as displayed; do not soften.
-
-Watch-list:
-- Do NOT prettify the UI text. "**【Level Up! You are now Level 23.】**" stays that way; do not rewrite as "And so, the protagonist felt himself become stronger."
-- Do NOT spell out the numbers in the system text. EVER.
-- Do NOT explain the mechanics in-narration. If the source assumes the reader knows what "aggro" means, the target does too.
-- Do NOT collapse the gaming vocabulary into generic prose. "He used Fireball" is not "He summoned a ball of flame and hurled it." Skill names are proper nouns; their effects are mechanical, not magical.
-- HUD elements stay as HUD elements: a "Status Window" is a UI element, not a literal window in the world (unless the source treats it that way, in which case it's a literal window AND a UI element; match the source's framing).
+Gaming vocabulary renders literally, not flattened to plain prose: party and raid roles (main tank, off-tank, DPS, healer, carry; ALL-CAPS roles like DPS / MT / HOT preserved); progression rituals (level up, class change, evolve, ascend, break through); action verbs (grind, farm, clear, wipe, respawn); probability ("1% drop rate", "guaranteed drop"). "He used Fireball" is not "he summoned a ball of flame and hurled it": a skill name is a proper noun and its effect is mechanical, not magical. A "Status Window" is a UI element unless the source treats it as a literal in-world object.

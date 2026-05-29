@@ -64,7 +64,13 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # text itself is part of the cached prompt body via build_prompt's output,
 # so the cache key tracks it automatically; the version bump force-misses
 # any pre-PEMT cached translation so a re-run picks up the new prompt shape.
-PROMPT_TEMPLATE_VERSION = "phase3-pemt"
+#
+# 2026-05-29 bump: ground-up reframe of base.md and every genre overlay, from
+# a defensive rule manual into a positive novelist's brief, plus the free-draft
+# REFERENCE TRANSLATION block defaulted off (config.PROMPT_INCLUDE_FREE_DRAFT).
+# The composed system instruction is already part of the llm_cache key, so this
+# token is provenance plus a belt-and-suspenders force-miss of stale caches.
+PROMPT_TEMPLATE_VERSION = "phase4-novel-voice"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

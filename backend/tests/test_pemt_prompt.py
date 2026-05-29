@@ -105,12 +105,12 @@ def test_pemt_section_does_not_disturb_glossary_block():
     assert "测试 → Test" in out_without
 
 
-def test_prompt_template_version_bumped_for_pemt():
-    """The version constant moved past phase2-genres for the PEMT release.
-    Existing caches keyed on the old version stop matching, so a re-run
-    picks up the new prompt shape."""
-    assert PROMPT_TEMPLATE_VERSION != "phase2-genres"
-    assert "pemt" in PROMPT_TEMPLATE_VERSION
+def test_prompt_template_version_bumped_for_reframe():
+    """The version constant moved past the PEMT release for the novel-voice
+    prompt reframe. Existing caches keyed on the old version stop matching, so
+    a re-run picks up the rewritten prompt."""
+    assert PROMPT_TEMPLATE_VERSION not in ("phase2-genres", "phase3-pemt")
+    assert "novel-voice" in PROMPT_TEMPLATE_VERSION
 
 
 def test_pemt_reference_truncated_when_over_cap(monkeypatch):
