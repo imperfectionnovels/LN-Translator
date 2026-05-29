@@ -122,7 +122,7 @@ EXE-style local app (also useful in dev to exercise the first-run wizard):
 
 A chapter moves through one state machine: `status: pending → translating → done | error`. The user explicitly clicks Translate (or Retranslate); nothing auto-translates on import. The queue flag `translate_queued` is durable, so the user's picks survive a server restart (`queue.drain_on_startup` re-spawns workers for any row still flagged).
 
-**Free-tier free-draft lane**: `chapters.free_draft_status` tracks an independent `none → pending → in_progress → done | error` state machine for the mechanical NMT draft (`services/free_draft_queue.py`, owns its own `FREE_DRAFT_LOCK`). Triggered on-demand — opening a chapter via `GET /api/chapters/{n}` queues a Google-Translate draft (via `deep-translator`, no API key needed; requires internet). The draft text lands in `chapters.free_draft_text` and is read by the LLM translator as a `REFERENCE TRANSLATION` block in the prompt (PEMT — see `backend/services/translators/base.py::build_prompt`). The LLM lane and the free-draft lane have independent locks so they run in parallel for different chapters; the LLM call reads `free_draft_text` from the row at translate time, no inter-task coordination required.
+**Free-tier free-draft lane**: `chapters.free_draft_status` tracks an independent `none → pending → in_progress → done | error` state machine for the mechanical NMT draft (`services/free_draft_queue.py`, owns its own `FREE_DRAFT_LOCK`). Triggered on-demand — opening a chapter via `GET /api/chapters/{n}` queues a Google-Translate draft (via `deep-translator`, no API key needed; requires internet). The draft text lands in `chapters.free_draft_text` and, when `PROMPT_INCLUDE_FREE_DRAFT` is enabled, is read by the LLM translator as a `REFERENCE TRANSLATION` block in the prompt (PEMT — see `backend/services/translators/base.py::build_prompt`). That flag now defaults `false` (the mechanical reference pulled the prose toward literal phrasing), so the generation lane still runs on chapter open but the block is not injected by default. The LLM lane and the free-draft lane have independent locks so they run in parallel for different chapters; the LLM call reads `free_draft_text` from the row at translate time, no inter-task coordination required.
 
 One process-global `asyncio.Lock` makes the translator strictly serial — every backend's `max_parallel` is effectively 1 because parallel Claude calls burn the subscription window and parallel Gemini calls burn tokens. The lock is non-negotiable; don't replace it with a Semaphore(N).
 
@@ -141,8 +141,8 @@ The worker (`_translate_chapter_in_db` in `services/queue.py`):
 
 The runtime user prompt stacks several dynamic blocks on top of the static `base.md` + genre overlay + examples. Each block is gated at the queue's fetch site so a single env flag can suppress it for one A/B arm without DB mutation. Two kinds of control:
 
-- **Experiment instruments** (global env flags, default `true`/parity, flip via env for A/B):
-  - `PROMPT_INCLUDE_FREE_DRAFT` — REFERENCE TRANSLATION (Google-Translate mechanical NMT draft, PEMT layer).
+- **Experiment instruments** (global env flags, flip via env for A/B; the style + refiner flags default `true`/parity, `PROMPT_INCLUDE_FREE_DRAFT` now defaults `false`):
+  - `PROMPT_INCLUDE_FREE_DRAFT` — REFERENCE TRANSLATION (Google-Translate mechanical NMT draft, PEMT layer). Defaults `false` (flipped 2026-05-29: the mechanical reference anchored prose toward literal phrasing); set `true` to restore the block.
   - `PROMPT_INCLUDE_STYLE_NOTE` — STYLE NOTE block (per-novel voice anchor).
   - `PROMPT_INCLUDE_STYLE_EDITS` — USER STYLE PREFERENCES block (captured paragraph edits).
   - `PROMPT_INCLUDE_REFINER` — global refiner kill-switch (overrides per-novel `refinement_provider_id` when false).
@@ -157,7 +157,7 @@ The runtime user prompt stacks several dynamic blocks on top of the static `base
 3. The off-arm output measurably closes the gap to the rewrite — "looks better" without a side-by-side diff does not count.
 4. The commit that flips the default cites the chapter pair (config-A output, config-B output, your rewrite) in its body.
 
-No "feels right on priors" default flips. Recommended A/B sequence: `PROMPT_INCLUDE_FREE_DRAFT=false` first (strongest prior, lowest continuity cost), then `PROMPT_INCLUDE_REFINER=false` if the test novel was using a refiner, then style flags as completeness arms. Run one flag at a time; bundling makes results uninterpretable.
+No "feels right on priors" default flips. (Exception on record: the `PROMPT_INCLUDE_FREE_DRAFT=false` default was an explicit user-directed conviction flip on 2026-05-29, not a graduated A/B result.) Recommended A/B sequence for the remaining flags: `PROMPT_INCLUDE_REFINER=false` if the test novel was using a refiner, then the style flags as completeness arms. Run one flag at a time; bundling makes results uninterpretable.
 
 **Provenance.** Every successful translate commit stamps `chapters.prompt_config_snapshot` (JSON) with the full pipeline config: template version, translator/refiner provider+model, genre, which blocks actually shipped (block included only when both the flag was true AND the data was non-empty — `*_included` keys), and which flags were set (`flags.*`). Refinement-success extends the same blob with `refiner_*` keys. Query A/B runs with `json_extract(prompt_config_snapshot, '$.flags.PROMPT_INCLUDE_FREE_DRAFT')`. Writer: `services/queue.py::_build_prompt_config_snapshot` + `_extend_snapshot_with_refiner`.
 

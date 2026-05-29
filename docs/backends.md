@@ -130,7 +130,7 @@ Grouped by the catalog's `group` field:
   - `opencode` — multi-provider router by OpenCode. Routes to Anthropic /
     OpenAI / Google / GitHub Copilot under whichever provider the user has
     logged into. Model IDs use OpenCode's `<provider>/<model>` namespacing
-    (e.g. `anthropic/claude-opus-4-7`).
+    (e.g. `anthropic/claude-opus-4-8`).
 - **API key** (paste a key; secret resolved via `keyring` → env-var fallback):
   - `anthropic_api` — Anthropic Claude via direct API key (alternative to the
     SDK / CLI subscription path).
