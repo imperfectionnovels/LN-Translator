@@ -36,10 +36,11 @@ from claude_agent_sdk import (
 from backend.config import (
     CLAUDE_AGENT_TRANSLATOR_EFFORT,
     CLAUDE_AGENT_TRANSLATOR_MODEL,
+    CLAUDE_CLI_PATH,
     USER_DATA_ROOT,
 )
 from backend.services.providers import Provider
-from backend.services.translators.claude_cli import _resolve_cli_path
+from backend.services.translators._subprocess_utils import resolve_binary
 
 from ._claude_errors import classify as _classify_error_string
 from .base import (
@@ -307,7 +308,7 @@ class ClaudeAgentTranslator(BaseTranslator):
                 logger.debug("claude-agent stderr: %s", line)
 
         options = ClaudeAgentOptions(
-            cli_path=_resolve_cli_path(),
+            cli_path=resolve_binary(CLAUDE_CLI_PATH),
             model=self.model_id if self.model_id and self.model_id != "default" else None,
             # Thinking-effort level. "high" (default) enables Opus 4.8 extended
             # thinking — the model deliberates before emitting prose, which is
@@ -460,7 +461,7 @@ async def probe_sdk() -> None:
     # at boot rather than on the first chapter call.
     try:
         _ = ClaudeAgentOptions(
-            cli_path=_resolve_cli_path(),
+            cli_path=resolve_binary(CLAUDE_CLI_PATH),
             max_turns=1,
             effort=CLAUDE_AGENT_TRANSLATOR_EFFORT or None,
         )
@@ -470,4 +471,4 @@ async def probe_sdk() -> None:
             "`claude-agent-sdk` package may be incompatible with your Python "
             "version — try `pip install --upgrade claude-agent-sdk`."
         ) from e
-    logger.info("Claude Agent SDK initialized (cli_path=%s)", _resolve_cli_path())
+    logger.info("Claude Agent SDK initialized (cli_path=%s)", resolve_binary(CLAUDE_CLI_PATH))

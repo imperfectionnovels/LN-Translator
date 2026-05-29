@@ -31,14 +31,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import shutil
 import subprocess
 
 from backend.config import CLAUDE_CLI_PATH, CLAUDE_CLI_TRANSLATOR_MODEL
 from backend.services.providers import Provider
 
 from ._claude_errors import classify as _classify_cli_error
+from ._subprocess_utils import build_argv, kill_process_tree, resolve_binary
 from .base import (
     BACKOFF_SCHEDULE,
     BaseTranslator,
@@ -61,51 +60,6 @@ _PROBE_TIMEOUT_SECONDS = 20.0
 class ClaudeCliError(Exception):
     """Subprocess returned an error envelope or non-zero exit code with no
     retryable signal. Surfaced to the caller as a hard failure."""
-
-
-def _resolve_cli_path() -> str:
-    """Resolve the CLI binary path. On Windows the `claude` shim installed by
-    npm is `claude.CMD`; Python's CreateProcess does not apply PATHEXT, so we
-    have to look it up via shutil.which (which does). Falls back to the raw
-    configured value so probe_cli can produce a clear "not found" error.
-
-    Not cached — shutil.which is cheap (microseconds) and not caching means a
-    fresh install of the CLI is picked up without restarting the server."""
-    resolved = shutil.which(CLAUDE_CLI_PATH)
-    return resolved or CLAUDE_CLI_PATH
-
-
-def _build_cli_argv(args: list[str]) -> list[str]:
-    """Wrap a CLI invocation through `cmd /c` when the resolved binary is a
-    Windows batch file (`.cmd` / `.bat`). Python 3.13 tightened subprocess so
-    `.cmd` / `.bat` files can no longer be executed directly without
-    `shell=True`; the npm `claude` shim is `claude.CMD`, so the direct call
-    raises OSError on 3.13+. Wrapping with `cmd /c` works on every Python
-    version and avoids the shell-injection risk of `shell=True`."""
-    if not args:
-        return args
-    if os.name != "nt":
-        return args
-    head = args[0]
-    if head.lower().endswith((".cmd", ".bat")):
-        return ["cmd", "/c", *args]
-    return args
-
-
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    """Kill the process AND all its descendants. On Windows the CLI runs as
-    cmd.exe → claude.CMD → node.exe; `proc.kill()` ends only the cmd.exe shim,
-    orphaning the grandchild `node` — which keeps eating subscription quota.
-    `taskkill /T` walks the whole tree. POSIX has no such shim, so `kill()`
-    on the direct child is enough there."""
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True,
-            check=False,
-        )
-    else:
-        proc.kill()
 
 
 class ClaudeCliTranslator(BaseTranslator):
@@ -167,14 +121,14 @@ class ClaudeCliTranslator(BaseTranslator):
 
     async def _run_subprocess(self, prompt: str) -> str:
         args = [
-            _resolve_cli_path(),
+            resolve_binary(CLAUDE_CLI_PATH),
             "-p",
             "--output-format", "json",
             "--max-turns", "1",
         ]
         if self.model_id and self.model_id != "default":
             args.extend(["--model", self.model_id])
-        args = _build_cli_argv(args)
+        args = build_argv(args)
 
         # Popen returns immediately. We then wait for I/O in a worker thread
         # via asyncio.to_thread so the event loop stays unblocked. If the
@@ -200,7 +154,7 @@ class ClaudeCliTranslator(BaseTranslator):
             # NOT drain pipes — it leaves stdout/stderr handles referenced and
             # can deadlock if the child has already filled its stdout buffer
             # before being killed.
-            _kill_process_tree(proc)
+            kill_process_tree(proc)
             try:
                 proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
@@ -293,9 +247,9 @@ async def probe_cli() -> None:
     API call (subscription quota), and `--reload` dev cycles would burn it
     on every save. Auth failures surface with a clear message on the first
     translate request instead."""
-    path = _resolve_cli_path()
+    path = resolve_binary(CLAUDE_CLI_PATH)
 
-    argv = _build_cli_argv([path, "--version"])
+    argv = build_argv([path, "--version"])
 
     def _run() -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(

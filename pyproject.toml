@@ -1,5 +1,5 @@
 [project]
-name = "chinese-novel-translator"
+name = "ln-translator"
 version = "0.1.0b1"
 description = "Translate light novels to English via user-configured AI providers (Anthropic, Google, DeepSeek, OpenAI-compatible); ships as a desktop EXE or local web server."
 requires-python = ">=3.11"

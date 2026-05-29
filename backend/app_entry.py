@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 # allocate a fresh cmd window for it — a black box flashes up every time
 # we shell out. Three known callers:
 #   - claude_cli.Popen (the claude CLI subprocess)
-#   - claude_cli._kill_process_tree's taskkill
+#   - _subprocess_utils.kill_process_tree's taskkill (via claude_cli)
 #   - claude_cli.probe_cli's `claude --version`
 # Plus claude_agent_sdk internally uses anyio.open_process →
 # asyncio.create_subprocess_exec, which has no creationflags hook in its

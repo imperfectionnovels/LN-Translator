@@ -46,7 +46,7 @@ SDK backend at default settings. Kept as a fallback when the SDK has issues.
 
 | Var | Default | Notes |
 |---|---|---|
-| `CLAUDE_CLI_PATH` | `claude` | Path to the binary on PATH. On Windows the npm shim is `claude.CMD` — `_resolve_cli_path` uses `shutil.which` so PATHEXT is applied. |
+| `CLAUDE_CLI_PATH` | `claude` | Path to the binary on PATH. On Windows the npm shim is `claude.CMD` — `_subprocess_utils.resolve_binary` uses `shutil.which` so PATHEXT is applied. |
 | `CLAUDE_CLI_TRANSLATOR_MODEL` | `claude-opus-4-5` | Default is 4.5 because the CLI has no `--effort` plumbing. Switch to `claude_agent` for 4.8 + thinking. |
 
 Implementation: subprocess via `subprocess.Popen` + `asyncio.to_thread(proc.communicate)`.
@@ -56,7 +56,7 @@ works everywhere and lets `proc.kill()` clean up on cancellation so an orphan
 `claude` process doesn't keep eating subscription quota.
 
 `.cmd` / `.bat` files can no longer be executed directly on Python 3.13+;
-`_build_cli_argv` wraps them through `cmd /c`.
+`_subprocess_utils.build_argv` wraps them through `cmd /c`.
 
 Rate-limit substrings (`usage limit`, `5-hour limit`, `try again later`) raise
 `TransientTranslatorError`; auth strings (`/login`, `not authenticated`) raise

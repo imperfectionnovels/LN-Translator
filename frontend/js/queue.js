@@ -19,11 +19,7 @@
   const toastEl = document.getElementById("qs-toast");
   const refreshBtn = document.getElementById("queue-refresh-btn");
   const cancelAllBtn = document.getElementById("queue-cancel-all");
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
-    })[c]);
-  }
+  // escapeHtml lives in utils.js (loaded before this script); use the shared one.
   function relTime(ts) {
     if (!ts) return "";
     const iso = ts.includes("T") ? ts : ts.replace(" ", "T") + "Z";

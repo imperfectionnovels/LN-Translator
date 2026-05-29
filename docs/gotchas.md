@@ -81,8 +81,9 @@ middleware unless splitting the frontend out.
   Python's `CreateProcess` doesn't apply PATHEXT.
 - Wrap `.cmd` / `.bat` invocations through `cmd /c` — Python 3.13 tightened
   subprocess and direct `.cmd` execution now raises `OSError`.
-- Both helpers live in `translators/claude_cli.py` (`_resolve_cli_path`,
-  `_build_cli_argv`).
+- Both helpers live in `translators/_subprocess_utils.py` (`resolve_binary`,
+  `build_argv`), shared across the CLI-backed translators (claude_cli,
+  claude_agent, codex_cli, gemini_cli, opencode).
 
 ## Claude CLI subprocess model
 

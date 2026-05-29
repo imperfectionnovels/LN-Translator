@@ -487,7 +487,7 @@ async def lifespan(app: FastAPI):
         await queue_svc.shutdown()
 
 
-app = FastAPI(title="Chinese Novel Translator", lifespan=lifespan)
+app = FastAPI(title="LN-Translator", lifespan=lifespan)
 
 # Host-header allowlist (DNS-rebinding / CSRF hardening). The server is
 # loopback-only, but a browser page that re-points its own hostname to

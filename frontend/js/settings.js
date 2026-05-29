@@ -231,11 +231,7 @@ function onModelSelectChange() {
 // ============================================================
 // Utilities
 // ============================================================
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
-  })[c]);
-}
+// escapeHtml lives in utils.js (loaded before this script); use the shared one.
 function fmtBytes(b) {
   if (!b || b < 0) return "0 B";
   const u = ["B", "KB", "MB", "GB", "TB"];
