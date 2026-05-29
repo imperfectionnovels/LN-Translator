@@ -110,17 +110,66 @@ def is_atomic_case_locked_term(g: GlossaryEntry) -> bool:
     return False
 
 
+# Categories that are unambiguously proper-noun-shaped in xianxia prose (the
+# same set is_atomic_case_locked_term trusts). A term in one of these must
+# never be stored all-lowercase — a named technique like 知見障 stored as
+# "cognitive barrier" then gets that lowercase pinned into prose by
+# enforce_locked_term_casing. `other` / `idiom` are deliberately excluded:
+# `other` mixes Title-Case named concepts (Fruition Attainment) with generic
+# vocabulary that policy keeps lowercase (spiritual power, sea of consciousness,
+# treasure), so it is left to the translator's emitted casing.
+_NAMED_CATEGORIES = ("character", "place", "technique", "item")
+
+
+def _proper_title_case(en: str) -> str:
+    """Title-case a named term: capitalize each word (and each hyphen part),
+    leaving interior function words lowercase. Used to repair an all-lowercase
+    auto-extracted proper noun, not to re-case a term that already carries
+    deliberate casing."""
+
+    def cap(part: str) -> str:
+        return part[:1].upper() + part[1:] if part else part
+
+    def cap_word(word: str) -> str:
+        return "-".join(cap(p) for p in word.split("-"))
+
+    words = en.split()
+    out: list[str] = []
+    for i, w in enumerate(words):
+        if i > 0 and w.lower() in _TITLE_FUNCTION_WORDS:
+            out.append(w.lower())
+        else:
+            out.append(cap_word(w))
+    return " ".join(out)
+
+
 def _normalize_extracted_casing(en: str, category: str) -> str:
-    """Lowercase a freshly auto-extracted English term to its mid-sentence form.
+    """Normalize a freshly auto-extracted English term to its canonical casing.
 
     Policy: techniques, items, formations, treasures, cultivation ranks,
     titles, Heavenly Stems / Earthly Branches and other named cultivation
     concepts read as proper-noun-like in xianxia prose ("Foundation
     Establishment", "Blood Transformation Divine Light"), so we keep whatever
-    casing the translator emitted. The only forced-lowercase case is the
-    `_GENERIC_RANK_RE` safety net — a term that is *entirely* a generic
-    rank/grade/tier descriptor ("Second-Rank", "late stage"), which the
-    translator sometimes title-cases at extraction time and which then reads
-    wrong pasted mid-sentence. Idioms (`idiom` category) are extracted in
-    lowercase per the translator prompt; nothing here re-cases them."""
-    return en.lower() if _GENERIC_RANK_RE.match(en) else en
+    casing the translator emitted. Two corrections:
+
+    1. The `_GENERIC_RANK_RE` safety net forces lowercase on a term that is
+       *entirely* a generic rank/grade/tier descriptor ("Second-Rank", "late
+       stage"), which reads wrong pasted mid-sentence.
+    2. A named-category term (character/place/technique/item) that arrives
+       *all-lowercase* is proper-cased. These categories are proper nouns by
+       construction, and a lowercase one would be pinned into prose by
+       enforce_locked_term_casing once locked. This only fixes case, never the
+       translation; a term that already has any uppercase is left untouched.
+
+    Idioms (`idiom` category) are extracted in lowercase per the translator
+    prompt; `other` is left to the emitted casing — nothing here re-cases them."""
+    if _GENERIC_RANK_RE.match(en):
+        return en.lower()
+    if (
+        category in _NAMED_CATEGORIES
+        and en
+        and not any(c.isupper() for c in en)
+        and any(c.isalpha() for c in en)
+    ):
+        return _proper_title_case(en)
+    return en

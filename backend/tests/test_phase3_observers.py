@@ -298,3 +298,40 @@ class TestGenericRankPrefixes:
         # Anchored regex won't match a multi-word string.
         result = _normalize_extracted_casing("Top-Grade Spirit Stone", "item")
         assert result == "Top-Grade Spirit Stone"
+
+
+class TestNamedCategoryCasingRepair:
+    """A named-category term that arrives all-lowercase is proper-cased on
+    extraction, so a lowercase named technique can't be stored and then pinned
+    into prose by enforce_locked_term_casing (the 知見障 -> 'cognitive barrier'
+    failure)."""
+
+    @pytest.mark.parametrize("category", ["technique", "place", "character", "item"])
+    def test_all_lowercase_named_term_titlecased(self, category):
+        assert _normalize_extracted_casing("cognitive barrier", category) == (
+            "Cognitive Barrier"
+        )
+
+    def test_hyphen_parts_capitalized(self):
+        assert _normalize_extracted_casing("treasure-light mirror", "item") == (
+            "Treasure-Light Mirror"
+        )
+
+    def test_interior_function_words_stay_lowercase(self):
+        assert _normalize_extracted_casing("hall of yama", "place") == "Hall of Yama"
+
+    def test_existing_casing_left_untouched(self):
+        # Any uppercase already present => deliberate; don't re-case.
+        assert _normalize_extracted_casing("Marionette", "technique") == "Marionette"
+        assert _normalize_extracted_casing("iPhone Sect", "place") == "iPhone Sect"
+
+    def test_other_category_lowercase_preserved(self):
+        # `other` mixes named concepts and generics; leave it to the model.
+        assert _normalize_extracted_casing("spiritual power", "other") == (
+            "spiritual power"
+        )
+
+    def test_idiom_lowercase_preserved(self):
+        assert _normalize_extracted_casing("courting death", "idiom") == (
+            "courting death"
+        )

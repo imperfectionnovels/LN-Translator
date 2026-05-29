@@ -40,6 +40,13 @@ from backend.genres import resolve_genre
 from backend.models import GlossaryEntry, NewTerm, TokenUsage, TranslationResult
 from backend.services import llm_cache
 from backend.services.glossary import dedupe_against_locked, filter_glossary_for_chapter
+from backend.services.glossary_filters import canonical_zh
+
+# Above this many entries, skip the O(n^2) sub-term containment scan in
+# format_glossary. The per-chapter master / chapter blocks are filtered to the
+# chapter and stay small; only the refiner's full-glossary call gets large, and
+# there the containment hint matters least.
+_CONTAINMENT_SCAN_MAX = 300
 
 logger = logging.getLogger(__name__)
 
@@ -200,12 +207,53 @@ def _scope_marker(g: GlossaryEntry) -> str:
     return "[novel-locked]" if getattr(g, "locked", False) else "[novel-auto]"
 
 
+def _containment_notes(
+    glossary: list[GlossaryEntry],
+) -> dict[int, GlossaryEntry]:
+    """Map id(entry) -> the longest OTHER entry whose canonical `term_zh`
+    strictly contains this entry's canonical `term_zh`.
+
+    Category grouping scatters a compound (法力道主, character) and its
+    sub-token (法力, other) into different blocks, so within-category
+    longest-first ordering can't put the compound ahead of the sub-token. This
+    makes the containment explicit instead, reinforcing base.md's "match the
+    longest term first" rule: the sub-token line carries a pointer to the
+    compound so the model does not decompose the compound into its parts.
+
+    O(n^2); skipped above `_CONTAINMENT_SCAN_MAX` entries."""
+    if len(glossary) > _CONTAINMENT_SCAN_MAX:
+        return {}
+    canon: dict[int, str] = {}
+    for g in glossary:
+        cz = canonical_zh(g.term_zh or "")
+        if cz:
+            canon[id(g)] = cz
+    notes: dict[int, GlossaryEntry] = {}
+    for g in glossary:
+        cz = canon.get(id(g))
+        if not cz or len(cz) < 2:
+            continue
+        best: GlossaryEntry | None = None
+        for h in glossary:
+            if h is g:
+                continue
+            hz = canon.get(id(h))
+            if not hz or len(hz) <= len(cz) or cz not in hz:
+                continue
+            if best is None or len(hz) > len(canon[id(best)]):
+                best = h
+        if best is not None:
+            notes[id(g)] = best
+    return notes
+
+
 def format_glossary(
     glossary: list[GlossaryEntry],
     empty_label: str = "(empty — extract terms as needed)",
 ) -> str:
     if not glossary:
         return empty_label
+    notes = _containment_notes(glossary)
     by_cat: dict[str, list[GlossaryEntry]] = {}
     for g in glossary:
         by_cat.setdefault(g.category, []).append(g)
@@ -224,6 +272,12 @@ def format_glossary(
             usage = getattr(g, "usage_note", None)
             if usage and usage.strip():
                 base += f"  [usage: {usage.strip()}]"
+            container = notes.get(id(g))
+            if container is not None:
+                base += (
+                    f"  [part of {container.term_zh} → {container.term_en};"
+                    " match the longer term first, do not substitute this sub-term]"
+                )
             lines.append(base)
     return "\n".join(lines)
 

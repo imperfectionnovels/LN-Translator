@@ -78,6 +78,34 @@ def test_format_glossary_labels_scope_for_each_kind():
     assert "Foundation Establishment  [global]" in out
 
 
+def test_format_glossary_annotates_subterm_of_compound():
+    # 法力 is a sub-token of 法力道主; the compound and the sub-token land in
+    # different categories, so within-category ordering can't put the compound
+    # first. The sub-token line must carry a containment pointer so the model
+    # does not decompose the compound. (Reinforces base.md's longest-match rule.)
+    glossary = [
+        GlossaryEntry(
+            id=1, novel_id=1, term_zh="法力道主", term_en="Spiritual Power Dao Lord",
+            category="character", notes=None, auto_detected=False,
+            locked=True, scope="novel",
+        ),
+        GlossaryEntry(
+            id=2, novel_id=1, term_zh="法力", term_en="spiritual power",
+            category="other", notes=None, auto_detected=False,
+            locked=True, scope="novel",
+        ),
+    ]
+    out = format_glossary(glossary)
+    # The sub-token (法力) is flagged as part of the compound.
+    sub_line = next(line for line in out.splitlines() if line.strip().startswith("法力 "))
+    assert "part of 法力道主" in sub_line
+    # The compound itself is not annotated as a sub-term of anything.
+    compound_line = next(
+        line for line in out.splitlines() if line.strip().startswith("法力道主 ")
+    )
+    assert "part of" not in compound_line
+
+
 # ---- Precedence in the composed list ------------------------------------
 
 
