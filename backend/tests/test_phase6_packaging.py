@@ -440,20 +440,31 @@ async def test_app_entry_wiring_reaches_health_and_shuts_down(monkeypatch):
     thread.start()
     try:
         body = None
-        deadline = time.monotonic() + 5.0
+        # Generous deadline + a catch on timeouts: on a slow CI runner the
+        # background uvicorn thread can take several seconds to begin accepting
+        # connections, and an individual connect can exceed the per-request
+        # timeout (raising httpx.ConnectTimeout, a TimeoutException — NOT a
+        # ConnectError). Both must be tolerated and retried, or the test is
+        # flaky on anything slower than a fast dev box.
+        deadline = time.monotonic() + 30.0
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
             while time.monotonic() < deadline:
                 try:
-                    r = await client.get("/api/health", timeout=0.5)
+                    r = await client.get("/api/health", timeout=2.0)
                     if r.status_code == 200:
                         body = r.json()
                         break
-                except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError):
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadError,
+                    httpx.RemoteProtocolError,
+                    httpx.TimeoutException,
+                ):
                     pass
                 await asyncio.sleep(0.1)
 
         assert body is not None, (
-            f"server did not reach /api/health on port {port} within 5s"
+            f"server did not reach /api/health on port {port} within 30s"
         )
         assert body["ok"] is True
     finally:
