@@ -14,6 +14,7 @@ from backend.models import (
     NovelGenresResponse,
     NovelUpdate,
     NovelWithProgress,
+    ReadingPositionUpdate,
 )
 from backend.services import genres_novel as genres_novel_svc
 from backend.services import providers as providers_svc
@@ -56,7 +57,10 @@ _NOVEL_BASE_COLS = (
     # 2026-05-25 F11: archive timestamp (NULL = active novel).
     "n.deleted_at, "
     # 2026-05-26 resumable imports: drive the library card badge.
-    "n.import_status"
+    "n.import_status, "
+    # 2026-05-28 durable reading position: reader resume + library
+    # "Continue reading" sort, server-side instead of localStorage.
+    "n.last_read_chapter_num, n.last_read_at"
 )
 
 # Cost aggregate — recorded per-chapter spend summed across the novel.
@@ -100,6 +104,11 @@ def _row_to_novel_kwargs(r: aiosqlite.Row) -> dict:
         "deleted_at": r["deleted_at"] if "deleted_at" in keys else None,
         # 2026-05-26 resumable imports.
         "import_status": r["import_status"] if "import_status" in keys else None,
+        # 2026-05-28 durable reading position.
+        "last_read_chapter_num": (
+            r["last_read_chapter_num"] if "last_read_chapter_num" in keys else None
+        ),
+        "last_read_at": r["last_read_at"] if "last_read_at" in keys else None,
     }
 
 
@@ -294,6 +303,33 @@ async def update_novel(
     )
     r = await cur.fetchone()
     return Novel(**_row_to_novel_kwargs(r))
+
+
+@router.put("/{novel_id}/reading-position")
+async def set_reading_position(
+    novel_id: int,
+    body: ReadingPositionUpdate,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Record the chapter the reader is on so reopening the app resumes there.
+
+    Thin, idempotent, single-UPDATE. The reader fires this (debounced) on every
+    chapter open; keeping it off the general PATCH path avoids running the
+    high-frequency position write through title/genre/provider validation.
+    `last_read_at` is stamped server-side to drive the library "Continue
+    reading" sort. We do not verify the chapter exists (see
+    ReadingPositionUpdate). Returns a small JSON body rather than 204 so the
+    frontend's apiFetch (which always calls res.json()) can consume it.
+    """
+    cur = await conn.execute(
+        "UPDATE novels SET last_read_chapter_num = ?, "
+        "last_read_at = datetime('now') WHERE id = ?",
+        (body.chapter_num, novel_id),
+    )
+    await conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="novel not found")
+    return {"novel_id": novel_id, "last_read_chapter_num": body.chapter_num}
 
 
 @router.get("/{novel_id}/cost-estimate")

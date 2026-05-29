@@ -2859,14 +2859,29 @@ function paintEndCard(ch) {
   nextGo.disabled = false;
 }
 
+let _lastPersistedCh = null;
+let _posSaveTimer = null;
 function persistLastRead(ch) {
   if (ch.status !== "done") return;
   const displayed = _displayedEnglish(ch);
   const paras = String(displayed).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const lastLine = paras.length ? paras[paras.length - 1].slice(0, 240) : null;
+  // localStorage stays the instant local cache (and the only place `lastLine`
+  // lives, for the library hero strip snippet).
   localStorage.setItem(`lastRead:${novelId}`, JSON.stringify({
     ch: ch.chapter_num, ts: Date.now(), lastLine,
   }));
+  // Durable copy in the DB so reopening the app resumes here even when
+  // WebView2 discards localStorage. Deduped (the done-status render path can
+  // fire repeatedly for the same chapter) and debounced (rapid prev/next
+  // shouldn't spam the endpoint). Best-effort: a failed write never disrupts
+  // reading — the localStorage breadcrumb remains the fallback.
+  if (ch.chapter_num === _lastPersistedCh) return;
+  _lastPersistedCh = ch.chapter_num;
+  if (_posSaveTimer) clearTimeout(_posSaveTimer);
+  _posSaveTimer = setTimeout(() => {
+    api.setReadingPosition(novelId, ch.chapter_num).catch(() => {});
+  }, 800);
 }
 
 /* ---- Nav / actions ----
@@ -3424,18 +3439,21 @@ window.addEventListener("resize", requestScrollPct);
       return;
     }
     // Resume position: when the URL didn't pin a chapter, land on the last
-    // chapter the reader finished rendering (the persistLastRead breadcrumb)
-    // instead of always defaulting to chapter 1.
+    // chapter the reader finished rendering instead of always defaulting to
+    // chapter 1. Prefer the durable DB position (survives a WebView2 storage
+    // wipe); fall back to the localStorage breadcrumb for users whose DB
+    // column hasn't been backfilled yet (it backfills on the next open).
     if (!hadExplicitCh) {
-      try {
-        const raw = localStorage.getItem(`lastRead:${novelId}`);
-        if (raw) {
-          const savedCh = Number(JSON.parse(raw)?.ch);
-          if (Number.isFinite(savedCh) && chaptersCache.some(c => c.chapter_num === savedCh)) {
-            currentCh = savedCh;
-          }
-        }
-      } catch (_) { /* corrupt breadcrumb — fall through to the default */ }
+      let savedCh = Number(novelMeta?.last_read_chapter_num);
+      if (!Number.isFinite(savedCh)) {
+        try {
+          const raw = localStorage.getItem(`lastRead:${novelId}`);
+          if (raw) savedCh = Number(JSON.parse(raw)?.ch);
+        } catch (_) { /* corrupt breadcrumb — fall through to the default */ }
+      }
+      if (Number.isFinite(savedCh) && chaptersCache.some(c => c.chapter_num === savedCh)) {
+        currentCh = savedCh;
+      }
     }
     // Guard against a non-existent target: default `1` on a partial import
     // that starts at 296, or a deletion gap. chaptersCache is ordered, so

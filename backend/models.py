@@ -116,6 +116,13 @@ class Novel(BaseModel):
     # 2026-05-25 F11: archive timestamp. NULL on active novels; set
     # when the user soft-deletes via DELETE /api/novels/{id}.
     deleted_at: str | None = None
+    # 2026-05-28 durable reading position. NULL until the reader records a
+    # position; reader boot prefers this over the localStorage breadcrumb so
+    # reopening the app resumes on the last-read chapter. last_read_at drives
+    # the library "Continue reading" sort. Written by
+    # PUT /api/novels/{id}/reading-position.
+    last_read_chapter_num: int | None = None
+    last_read_at: str | None = None
 
 
 class NovelWithProgress(Novel):
@@ -165,6 +172,20 @@ class NovelUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     series_name: str | None = Field(default=None, max_length=200)
     series_index: int | None = Field(default=None, ge=0)
+
+
+class ReadingPositionUpdate(BaseModel):
+    """Body for PUT /novels/{id}/reading-position.
+
+    Records the chapter the reader is on so reopening the app resumes there.
+    `chapter_num` is the novel-local chapter number (>= 1). We deliberately do
+    NOT validate that the chapter exists: the write fires on every chapter open
+    and an existence check would add a SELECT per open and race partial imports.
+    The reader's boot guard already falls back to the first available chapter if
+    the stored position points at a since-deleted chapter.
+    """
+
+    chapter_num: int = Field(ge=1)
 
 
 class MassQueueRequest(BaseModel):

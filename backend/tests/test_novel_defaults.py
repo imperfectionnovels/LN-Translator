@@ -83,6 +83,10 @@ async def test_no_config_means_null_columns(app_with_stubs):
     assert novel["refinement_provider_id"] is None
     # source_language defaults to 'zh' via the SCHEMA default — not NULL.
     assert novel["source_language"] == "zh"
+    # A never-opened novel has no reading position — reader falls back to the
+    # first chapter (2026-05-28 durable reading position).
+    assert novel["last_read_chapter_num"] is None
+    assert novel["last_read_at"] is None
 
 
 @pytest.mark.asyncio

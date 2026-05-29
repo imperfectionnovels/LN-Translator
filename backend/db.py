@@ -113,7 +113,11 @@ CREATE TABLE IF NOT EXISTS novels (
     -- NULL = atomic-create path or pre-feature row (treated as done).
     -- 'in_progress' | 'paused' | 'done' | 'cancelled' otherwise.
     -- See _ADDITIVE_MIGRATIONS comment for full semantics.
-    import_status TEXT
+    import_status TEXT,
+    -- 2026-05-28 durable reading position (see _ADDITIVE_MIGRATIONS). NULL
+    -- until the reader records a position; reopening the app resumes here.
+    last_read_chapter_num INTEGER,
+    last_read_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chapters (
@@ -732,6 +736,17 @@ _ADDITIVE_MIGRATIONS = (
     # via SQL (`json_extract(prompt_config_snapshot, '$.flags...')`). See
     # services/queue.py::_build_prompt_config_snapshot for the writer.
     "ALTER TABLE chapters ADD COLUMN prompt_config_snapshot TEXT NOT NULL DEFAULT '{}'",
+    # 2026-05-28 — durable per-novel reading position. Promotes the reader's
+    # resume breadcrumb off fragile localStorage (WebView2 discards it whenever
+    # app_entry's private_mode fallback fires, plus normal cache eviction) onto
+    # the SQLite source of truth, so reopening the app lands on the chapter the
+    # user left off rather than chapter 1. `last_read_at` lets the library
+    # "Continue reading" strip reproduce its most-recently-read sort server-side
+    # (it previously sorted on the localStorage `ts`). Both nullable: pre-feature
+    # rows and never-opened novels read as NULL → reader falls back to the first
+    # chapter. Written by PUT /api/novels/{id}/reading-position.
+    "ALTER TABLE novels ADD COLUMN last_read_chapter_num INTEGER",
+    "ALTER TABLE novels ADD COLUMN last_read_at TEXT",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed
@@ -994,7 +1009,9 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
                     custom_style_brief TEXT,
                     translator_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
                     refinement_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
-                    import_status TEXT
+                    import_status TEXT,
+                    last_read_chapter_num INTEGER,
+                    last_read_at TEXT
                 )
                 """
             )
@@ -1026,6 +1043,11 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
                 # land here as NULL → treated as "atomic-create / done"
                 # implicitly, same as legacy novels.
                 "import_status",
+                # 2026-05-28 durable reading position: carry through so a
+                # one-time humanizer-era rebuild doesn't reset the reader's
+                # resume point. Absent on humanizer-era DBs → NULL.
+                "last_read_chapter_num",
+                "last_read_at",
             ):
                 if col in n_cols_now:
                     select_cols.append(col)

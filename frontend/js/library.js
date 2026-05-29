@@ -73,6 +73,27 @@ function lastReadInfo(id) {
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
 }
+// Read-state normalizer. Prefers the durable DB position carried on the novel
+// object (n.last_read_chapter_num / n.last_read_at) so resume + the "Continue
+// reading" strip survive a WebView2 storage wipe; falls back to the
+// localStorage breadcrumb for users whose DB column hasn't been backfilled
+// yet. Returns the same { ch, ts, lastLine } shape lastReadInfo does. The DB
+// timestamp is SQLite's UTC "YYYY-MM-DD HH:MM:SS" — normalize to a ms epoch so
+// relTime() and the last_read sort stay consistent across both sources.
+function readInfoFor(n) {
+  if (n && n.last_read_chapter_num != null) {
+    const at = n.last_read_at;
+    const ts = at ? Date.parse(String(at).replace(" ", "T") + "Z") : 0;
+    return {
+      ch: n.last_read_chapter_num,
+      ts: Number.isFinite(ts) ? ts : 0,
+      // Keep the prose snippet from the local cache when we have it; the DB
+      // intentionally doesn't store it (volatile, per-chapter).
+      lastLine: (lastReadInfo(n.id) || {}).lastLine || null,
+    };
+  }
+  return lastReadInfo(n.id);
+}
 function relTime(ts) {
   if (!ts) return null;
   const d = (Date.now() - ts) / 86400000;
@@ -89,7 +110,7 @@ function effectiveStatus(n) {
   // isn't finished. A finished novel the user has read still belongs under
   // "Finished" (otherwise the chip looks empty); an unstarted one still falls
   // through to its translation status.
-  const last = lastReadInfo(n.id);
+  const last = readInfoFor(n);
   const s = statusOf(n);
   if (last && last.ts && s !== "finished") return "reading";
   return s;
@@ -218,7 +239,7 @@ function renderContinue() {
     return;
   }
   const recent = novels
-    .map(n => ({ n, last: lastReadInfo(n.id) }))
+    .map(n => ({ n, last: readInfoFor(n) }))
     .filter(x => x.last && x.last.ts)
     .sort((a, b) => b.last.ts - a.last.ts)
     .slice(0, 1);
@@ -305,7 +326,7 @@ function spineLabel(title) {
 function novelStats(n) {
   const pct = n.total_chapters ? Math.round((n.done_chapters / n.total_chapters) * 100) : 0;
   const s = statusOf(n);
-  const last = lastReadInfo(n.id);
+  const last = readInfoFor(n);
   const tq = n.translate_queue || 0;
   const queueTotal = n.queue_chapters != null ? n.queue_chapters : tq;
   const inFlightLabel = n.translating_now > 0 ? "translating"
@@ -341,8 +362,8 @@ function sortedVisibleNovels() {
       return pb - pa;
     }
     if (by === "last_read") {
-      const la = (lastReadInfo(a.id) || {}).ts || 0;
-      const lb = (lastReadInfo(b.id) || {}).ts || 0;
+      const la = (readInfoFor(a) || {}).ts || 0;
+      const lb = (readInfoFor(b) || {}).ts || 0;
       return lb - la;
     }
     return b.id - a.id;
@@ -686,12 +707,12 @@ function wireCardActions() {
     if (card.hasAttribute("data-go")) goTargets.push(card);
     goTargets.forEach(el => {
       el.addEventListener("click", () => {
-        const last = lastReadInfo(id);
         // last-read → novel's first_chapter_num (handles partial imports
         // starting at 第296章) → 1 fallback. Without this fallback, opening
         // a brand-new partial-import novel from the library lands at
         // /reader?ch=1 and 404s.
         const novel = novels.find(x => x.id == id);
+        const last = readInfoFor(novel);
         const firstCh = novel && novel.first_chapter_num;
         const ch = (last && last.ch) || firstCh || 1;
         location.href = `/reader?novel=${id}&ch=${ch}`;

@@ -191,6 +191,12 @@ const api = {
     body: JSON.stringify(fields),
   }),
   deleteNovel: (id) => apiFetch(`/api/novels/${id}`, { method: "DELETE" }),
+  // Record the reader's last-read chapter so reopening the app resumes there.
+  // Durable (DB-backed) replacement for the localStorage `lastRead:` breadcrumb.
+  setReadingPosition: (id, chapterNum) => apiFetch(`/api/novels/${id}/reading-position`, {
+    method: "PUT",
+    body: JSON.stringify({ chapter_num: chapterNum }),
+  }),
   chapters: (id) => apiFetch(`/api/novels/${id}/chapters`),
   chapter: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}`),
   retranslate: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/retranslate`, { method: "POST" }),

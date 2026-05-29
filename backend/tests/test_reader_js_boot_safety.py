@@ -77,3 +77,16 @@ def test_module_top_level_addEventListener_targets_are_declared_first():
             for n, ul, dl in offenders
         )
     )
+
+
+def test_boot_resume_prefers_db_reading_position():
+    """The boot resume path must prefer the durable DB position
+    (novelMeta.last_read_chapter_num) over the localStorage breadcrumb so
+    reopening the app lands on the last-read chapter even when WebView2 has
+    discarded localStorage. Guards against a regression that reverts to a
+    localStorage-only read."""
+    src = READER_JS.read_text(encoding="utf-8")
+    assert "novelMeta?.last_read_chapter_num" in src, (
+        "boot resume no longer reads novelMeta.last_read_chapter_num — the "
+        "durable DB position must be preferred over the localStorage breadcrumb"
+    )
