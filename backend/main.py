@@ -6,8 +6,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.config import (
+    ALLOWED_HOSTS,
     FRONTEND_DIR,
     GEMINI_API_KEY,
     GEMINI_TRANSLATOR_MODEL,
@@ -486,6 +488,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Chinese Novel Translator", lifespan=lifespan)
+
+# Host-header allowlist (DNS-rebinding / CSRF hardening). The server is
+# loopback-only, but a browser page that re-points its own hostname to
+# 127.0.0.1 (DNS rebinding) could still make same-origin requests to the local
+# API; rejecting a foreign Host closes that without adding auth. ALLOWED_HOSTS
+# is config-driven (conftest adds "testserver" for the suite).
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 app.include_router(translate.router, prefix="/api/translate", tags=["translate"])
 app.include_router(novels.router, prefix="/api/novels", tags=["novels"])

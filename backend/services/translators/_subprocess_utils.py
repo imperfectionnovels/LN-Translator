@@ -19,6 +19,13 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
+# Characters cmd.exe re-parses specially. When we wrap a `.cmd` / `.bat` shim in
+# `cmd /c`, cmd re-parses the joined command line, so an argument containing one
+# of these could be interpreted by cmd even though we pass an argv list. The only
+# user-influenced argument is the provider's model_id (legit values never contain
+# these), so build_argv rejects them defensively.
+_CMD_METACHARS = set('&|<>^()%"')
+
 
 def resolve_binary(binary: str) -> str:
     """Look up `binary` on PATH. On Windows the CLI shims installed by npm
@@ -47,6 +54,12 @@ def build_argv(args: list[str]) -> list[str]:
         return args
     head = args[0]
     if head.lower().endswith((".cmd", ".bat")):
+        for a in args:
+            if _CMD_METACHARS.intersection(a):
+                raise ValueError(
+                    f"refusing to run CLI: argument contains a shell "
+                    f"metacharacter that cmd.exe would re-parse: {a!r}"
+                )
         return ["cmd", "/c", *args]
     return args
 

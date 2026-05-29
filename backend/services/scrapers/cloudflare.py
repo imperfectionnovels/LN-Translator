@@ -29,6 +29,13 @@ Both libraries are sync, so we bridge to async via `asyncio.to_thread`.
 SSRF / scheme / size guarantees:
 - Caller MUST have already run `_check_url_safety(url)` and
   `_resolve_and_validate(parsed.hostname)` before invoking this.
+- Redirects are NOT followed (`allow_redirects=False`). This tier can only
+  validate the INITIAL url, not redirect targets, and curl_cffi / cloudscraper
+  resolve+dial redirects internally with no per-hop SSRF re-check — so a
+  CF-shaped first response that 302s to 169.254.169.254 / a LAN IP / 127.0.0.1
+  would otherwise be chased into an internal host. A 3xx here is therefore
+  treated as a failure. The primary httpx path in scraper.py is the one that
+  follows redirects and re-validates every hop; this degraded fallback does not.
 - Body size cap enforced after the sync library returns (neither curl_cffi
   nor cloudscraper expose a streaming primitive to cut mid-stream;
   acceptable because both hold the body in memory anyway).
@@ -93,7 +100,9 @@ def _do_fetch_sync(
         scraper.headers["Cookie"] = cookies.strip()
 
     try:
-        resp = scraper.get(url, timeout=timeout, allow_redirects=True)
+        # allow_redirects=False: see the module docstring's SSRF note. This
+        # tier cannot re-validate redirect targets, so it must not follow them.
+        resp = scraper.get(url, timeout=timeout, allow_redirects=False)
     except Exception as e:
         raise CloudScraperFailed(
             f"cloudscraper raised on GET {url!r}: {e}"
@@ -183,7 +192,9 @@ def _do_curl_cffi_sync(
         session.headers["Cookie"] = cookies.strip()
 
     try:
-        resp = session.get(url, timeout=timeout, allow_redirects=True)
+        # allow_redirects=False: see the module docstring's SSRF note. This
+        # tier cannot re-validate redirect targets, so it must not follow them.
+        resp = session.get(url, timeout=timeout, allow_redirects=False)
     except Exception as e:
         raise CloudScraperFailed(
             f"curl_cffi raised on GET {url!r}: {e}"
@@ -262,12 +273,14 @@ async def fetch_via_cf_bypass_chain(
             url, headers=headers, cookies=cookies,
             max_bytes=max_bytes, timeout=timeout,
         )
-        if status < 400:
+        if 200 <= status < 300:
             logger.info(
                 "cf bypass chain: curl_cffi succeeded for %s (status=%d)",
                 url, status,
             )
             return status, body, content_type
+        # A 3xx counts as non-success here: redirects are disabled (SSRF), so a
+        # 3xx is an unfollowed redirect, not a page. Fall through to the next tier.
         logger.info(
             "cf bypass chain: curl_cffi got HTTP %d for %s, trying cloudscraper",
             status, url,
@@ -284,7 +297,7 @@ async def fetch_via_cf_bypass_chain(
             url, headers=headers, cookies=cookies,
             max_bytes=max_bytes, timeout=timeout,
         )
-        if status < 400:
+        if 200 <= status < 300:
             logger.info(
                 "cf bypass chain: cloudscraper succeeded for %s (status=%d)",
                 url, status,

@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 # DB lives in repo/data/ — matching every iteration before Phase 6.
 IS_FROZEN = bool(getattr(sys, "frozen", False))
 
+# Host-header allowlist (DNS-rebinding / CSRF hardening). The server binds
+# 127.0.0.1 only, but a Host allowlist also defeats browser-mediated DNS
+# rebinding (a page on evil.com re-pointed to 127.0.0.1 could otherwise make
+# same-origin requests to the local API). Comma-separated env override; the
+# test suite adds "testserver" via conftest. Host check only, no auth added.
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv("LN_TRANSLATOR_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+    if h.strip()
+]
+
 
 def _user_data_root() -> Path:
     """Per-user mutable data dir. Honors LN_TRANSLATOR_DATA env var first;

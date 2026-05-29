@@ -37,9 +37,10 @@ Security hardening (mandatory):
   so a site operator can see who's hitting them and block / rate-limit
   cooperatively. Not a forged browser UA.
 
-- **No credential follow**: cookies / auth headers are NOT forwarded
-  across redirect hops (manual redirect handling means we build each hop
-  from scratch).
+- **No cross-origin credential leak**: a pasted Cookie / Authorization
+  header is sent only to the ORIGIN host. Once a redirect crosses to a
+  different host the credential headers are stripped before the next hop, so
+  a session token pasted for site A never leaks to site B.
 
 Residual risk — DNS rebinding:
   The pre-fetch IP validation uses `socket.getaddrinfo`, but httpx
@@ -304,10 +305,19 @@ async def _fetch_with_manual_redirects(
     a single response per call with redirects disabled, inspect any 3xx
     Location, validate, and loop.
     """
+    initial_host = httpx.URL(initial_url).host
     current = initial_url
     for hop in range(MAX_REDIRECTS + 1):
         # Build a streaming request — closed below if a redirect comes.
         request = client.build_request("GET", current)
+        # Credential isolation: the client-level Cookie / Authorization (pasted
+        # by the user for the ORIGIN host) is merged into every built request.
+        # Once a redirect crosses to a different host, strip those headers so a
+        # session token for site A is never sent to site B.
+        if httpx.URL(current).host != initial_host:
+            for _cred in ("cookie", "authorization"):
+                if _cred in request.headers:
+                    del request.headers[_cred]
         resp = await client.send(request, stream=True)
         if not (300 <= resp.status_code < 400) or "location" not in resp.headers:
             # Terminal response (or redirect without Location — treat as

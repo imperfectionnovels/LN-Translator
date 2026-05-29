@@ -357,3 +357,89 @@ async def test_non_cf_403_does_not_invoke_cloudscraper(monkeypatch):
     result = await scrape_url("https://example.com/ch1")
     assert isinstance(result, ScrapeResult)
     assert cs_called["n"] == 1
+
+
+# --- C1 (SSRF): the bypass tier must not follow redirects ---------------------
+
+
+@pytest.mark.asyncio
+async def test_bypass_chain_treats_redirect_as_failure(monkeypatch):
+    """SSRF guard: redirects are disabled on the bypass tier, so a 3xx is an
+    unfollowed redirect, never a successful page. A CF-shaped first response
+    that 302s to an internal host (169.254.169.254 / a LAN IP / 127.0.0.1)
+    must NOT be chased and returned. Both tiers returning a 3xx raises
+    CloudScraperFailed rather than handing back the redirect."""
+    from backend.services.scrapers.cloudflare import (
+        CloudScraperFailed,
+        fetch_via_cf_bypass_chain,
+    )
+
+    async def redirect(url, **kwargs):
+        # The OLD allow_redirects=True path would have followed this 302
+        # internally with no per-hop SSRF re-validation.
+        return 302, b"", "text/html"
+
+    monkeypatch.setattr(
+        "backend.services.scrapers.cloudflare.fetch_via_curl_cffi", redirect
+    )
+    monkeypatch.setattr(
+        "backend.services.scrapers.cloudflare.fetch_via_cloudscraper", redirect
+    )
+    with pytest.raises(CloudScraperFailed):
+        await fetch_via_cf_bypass_chain("https://cf.example/ch1")
+
+
+def test_cloudscraper_sync_disables_redirects(monkeypatch):
+    """_do_fetch_sync must call cloudscraper.get with allow_redirects=False so
+    the bypass never follows a redirect into an unvalidated host."""
+    import cloudscraper
+
+    from backend.services.scrapers import cloudflare as cf
+
+    captured: dict = {}
+
+    class _FakeScraper:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, **kwargs):
+            captured.update(kwargs)
+
+            class _R:
+                status_code = 200
+                content = b"ok"
+                headers = {"content-type": "text/html"}
+
+            return _R()
+
+    monkeypatch.setattr(cloudscraper, "create_scraper", lambda **k: _FakeScraper())
+    cf._do_fetch_sync("https://x.example/", cookies=None, timeout=5.0)
+    assert captured.get("allow_redirects") is False
+
+
+def test_curl_cffi_sync_disables_redirects(monkeypatch):
+    """_do_curl_cffi_sync must call curl_cffi's session.get with
+    allow_redirects=False (same SSRF reasoning as cloudscraper)."""
+    from curl_cffi import requests as creq
+
+    from backend.services.scrapers import cloudflare as cf
+
+    captured: dict = {}
+
+    class _FakeSession:
+        def __init__(self, *a, **k):
+            self.headers = {}
+
+        def get(self, url, **kwargs):
+            captured.update(kwargs)
+
+            class _R:
+                status_code = 200
+                content = b"ok"
+                headers = {"content-type": "text/html"}
+
+            return _R()
+
+    monkeypatch.setattr(creq, "Session", _FakeSession)
+    cf._do_curl_cffi_sync("https://x.example/", cookies=None, timeout=5.0)
+    assert captured.get("allow_redirects") is False

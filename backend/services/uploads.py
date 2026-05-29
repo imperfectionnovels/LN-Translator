@@ -25,6 +25,7 @@ Three groups live here:
 import io
 import logging
 import re
+import zipfile
 from dataclasses import dataclass
 
 import aiosqlite
@@ -49,6 +50,47 @@ MAX_BULK_FILES = 10000
 # is comfortably above any realistic full-novel batch and well under typical
 # local-machine RAM.
 MAX_BULK_TOTAL_BYTES = 512 * 1024 * 1024
+
+# Decompression-bomb guard for ZIP-container uploads (EPUB / DOCX). MAX_UPLOAD_BYTES
+# caps the COMPRESSED bytes only; a ~50 MB archive can declare gigabytes of
+# uncompressed content and OOM the local process when ebooklib / python-docx
+# inflate it. We read the central directory's declared sizes (no inflation) and
+# reject an implausible total or per-entry ratio before handing bytes to the parser.
+MAX_DECOMPRESSED_BYTES = 400 * 1024 * 1024
+_MAX_COMPRESSION_RATIO = 100  # per-entry uncompressed/compressed cap (above ~1 MB)
+
+
+def _reject_zip_bomb(raw: bytes, filename: str | None) -> None:
+    """Raise HTTP 400 if `raw` is a ZIP whose declared uncompressed size looks
+    like a decompression bomb. Non-zip / unreadable input is left for the
+    format parser to reject with its own error (this is a guard, not a parser)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            infos = zf.infolist()
+    except Exception:
+        return  # not a readable zip — let the format parser surface its error
+    total = 0
+    for info in infos:
+        comp = info.compress_size or 1
+        if info.file_size > 1024 * 1024 and info.file_size // comp > _MAX_COMPRESSION_RATIO:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"refusing {filename or 'upload'}: entry {info.filename!r} "
+                    f"declares an implausible compression ratio "
+                    f"({info.file_size} / {comp}) — possible decompression bomb."
+                ),
+            )
+        total += info.file_size
+    if total > MAX_DECOMPRESSED_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"refusing {filename or 'upload'}: declared uncompressed size "
+                f"{total} bytes exceeds the {MAX_DECOMPRESSED_BYTES} byte limit "
+                "— possible decompression bomb."
+            ),
+        )
 
 
 # Encodings we'll try when scoring. utf-8-sig handles the BOM-prefixed case
@@ -295,6 +337,7 @@ async def _decode_docx(file: UploadFile) -> DecodedDoc:
     _enforce_upload_size(len(raw), file.filename)
     if not raw:
         raise HTTPException(status_code=400, detail="empty file")
+    _reject_zip_bomb(raw, file.filename)
 
     try:
         from docx import Document  # python-docx
@@ -699,6 +742,7 @@ async def _decode_epub(file: UploadFile) -> DecodedDoc:
     _enforce_upload_size(len(raw), file.filename)
     if not raw:
         raise HTTPException(status_code=400, detail="empty file")
+    _reject_zip_bomb(raw, file.filename)
 
     try:
         from ebooklib import epub  # type: ignore[import-not-found]
