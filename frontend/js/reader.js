@@ -2183,8 +2183,14 @@ async function loadChapter(num) {
     document.getElementById("glossary-merge-error-card")?.remove();
     renderToc();
     renderChapterBody(cachedCh);
-    // Kick off the next prefetch.
-    if (cachedCh.status === "done") _prefetchNext(num);
+    // Refresh the library-strip snippet for a cache-hit done chapter; the full
+    // render path (below) does this at line ~2387, but the prefetch shortcut
+    // bypasses it, so without this the breadcrumb keeps the lastLine:null that
+    // persistReadingPosition just wrote.
+    if (cachedCh.status === "done") {
+      persistLastRead(cachedCh);
+      _prefetchNext(num);
+    }
     return;
   }
   // When navigating to a different chapter, tear down any in-flight loader.
