@@ -70,7 +70,7 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # REFERENCE TRANSLATION block defaulted off (config.PROMPT_INCLUDE_FREE_DRAFT).
 # The composed system instruction is already part of the llm_cache key, so this
 # token is provenance plus a belt-and-suspenders force-miss of stale caches.
-PROMPT_TEMPLATE_VERSION = "phase4-novel-voice"
+PROMPT_TEMPLATE_VERSION = "phase4-novel-voice-lean"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
