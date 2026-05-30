@@ -60,9 +60,9 @@ _REFINER_SYSTEM_INSTRUCTION = (
 # placeholder names every glossary entry so the refiner preserves them.
 # The editor role is folded in at the top because most backends' plain-text
 # completion path doesn't forward system_instruction.
-_REFINER_USER_TEMPLATE = """You are a literary editor polishing one chapter of a translated web novel. Edit the draft below so it reads like a published English novel: strengthen flat or generic verbs, vary sentence rhythm and length, sharpen dialogue and interior-thought clarity, and fix paragraphing. Lift any line that still reads as translated-from-Chinese.
+_REFINER_USER_TEMPLATE = """You are a literary editor polishing one chapter of a translated web novel. Edit the draft below so it reads like a published English novel: strengthen flat or generic verbs, vary sentence rhythm and length, sharpen dialogue and interior-thought clarity, and fix paragraphing. Lift any line that still reads as translated-from-Chinese. Do not raise the intensity of any beat: add no scale words, adjectives, adverbs, stronger verbs, imagery, or detail beyond what the draft already carries. The draft's restraint is deliberate and was matched to the source, so polish rhythm, clarity, and word choice only.
 
-The draft is the canonical text. Trust its meaning and polish only the English surface: never re-translate, and never add, drop, reorder, or reinterpret content. Keep every plot event, character name, and the point of view and tense. Keep first-person present-tense inner thought in italics. Preserve the glossary terms below exactly as written.
+The draft is the canonical text. Trust its meaning and polish only the English surface: never re-translate, and never add, drop, reorder, or reinterpret content. Keep every plot event, character name, and the point of view and tense. Keep first-person direct inner thought in italics regardless of tense (present musing or past recollection). Preserve the glossary terms below exactly as written.
 
 Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
 
