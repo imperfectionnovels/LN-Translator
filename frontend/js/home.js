@@ -720,14 +720,22 @@ async function renderRecent() {
       const st = n.done_chapters >= n.total_chapters && n.total_chapters > 0 ? "done"
         : n.done_chapters > 0 ? `${pct}%` : "raw";
       const stClass = st === "done" ? "" : st === "raw" ? "warn" : "";
+      // Prefer the durable DB position (survives a WebView2 storage wipe and is
+      // present even on a session that never wrote the local breadcrumb); fall
+      // back to the localStorage breadcrumb. `!= null` matches both null and
+      // undefined — the same DB-first pattern library.js's readInfoFor uses.
       let resumeCh = 1;
-      try {
-        const raw = localStorage.getItem(`lastRead:${n.id}`);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && Number.isFinite(parsed.ch)) resumeCh = parsed.ch;
-        }
-      } catch { /* ignore corrupted localStorage */ }
+      if (n.last_read_chapter_num != null) {
+        resumeCh = n.last_read_chapter_num;
+      } else {
+        try {
+          const raw = localStorage.getItem(`lastRead:${n.id}`);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Number.isFinite(parsed.ch)) resumeCh = parsed.ch;
+          }
+        } catch { /* ignore corrupted localStorage */ }
+      }
       return `<div class="recent-row">
         <span class="id">${n.id}</span>
         <span class="ti"><a href="/reader?novel=${n.id}&ch=${resumeCh}">${escapeHtml(n.title)}</a></span>

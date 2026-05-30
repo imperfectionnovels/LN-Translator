@@ -2172,6 +2172,7 @@ async function loadChapter(num) {
       window.scrollTo(0, 0);
     }
     currentCh = num;
+    persistReadingPosition(num);
     history.replaceState(null, "", `/reader?novel=${novelId}&ch=${num}`);
     updateMasthead(num);
     lastChapter = cachedCh;
@@ -2216,6 +2217,7 @@ async function loadChapter(num) {
     window.scrollTo(0, 0);
   }
   currentCh = num;
+  persistReadingPosition(num);
   history.replaceState(null, "", `/reader?novel=${novelId}&ch=${num}`);
   updateMasthead(num);
   statusEl.className = "status";
@@ -2889,27 +2891,47 @@ function paintEndCard(ch) {
 
 let _lastPersistedCh = null;
 let _posSaveTimer = null;
+// Record which chapter the reader is currently on. Writes BOTH the durable DB
+// position (survives a WebView2 storage wipe) and a localStorage breadcrumb,
+// for ANY opened chapter regardless of translation status. The user is "on"
+// this chapter even while it's still pending/translating, so reopening must
+// resume here — gating this on status='done' (the old behavior) meant a novel
+// whose chapters hadn't finished translating never recorded a position and
+// every reload fell back to chapter 1. Deduped on _lastPersistedCh so a
+// same-chapter poll re-render is a no-op (and doesn't clobber the lastLine
+// snippet persistLastRead sets), and debounced so rapid prev/next doesn't spam
+// the endpoint. Best-effort: a failed DB write never disrupts reading — the
+// breadcrumb remains the fallback.
+function persistReadingPosition(num) {
+  if (!Number.isInteger(num) || num <= 0) return;
+  if (num === _lastPersistedCh) return;
+  _lastPersistedCh = num;
+  // Breadcrumb resets `lastLine`: it belongs to the chapter we're landing on,
+  // and persistLastRead fills it in once that chapter renders as 'done'.
+  try {
+    localStorage.setItem(`lastRead:${novelId}`, JSON.stringify({
+      ch: num, ts: Date.now(), lastLine: null,
+    }));
+  } catch (_) { /* storage disabled/full — the DB copy below still persists */ }
+  if (_posSaveTimer) clearTimeout(_posSaveTimer);
+  _posSaveTimer = setTimeout(() => {
+    api.setReadingPosition(novelId, num).catch(() => {});
+  }, 800);
+}
+// Refresh the breadcrumb's prose snippet for the library hero strip. Only a
+// finished chapter has displayable English, so this stays done-gated. The DB
+// position is already recorded by persistReadingPosition on chapter open, so
+// this no longer drives resume — it only keeps the `lastLine` snippet current.
 function persistLastRead(ch) {
   if (ch.status !== "done") return;
   const displayed = _displayedEnglish(ch);
   const paras = String(displayed).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const lastLine = paras.length ? paras[paras.length - 1].slice(0, 240) : null;
-  // localStorage stays the instant local cache (and the only place `lastLine`
-  // lives, for the library hero strip snippet).
-  localStorage.setItem(`lastRead:${novelId}`, JSON.stringify({
-    ch: ch.chapter_num, ts: Date.now(), lastLine,
-  }));
-  // Durable copy in the DB so reopening the app resumes here even when
-  // WebView2 discards localStorage. Deduped (the done-status render path can
-  // fire repeatedly for the same chapter) and debounced (rapid prev/next
-  // shouldn't spam the endpoint). Best-effort: a failed write never disrupts
-  // reading — the localStorage breadcrumb remains the fallback.
-  if (ch.chapter_num === _lastPersistedCh) return;
-  _lastPersistedCh = ch.chapter_num;
-  if (_posSaveTimer) clearTimeout(_posSaveTimer);
-  _posSaveTimer = setTimeout(() => {
-    api.setReadingPosition(novelId, ch.chapter_num).catch(() => {});
-  }, 800);
+  try {
+    localStorage.setItem(`lastRead:${novelId}`, JSON.stringify({
+      ch: ch.chapter_num, ts: Date.now(), lastLine,
+    }));
+  } catch (_) { /* storage disabled/full — snippet is a nice-to-have */ }
 }
 
 /* ---- Nav / actions ----
@@ -3472,14 +3494,20 @@ window.addEventListener("resize", requestScrollPct);
     // wipe); fall back to the localStorage breadcrumb for users whose DB
     // column hasn't been backfilled yet (it backfills on the next open).
     if (!hadExplicitCh) {
+      // Use a positive-integer test, NOT Number.isFinite: the API serializes an
+      // unset DB column as JSON null, and Number(null) === 0 (finite), which
+      // would wrongly skip the localStorage fallback and then fail the cache
+      // lookup, dropping the reader on chapter 1. `null → 0` and `undefined →
+      // NaN` must both fall through to the breadcrumb.
       let savedCh = Number(novelMeta?.last_read_chapter_num);
-      if (!Number.isFinite(savedCh)) {
+      if (!Number.isInteger(savedCh) || savedCh <= 0) {
         try {
           const raw = localStorage.getItem(`lastRead:${novelId}`);
           if (raw) savedCh = Number(JSON.parse(raw)?.ch);
         } catch (_) { /* corrupt breadcrumb — fall through to the default */ }
       }
-      if (Number.isFinite(savedCh) && chaptersCache.some(c => c.chapter_num === savedCh)) {
+      if (Number.isInteger(savedCh) && savedCh > 0
+          && chaptersCache.some(c => c.chapter_num === savedCh)) {
         currentCh = savedCh;
       }
     }
