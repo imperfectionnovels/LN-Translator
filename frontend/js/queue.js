@@ -19,6 +19,11 @@
   const toastEl = document.getElementById("qs-toast");
   const refreshBtn = document.getElementById("queue-refresh-btn");
   const cancelAllBtn = document.getElementById("queue-cancel-all");
+  // Signature of the last rendered snapshot. Re-rendering identical data on
+  // every 4s poll is what made the page feel clunky: the columns flickered and
+  // lost scroll/hover each tick even when nothing had changed. We now skip the
+  // rebuild when the snapshot is byte-identical to the last one.
+  let lastSig = null;
   // escapeHtml lives in utils.js (loaded before this script); use the shared one.
   function relTime(ts) {
     if (!ts) return "";
@@ -65,47 +70,63 @@
           </div>
           <div class="qs-active-meta">
             <span class="qs-pulse"></span>
-            <span>Translating…</span>
+            <span>${item.refining ? "Polishing…" : "Translating…"}</span>
             <a class="qs-link" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open in reader</a>
-            <button class="qs-row-btn" data-act="cancel" type="button" title="Cancel this translation">Cancel</button>
+            ${item.refining ? "" : `<button class="qs-row-btn" data-act="cancel" type="button" title="Cancel this translation">Cancel</button>`}
           </div>
         </div>
       </div>`;
   }
 
   function renderQueuedRow(item) {
+    // A done chapter waiting on the polish lane has no queue flag to drop, so
+    // it shows a status instead of the dequeue control.
+    const waitingPolish = item.refining;
     return `
       <div class="qs-row" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
         <div class="qs-row-motif">${escapeHtml(firstCJK(item.novel_title))}</div>
         <div class="qs-row-body">
           <div class="qs-row-title">${escapeHtml(item.novel_title)}</div>
-          <div class="qs-row-sub">Ch. ${item.chapter_num} · ${escapeHtml(item.title)}</div>
+          <div class="qs-row-sub">Ch. ${item.chapter_num} · ${escapeHtml(item.title)}${waitingPolish ? " · waiting to polish" : ""}</div>
         </div>
         <div class="qs-row-actions">
           <a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open</a>
-          <button class="qs-row-btn" data-act="dequeue" type="button" title="Drop this chapter from the queue">×</button>
+          ${waitingPolish ? "" : `<button class="qs-row-btn" data-act="dequeue" type="button" title="Drop this chapter from the queue">×</button>`}
         </div>
       </div>`;
   }
 
   function renderRecentRow(item) {
     const isError = item.status === "error";
+    // A done translation whose polish pass failed is still readable, but the
+    // failure is surfaced with a distinct status + a Retry polish action.
+    const polishFailed = !isError && item.refinement_status === "error";
+    const refined = !isError && item.refinement_status === "done";
+    let statusLabel, statusCls;
+    if (isError) { statusLabel = "error"; statusCls = "is-err"; }
+    else if (polishFailed) { statusLabel = "polish failed"; statusCls = "is-err"; }
+    else if (refined) { statusLabel = "refined"; statusCls = "is-ok"; }
+    else { statusLabel = "done"; statusCls = "is-ok"; }
+    const errText = isError ? item.error_msg : (polishFailed ? item.refinement_error : "");
+    const readLink = `<a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Read</a>`;
+    let actions;
+    if (isError) actions = `<button class="qs-row-btn" data-act="retry" type="button">Retry</button>`;
+    else if (polishFailed) actions = `<button class="qs-row-btn" data-act="retry-polish" type="button">Retry polish</button>${readLink}`;
+    else actions = readLink;
     return `
-      <div class="qs-row qs-row-recent${isError ? " is-error" : ""}" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
+      <div class="qs-row qs-row-recent${isError || polishFailed ? " is-error" : ""}" data-novel="${item.novel_id}" data-ch="${item.chapter_num}">
         <div class="qs-row-motif">${escapeHtml(firstCJK(item.novel_title))}</div>
         <div class="qs-row-body">
           <div class="qs-row-title">${escapeHtml(item.novel_title)}</div>
           <div class="qs-row-sub">
             Ch. ${item.chapter_num}
-            <span class="qs-status ${isError ? "is-err" : "is-ok"}">${isError ? "error" : "done"}</span>
+            <span class="qs-status ${statusCls}">${statusLabel}</span>
             <span class="qs-when muted">${escapeHtml(relTime(item.translated_at))}</span>
           </div>
-          ${isError && item.error_msg ? `<div class="qs-row-error">${escapeHtml(item.error_msg)}</div>` : ""}
+          ${errText ? `<div class="qs-row-error">${escapeHtml(errText)}</div>` : ""}
         </div>
         <div class="qs-row-actions">
-          ${isError
-            ? `<button class="qs-row-btn" data-act="retry" type="button">Retry</button>`
-            : `<a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Read</a>`}
+          ${actions}
         </div>
       </div>`;
   }
@@ -148,7 +169,23 @@
     }
   }
 
+  async function retryPolish(novelId, chapterNum, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+    try {
+      await api.retryRefinement(novelId, chapterNum);
+      await refresh();
+    } catch (e) {
+      showToast(`Retry polish failed: ${e.message}`, "err");
+      if (btn) { btn.disabled = false; btn.textContent = "Retry polish"; }
+    }
+  }
+
   function render(snap) {
+    // Skip the full rebuild when the snapshot is unchanged since the last poll.
+    // This is the core de-clunk: an idle queue no longer flickers every 4s.
+    const sig = JSON.stringify(snap);
+    if (sig === lastSig) return;
+    lastSig = sig;
     const translate = snap.translate || [];
     const recent = snap.recent || [];
     const inFlight = translate.filter(t => t.in_flight);
@@ -197,12 +234,12 @@
       ));
     });
     recentEl.querySelectorAll(".qs-row[data-novel]").forEach(row => {
+      const novel = parseInt(row.dataset.novel, 10);
+      const ch = parseInt(row.dataset.ch, 10);
       const retry = row.querySelector("[data-act='retry']");
-      if (retry) retry.addEventListener("click", () => retryChapter(
-        parseInt(row.dataset.novel, 10),
-        parseInt(row.dataset.ch, 10),
-        retry,
-      ));
+      if (retry) retry.addEventListener("click", () => retryChapter(novel, ch, retry));
+      const retryPol = row.querySelector("[data-act='retry-polish']");
+      if (retryPol) retryPol.addEventListener("click", () => retryPolish(novel, ch, retryPol));
     });
   }
 

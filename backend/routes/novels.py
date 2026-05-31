@@ -424,12 +424,15 @@ async def list_global_queue(
         """
         SELECT c.id AS chapter_id, c.novel_id, c.chapter_num,
                c.title_en, c.title_zh, c.status,
-               c.translate_queued,
+               c.translate_queued, c.refinement_status,
                n.title AS novel_title
         FROM chapters c
         JOIN novels n ON n.id = c.novel_id
         WHERE c.translate_queued = 1
-        ORDER BY c.novel_id, c.chapter_num
+           OR c.refinement_status IN ('pending', 'in_progress')
+        ORDER BY
+            (c.status = 'translating' OR c.refinement_status = 'in_progress') DESC,
+            c.novel_id, c.chapter_num
         """
     )
     rows = await cur.fetchall()
@@ -441,7 +444,13 @@ async def list_global_queue(
             "novel_title": r["novel_title"],
             "chapter_num": r["chapter_num"],
             "title": r["title_en"] or r["title_zh"] or f"Chapter {r['chapter_num']}",
-            "in_flight": r["status"] == "translating",
+            # in_flight is the row a worker holds right now: the translator
+            # (status='translating') or the refiner (refinement in progress).
+            "in_flight": r["status"] == "translating"
+            or r["refinement_status"] == "in_progress",
+            # refining covers both the active polish and the queued-for-polish
+            # state, so the UI can label a polish pass distinctly.
+            "refining": r["refinement_status"] in ("pending", "in_progress"),
         })
     # Recent: last 20 'done' or 'error' chapters by translated_at desc.
     # NULL translated_at (pre-Initiative-6 rows) sorts last so historical
@@ -451,11 +460,12 @@ async def list_global_queue(
         """
         SELECT c.id AS chapter_id, c.novel_id, c.chapter_num,
                c.title_en, c.title_zh, c.status, c.error_msg,
-               c.translated_at,
+               c.translated_at, c.refinement_status, c.refinement_error,
                n.title AS novel_title
         FROM chapters c
         JOIN novels n ON n.id = c.novel_id
         WHERE c.status IN ('done', 'error')
+          AND c.refinement_status NOT IN ('pending', 'in_progress')
         ORDER BY (c.translated_at IS NULL), c.translated_at DESC, c.id DESC
         LIMIT 20
         """
@@ -470,6 +480,8 @@ async def list_global_queue(
             "chapter_num": r["chapter_num"],
             "title": r["title_en"] or r["title_zh"] or f"Chapter {r['chapter_num']}",
             "status": r["status"],
+            "refinement_status": r["refinement_status"],
+            "refinement_error": r["refinement_error"],
             "error_msg": r["error_msg"],
             "translated_at": r["translated_at"],
         })
