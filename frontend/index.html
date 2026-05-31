@@ -78,6 +78,14 @@
             after page load may not extract; paste the text directly in
             that case.
           </p>
+          <!-- Optional cookies for sites behind Cloudflare or a login. home.js
+               reads #cookies-url and forwards it to /api/translate/scrape; the
+               input had been dropped in a layout refactor, so cookie scraping
+               was unreachable even though the backend still supports it. -->
+          <details class="url-advanced">
+            <summary>Site behind a login or Cloudflare? Add cookies (optional)</summary>
+            <textarea id="cookies-url" rows="2" placeholder="Paste the Cookie header from your browser, e.g. cf_clearance=...; sessionid=..."></textarea>
+          </details>
           <div style="display:flex; align-items:center; gap:10px; margin-top: 8px;">
             <button id="submit-url" class="primary">Fetch &amp; import</button>
             <span class="spacer"></span>
