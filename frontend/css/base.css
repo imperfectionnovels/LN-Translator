@@ -926,3 +926,21 @@ a:focus-visible {
   --fs-body: 19px;
   --fs-body-lh: 1.85;
 }
+
+/* ===== Reduced motion (accessibility) =====
+ * App-wide guard for users who set "reduce motion" at the OS level (vestibular
+ * disorders, motion sensitivity). reader.css already neutralizes its own
+ * animations, but base.css, library.css, queue.css and stats.css each ship
+ * keyframes (skeleton shimmer, the queue "live" pulse, progress sweeps) with no
+ * guard, so motion played everywhere except the reader. Collapse animations and
+ * transitions to near-instant globally; keep a 1ms duration rather than 0 so
+ * animationend / transitionend listeners still fire and JS state machines that
+ * wait on them do not stall. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
