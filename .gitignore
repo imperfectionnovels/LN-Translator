@@ -42,8 +42,5 @@ build-log.txt
 .mcp.json
 # Serena MCP project symbol cache.
 .serena/
-# Project-local MCP server config: machine-specific absolute paths, not portable.
-# The portable artifact is the committed server script under tools/.
-.mcp.json
-# Serena MCP project symbol cache.
-.serena/
+# Local Claude Code skills: may carry machine-specific paths / internal notes.
+.claude/skills/
