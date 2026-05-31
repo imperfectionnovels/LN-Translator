@@ -1111,11 +1111,20 @@ async def _run_refine(novel_id: int, chapter_id: int) -> None:
             logger.exception("queue refine ch_id=%d crashed", chapter_id)
             try:
                 async with open_conn() as recovery:
+                    # Rescue both non-terminal states. An exception raised
+                    # BEFORE the atomic claim (the SELECT, or
+                    # _resolve_refinement_provider) leaves the row at 'pending';
+                    # one raised AFTER the claim leaves it at 'in_progress'.
+                    # Both must become 'error' so the row stops re-spawning on
+                    # every drain_on_startup and surfaces for /retry-refinement.
+                    # Terminal states ('done'/'none'/'error') are left untouched.
                     await recovery.execute(
                         "UPDATE chapters SET "
-                        "refinement_status = CASE WHEN refinement_status = 'in_progress' "
+                        "refinement_status = CASE WHEN refinement_status "
+                        "    IN ('pending', 'in_progress') "
                         "    THEN 'error' ELSE refinement_status END, "
-                        "refinement_error = CASE WHEN refinement_status = 'in_progress' "
+                        "refinement_error = CASE WHEN refinement_status "
+                        "    IN ('pending', 'in_progress') "
                         "    THEN COALESCE(refinement_error, 'refiner worker crashed') "
                         "    ELSE refinement_error END "
                         "WHERE id = ?",

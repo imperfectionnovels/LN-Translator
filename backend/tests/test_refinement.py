@@ -524,3 +524,44 @@ async def test_retry_refinement_409_while_in_progress(quiet_app):
             f"/api/novels/{novel_id}/chapters/1/retry-refinement"
         )
     assert resp.status_code == 409
+
+
+async def test_refine_preclaim_crash_recovery(monkeypatch):
+    """A crash BEFORE the atomic pending->in_progress claim (here
+    _resolve_refinement_provider raising) must land the row in 'error', not
+    leave it stuck at 'pending'. Regression: _run_refine's recovery UPDATE
+    once rescued only 'in_progress', so a pre-claim failure re-spawned a
+    failing task on every drain_on_startup instead of surfacing for retry."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = ?, "
+            "refinement_status = 'pending' WHERE id = ?",
+            (_FIXTURE_DRAFT_BODY, chapter_id),
+        )
+        await conn.commit()
+
+    async def _boom(_conn, _novel_id):
+        raise RuntimeError("provider resolve failed")
+
+    # The crash lands at line ~1016 in _refine_chapter_in_db: after the
+    # draft-length check, before the atomic pending->in_progress claim.
+    monkeypatch.setattr(
+        "backend.services.queue._resolve_refinement_provider", _boom
+    )
+
+    # _run_refine owns the except-recovery handler under test.
+    await queue_svc._run_refine(novel_id, chapter_id)
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT refinement_status, refinement_error FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["refinement_status"] == "error"
+    assert row["refinement_error"]
