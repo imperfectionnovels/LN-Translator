@@ -537,6 +537,15 @@ def _run_window(webview_mod, url: str, shutdown_event: threading.Event) -> None:
         height=900,
         resizable=True,
         confirm_close=False,
+        # pywebview defaults text_select=False, which injects
+        # `body { user-select: none; cursor: default }` into the page at
+        # runtime (see pywebview's js/customize.js). That kills native text
+        # selection app-wide in the WebView2 window, so users cannot drag
+        # to highlight chapter text or settings, only inside form inputs.
+        # A plain browser never gets that injection, so selection looked fine
+        # in dev and only the packaged app was affected. Set True so the
+        # whole app is selectable / copyable like any normal window.
+        text_select=True,
     )
 
     def _on_window_closing():
