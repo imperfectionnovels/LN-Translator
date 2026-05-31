@@ -170,3 +170,34 @@ reader JS without rewriting the surrounding file. At that point the
 gotcha-recovery cost will exceed the plumbing cost and Vitest setup
 becomes the right call. Don't relitigate the decision in the
 meantime.
+
+## Stale element IDs after an HTML refactor
+
+When an `.html` page is restructured (breadcrumb redesign, layout cleanup) its
+companion `js/*.js` keeps referencing the old element IDs. Two failure modes:
+
+- An UNGUARDED top-level `document.getElementById("x").prop = ...` where `x` was
+  renamed throws `TypeError: Cannot read/set ... of null` at module load, which
+  aborts the whole script: every handler below it never binds and the page looks
+  totally dead. This is what silently broke the entire glossary page (`reader-link`
+  renamed to `crumb-novel`).
+- A GUARDED lookup (`if (el)` / `?.`) for a renamed/removed ID does not crash but
+  the feature silently no-ops: the reader's TOC glossary link and source-text
+  downloads (`glossary-link` -> `toc-glossary-link`, `download-*-raw` ->
+  `download-*-source`) and the home cookies input (`#cookies-url` dropped from
+  the URL panel) all went dead this way.
+
+Detector (run from repo root) lists IDs each page's JS looks up that are absent
+from the HTML that loads it (filter out IDs the JS creates dynamically):
+
+```bash
+for js in home library reader glossary glossary-global settings queue stats find-replace onboarding; do
+  htmls=$(grep -rl "js/$js.js" frontend/*.html)
+  grep -oE 'getElementById\("[a-zA-Z0-9_-]+"\)' "frontend/js/$js.js" \
+    | sed -E 's/getElementById\("//;s/"\)//' | sort -u \
+    | while read id; do
+        for h in $htmls; do grep -q "id=\"$id\"" "$h" && continue 2; done
+        echo "$js.js -> missing #$id"
+      done
+done
+```
