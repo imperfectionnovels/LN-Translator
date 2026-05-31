@@ -37,3 +37,13 @@ LN-Translator-*.zip
 .release-tmp/
 # PyInstaller log dump (created by the smoke harness; safe to discard).
 build-log.txt
+# Project-local MCP server config: machine-specific absolute paths, not portable.
+# The portable artifact is the committed server script under tools/.
+.mcp.json
+# Serena MCP project symbol cache.
+.serena/
+# Project-local MCP server config: machine-specific absolute paths, not portable.
+# The portable artifact is the committed server script under tools/.
+.mcp.json
+# Serena MCP project symbol cache.
+.serena/
