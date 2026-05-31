@@ -196,9 +196,17 @@
 
 @media (max-width: 700px) {
   .no-header { grid-template-columns: 100px 1fr; }
+  .no-header-body { min-width: 0; }
+  .no-cta { flex-wrap: wrap; }
   .no-cover { width: 100px; height: 142px; }
   .no-pipeline-grid, .no-meta-grid, .no-summary-grid {
     grid-template-columns: 1fr;
+  }
+  /* Selects/textareas take an intrinsic width from their longest option and
+     would otherwise overshoot the stacked single column, scrolling the page. */
+  .no-pipeline-grid input, .no-pipeline-grid select, .no-pipeline-grid textarea,
+  .no-meta-grid input, .no-meta-grid select, .no-meta-grid textarea {
+    min-width: 0; max-width: 100%; width: 100%;
   }
 }
 

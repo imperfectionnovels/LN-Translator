@@ -424,6 +424,18 @@ body {
   box-shadow: 0 0 0 1px var(--cinnabar);
   border-color: var(--cinnabar);
 }
+/* C14b: widen the click target on the 10px swatches toward the 24px comfort
+   minimum without changing the painted dot or the row's 60px footprint. A
+   transparent inset pseudo carries the extra hit area. Five 24px targets
+   cannot tile a 60px row without overlap, which is harmless here: every swatch
+   is a valid theme pick, the painted dots stay clearly separated, and a
+   full-size theme picker also lives on the Settings page. */
+.ink-spine .spine-theme-picker button { position: relative; }
+.ink-spine .spine-theme-picker button::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+}
 
 @media (max-width: 720px) {
   body { grid-template-columns: 56px 1fr; }
@@ -943,4 +955,28 @@ a:focus-visible {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ===== Narrow-viewport layout overrides (accessibility / phones) =====
+ * Placed at the end of the file ON PURPOSE: the base `main` padding and the
+ * `.screen-head` rules live earlier in the source, and an equal-specificity
+ * @media rule only wins when it comes later in source order. Putting these
+ * here guarantees they beat the desktop defaults at <=720px instead of being
+ * silently overridden by the later base rules. */
+@media (max-width: 720px) {
+  /* Desktop side padding (48px) plus the 56px spine left only ~210px of
+     content on a 360px phone, pushing selects, cards and toolbars off-screen.
+     Tighten the gutters so content has room. */
+  main { padding: 24px 16px 60px; }
+
+  /* Keep the page masthead inside the viewport. The title block and the
+     action row both got an intrinsic width from their content (a long display
+     title, a wide Sort <select>) and would not shrink. */
+  .screen-head { gap: 14px; }
+  .screen-head > * { min-width: 0; max-width: 100%; }
+  .screen-head .h-title { font-size: 2.3em; word-break: break-word; }
+  .screen-head .h-actions { width: 100%; flex-wrap: wrap; }
+  /* The Sort dropdown sizes to its longest option (~270px); let it take the
+     full row and shrink instead of overflowing. */
+  .screen-head .h-actions select { flex: 1 1 100%; min-width: 0; max-width: 100%; }
 }

@@ -283,7 +283,12 @@
    ============================================================ */
 .gloss-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* minmax floor wrapped in min(..., 100%) so a single column can shrink below
+     280px on narrow screens. The bare minmax(280px, 1fr) forced a 280px track
+     even when the container was narrower, which scrolled the whole page sideways
+     on phones. The min() collapses the floor to the container width when needed
+     and is a no-op on desktop (container always wider than 280px). */
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 .gloss-grid.list-view {
@@ -1084,7 +1089,17 @@
   gap: 10px;
   align-items: center;
 }
+/* The `display: grid` above overrides the UA `[hidden] { display: none }`, so
+   without this guard the "New global term" form rendered open on page load
+   (and its inputs overflowed narrow screens). Restore the hidden behaviour. */
+.add-entry-form[hidden] { display: none; }
 @media (max-width: 900px) { .add-entry-form { grid-template-columns: 1fr 1fr; } }
+/* Phones: stack the add-term form to one column and let the inputs shrink so
+   the row does not push the page wider than the screen. */
+@media (max-width: 560px) {
+  .add-entry-form { grid-template-columns: 1fr; }
+  .add-entry-form input, .add-entry-form select { min-width: 0; max-width: 100%; }
+}
 
 /* Legacy gloss-layout (sidebar). Kept for any older bookmark/page. */
 .gloss-layout {
@@ -1093,3 +1108,11 @@
   gap: 28px;
 }
 @media (max-width: 900px) { .gloss-layout { grid-template-columns: 1fr; } }
+
+/* Narrow phones: keep the control bar inside the viewport. The search field's
+   240px min-width plus the source-seg segmented control together pushed a few
+   px past a 360px screen; let the search shrink and the segments wrap. */
+@media (max-width: 560px) {
+  .control-bar .search-field { min-width: 0; max-width: none; }
+  .control-bar .source-seg { flex-wrap: wrap; }
+}

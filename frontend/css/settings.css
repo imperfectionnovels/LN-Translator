@@ -551,7 +551,9 @@
    ============================================================ */
 .themes-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  /* min() floor so theme cards collapse to one column on phones instead of
+     forcing a 280px track wider than the viewport (the page-scroll cause). */
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 .theme-card {
@@ -889,10 +891,11 @@
   .settings-toc .toc-foot { display: none; }
   .prov-stats { grid-template-columns: repeat(2, 1fr); }
   .prov-stats .prov-stat:nth-child(2) { border-right: none; }
-  .prov-head { grid-template-columns: 48px 1fr; }
+  .prov-head { grid-template-columns: 48px minmax(0, 1fr); }
   .prov-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 }
 

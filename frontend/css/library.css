@@ -328,8 +328,19 @@
  * mixed cover / no-cover novels reads as one rhythm. */
 .shelf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  /* min() floor so cards collapse to a single column on phones; the bare
+     minmax(360px,...) forced a 360px track wider than the viewport and
+     scrolled the library sideways. No-op on desktop. */
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
   gap: 22px;
+}
+/* Narrow viewports: the masthead action row (Sort + Stats + Find&Replace +
+   Import) and its ~270px Sort select did not wrap or shrink, so the header
+   pushed the page wider than the screen. Let the row wrap and the select
+   shrink. */
+@media (max-width: 720px) {
+  .screen-head .h-actions { flex-wrap: wrap; }
+  .screen-head .h-actions select { min-width: 0; max-width: 100%; }
 }
 .book-card {
   background: var(--paper);
