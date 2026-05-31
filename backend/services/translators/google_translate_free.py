@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from backend.models import GlossaryEntry, TranslationResult
 from backend.services.providers import Provider
@@ -39,6 +40,16 @@ logger = logging.getLogger(__name__)
 # Conservative chunk size — Google's web endpoint accepts ~5000 chars per
 # call; we leave room for inter-segment overhead and tokenization weirdness.
 _CHUNK_LIMIT = 4500
+
+# Google's public endpoint intermittently drops the connection or returns a
+# transient request error under light load. Without a retry a single blip
+# permanently stamps the chapter free_draft_status='error' (the live DB had 8
+# such chapters, all with the same "api connection error" message) until the
+# user manually refreshes. Retry transient failures a few times with linear
+# backoff before surfacing the error. Runs inside a worker thread, so the
+# blocking sleep here doesn't stall the event loop.
+_MAX_TRANSIENT_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = 1.5
 
 # Map novel.source_language (ISO 639-1) → Google language code.
 # Chinese is the special case: Google distinguishes zh-CN (Simplified) from
@@ -206,23 +217,44 @@ class GoogleTranslateFreeTranslator(BaseTranslator):
                 "to enable the Google Translate free-tier backend."
             ) from exc
 
-        try:
-            result = GoogleTranslator(source=src, target="en").translate(text)
-        except TooManyRequests as exc:
-            raise RuntimeError(
-                "Google Translate rate-limited this IP. Wait a few minutes "
-                "and retry, or switch to an LLM provider for this chapter."
-            ) from exc
-        except (RequestError, NotValidPayload, TranslationNotFound) as exc:
-            raise RuntimeError(
-                f"Google Translate request failed: {exc}. Check internet "
-                "connectivity, or switch to an LLM provider."
-            ) from exc
-        except Exception as exc:
-            raise RuntimeError(
-                f"Google Translate raised an unexpected error: {exc!r}."
-            ) from exc
-        return result or ""
+        translator = GoogleTranslator(source=src, target="en")
+        # NotValidPayload is a deterministic input error — never worth a retry.
+        # RequestError / TranslationNotFound are usually a transient endpoint
+        # blip; retry those with backoff. TooManyRequests means we are already
+        # throttled, so retrying immediately would make it worse: surface it.
+        last_request_err: Exception | None = None
+        for attempt in range(1, _MAX_TRANSIENT_RETRIES + 1):
+            try:
+                result = translator.translate(text)
+                return result or ""
+            except TooManyRequests as exc:
+                raise RuntimeError(
+                    "Google Translate rate-limited this IP. Wait a few minutes "
+                    "and retry, or switch to an LLM provider for this chapter."
+                ) from exc
+            except NotValidPayload as exc:
+                raise RuntimeError(
+                    f"Google Translate rejected the input: {exc}."
+                ) from exc
+            except (RequestError, TranslationNotFound) as exc:
+                last_request_err = exc
+                if attempt < _MAX_TRANSIENT_RETRIES:
+                    logger.info(
+                        "google-translate transient failure (attempt %d/%d), "
+                        "retrying: %s",
+                        attempt, _MAX_TRANSIENT_RETRIES, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+                    continue
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Google Translate raised an unexpected error: {exc!r}."
+                ) from exc
+        raise RuntimeError(
+            f"Google Translate request failed after {_MAX_TRANSIENT_RETRIES} "
+            f"attempts: {last_request_err}. Check internet connectivity, or "
+            "switch to an LLM provider."
+        ) from last_request_err
 
     def cache_identity(self) -> str:
         """Google Translate does not share the LLM cache layer (translate_chapter
