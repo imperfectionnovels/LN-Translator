@@ -201,3 +201,48 @@ for js in home library reader glossary glossary-global settings queue stats find
       done
 done
 ```
+
+## Editing a CSS file without bumping its `?v=` serves stale styles
+
+Every page links its sheets with a cache-bust query, e.g.
+`<link rel="stylesheet" href="/static/css/library.css?v=2">`. The browser keys
+its cache on the full URL including `?v=N`. If you edit `library.css` but leave
+the link at the same `?v=`, the dev server (and any already-open client) keeps
+serving the **previously cached** bytes: the change is on disk but invisible in
+the running app. This reads exactly like "my fix did nothing", and it is the
+usual reason a CSS edit appears not to take.
+
+The fix: when you change a sheet's content, bump the `?v=` integer on **every**
+`<link>` that references it (the same sheet is often linked from several pages,
+sometimes at inconsistent versions, so grep for all of them and set them to one
+new value). Skip the bump only when the change is provably render-neutral (e.g.
+deleting a rule that another loaded sheet already provides identically).
+
+To verify a responsive/CSS change, drive a headless browser with a **fresh,
+cache-empty context per run** (Playwright `browser.new_context()` with an
+explicit `viewport`). A cache-empty context reads the current file from disk
+regardless of `?v=`, so it measures the actual edit, not a cached copy. The
+Playwright **MCP** `browser_resize` was unreliable for this in practice; a short
+standalone script with `viewport={width,height}` was the dependable path. The
+overflow probe that found every break this round:
+
+```
+() => {
+  const vw = window.innerWidth, sw = document.scrollingElement.scrollWidth;
+  return { vw, scrollW: sw, overflow: sw > vw };
+}
+```
+
+`scrollW > innerWidth` means the page scrolls sideways (the bug); they should be
+equal.
+
+## Equal-specificity `@media` overrides must come later in source order
+
+A responsive override like `@media (max-width: 720px) { main { padding: ... } }`
+has the **same specificity** as a base `main { padding: ... }` rule, and a media
+query does not raise specificity. The cascade then breaks the tie by source
+order: if the base rule appears *after* the media-query rule in the file, the
+desktop value wins even on a phone and the override silently does nothing. Put
+narrow-viewport overrides at the **end** of the sheet (or raise their
+specificity deliberately), not next to the breakpoint they conceptually belong
+with. This bit the first attempt at the phone-gutter fix in `base.css`.
