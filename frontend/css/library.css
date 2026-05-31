@@ -334,14 +334,9 @@
   grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
   gap: 22px;
 }
-/* Narrow viewports: the masthead action row (Sort + Stats + Find&Replace +
-   Import) and its ~270px Sort select did not wrap or shrink, so the header
-   pushed the page wider than the screen. Let the row wrap and the select
-   shrink. */
-@media (max-width: 720px) {
-  .screen-head .h-actions { flex-wrap: wrap; }
-  .screen-head .h-actions select { min-width: 0; max-width: 100%; }
-}
+/* The masthead action row (Sort + Stats + Find&Replace + Import) and its
+   ~270px Sort select are wrapped/shrunk app-wide by the .screen-head .h-actions
+   rules in base.css, so no library-specific override is needed here. */
 .book-card {
   background: var(--paper);
   border: 1px solid var(--border);
