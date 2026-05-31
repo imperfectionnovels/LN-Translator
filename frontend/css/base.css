@@ -93,6 +93,15 @@
   --paper-deep:      var(--bg-deep);
 }
 
+/* Text-selection highlight. No author rule existed, so drag-selecting painted
+   with the browser default wash, which is near-invisible against the
+   parchment/ink palette: selecting text looked like nothing happened even
+   though the selection was live and copyable. A translucent cinnabar reads
+   clearly on every theme (light parchment and dark inkstone alike) and leaves
+   the underlying text colour intact. */
+::selection { background: rgba(200, 66, 58, 0.28); }
+::-moz-selection { background: rgba(200, 66, 58, 0.28); }
+
 [data-theme="vellum"] {
   color-scheme: light;
   --bg:            #d6d3cb;
