@@ -85,7 +85,7 @@ const endStat = document.getElementById("end-stat");
 const endBlock = document.getElementById("end-block");
 const readPct = document.getElementById("read-pct");
 const readEta = document.getElementById("read-eta");
-const glossaryLink = document.getElementById("glossary-link");
+const glossaryLink = document.getElementById("toc-glossary-link");
 
 glossaryLink.href = `/glossary?novel=${novelId}`;
 // Mobile-only cross-page nav inside the TOC drawer head. Mirrors the spine's
@@ -100,9 +100,9 @@ const downloadEpub = document.getElementById("download-epub");
 if (downloadEpub) downloadEpub.href = `/api/novels/${novelId}/download?format=epub`;
 // Legacy "polished/raw" download links may not exist after reader.html cleanup;
 // null-guard the assignment so a cached HTML doesn't crash boot.
-const dlRawTxt = document.getElementById("download-txt-raw");
+const dlRawTxt = document.getElementById("download-txt-source");
 if (dlRawTxt) dlRawTxt.remove();
-const dlRawMd = document.getElementById("download-md-raw");
+const dlRawMd = document.getElementById("download-md-source");
 if (dlRawMd) dlRawMd.remove();
 // Optional: only present after the reader.html append-chapters edit lands.
 // Null-guarded so a cached-old-HTML + fresh-JS combo doesn't crash boot.

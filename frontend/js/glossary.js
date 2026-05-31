@@ -10,7 +10,6 @@ const searchEl = document.getElementById("search");
 const sortByEl = document.getElementById("sort-by");
 const filterModeEl = document.getElementById("filter-mode");
 const catRailEl = document.getElementById("cat-rail");
-const readerLink = document.getElementById("reader-link");
 const toastEl = document.getElementById("toast");
 const addBtn = document.getElementById("add-entry-btn");
 const headTitle = document.getElementById("head-title");
@@ -21,8 +20,6 @@ const healthRibbonStats = document.getElementById("health-ribbon-stats");
 const healthOpenBtn = document.getElementById("health-open");
 const healthDismissBtn = document.getElementById("health-dismiss");
 const viewToggleEls = document.querySelectorAll(".view-toggle button[data-view]");
-
-readerLink.href = `/reader?novel=${novelId}&ch=1`;
 
 const LS_VIEW_KEY = `gloss.view.${novelId}`;
 const LS_DISMISS_KEY = `gloss.health.dismiss.${novelId}`;
