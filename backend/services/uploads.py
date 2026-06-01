@@ -22,6 +22,8 @@ Three groups live here:
   max) or shifted by MAX(chapter_num), inside one write transaction.
 """
 
+from __future__ import annotations
+
 import io
 import logging
 import re

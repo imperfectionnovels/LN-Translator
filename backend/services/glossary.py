@@ -21,6 +21,8 @@ working without import changes; new code can import directly from the
 right submodule.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 

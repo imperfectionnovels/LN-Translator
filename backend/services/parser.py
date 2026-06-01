@@ -5,6 +5,8 @@ one does), fall back to fixed-size chunks of ~CHUNK_SIZE characters split at
 paragraph boundaries.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 

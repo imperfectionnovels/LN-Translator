@@ -11,6 +11,8 @@ multipart form parsing, .txt filename gating, the author-note bulk skip, and
 thin handler bodies that call into the upload service.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 
