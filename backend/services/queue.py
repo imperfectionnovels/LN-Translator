@@ -57,13 +57,8 @@ from backend.services.text_fixups import (
     enforce_stem_branch_casing,
 )
 from backend.services.text_observers import (
-    detect_double_possessive,
+    body_correctness_observations,
     detect_glossary_predicate_loss,
-    detect_intensifier_inflation_on_glossary_term,
-    detect_locked_idiom_grammar,
-    detect_malformed_compounds,
-    detect_mid_sentence_paragraph_break,
-    detect_mt_texture,
 )
 from backend.services.translators import translate_chapter
 from backend.services.translators.base import PROMPT_TEMPLATE_VERSION
@@ -129,42 +124,6 @@ def _extend_snapshot_with_refiner(
     base["refiner_provider_type"] = refiner.provider_type
     base["refiner_model_id"] = refiner.model_id
     return json.dumps(base, sort_keys=True)
-
-
-def _body_correctness_observations(
-    source_zh: str,
-    en_text: str,
-    glossary,
-) -> list[str]:
-    """Deterministic correctness observations on the translator body.
-
-    Post-architectural-collapse these are observers, not gates: hits are logged
-    but no longer retry the translator or mark the chapter degraded. The
-    single-pass thesis is that noticing has to happen inside the translator's
-    thinking phase — a follow-up retry just adds handoff tax for the same
-    shallow pass.
-
-    Kept body-only on purpose: title-targeted observations are added at the
-    caller side because they reference the translator's `res.title_en`.
-    """
-    found: list[str] = []
-    for zh, en in glossary_svc.missing_translator_terms(source_zh, en_text, glossary):
-        found.append(f'missing locked glossary term {zh!r} → {en!r}')
-    found.extend(detect_locked_idiom_grammar(en_text, glossary))
-    for phrase in detect_malformed_compounds(en_text, glossary):
-        found.append(f"malformed compound {phrase!r}")
-    mt_tells = detect_mt_texture(en_text)
-    if mt_tells:
-        found.append("mt-texture tics: " + "; ".join(mt_tells))
-    found.extend(detect_double_possessive(en_text, glossary))
-    found.extend(detect_intensifier_inflation_on_glossary_term(en_text, glossary))
-    found.extend(detect_mid_sentence_paragraph_break(en_text))
-    found.extend(
-        detect_glossary_predicate_loss(
-            source_zh, en_text, glossary, source_label="chapter body",
-        )
-    )
-    return found
 
 
 # Process-global lock. Acquired by every translate task before doing work, so
@@ -631,7 +590,7 @@ async def _translate_chapter_in_db(
         # Observations only — no retry, no degraded mark. The single-pass
         # thesis is that noticing happens inside the translator's thinking
         # phase; a retry is just two shallow passes for the same deficit.
-        observation_messages = list(_body_correctness_observations(
+        observation_messages = list(body_correctness_observations(
             r["original_text"], cleaned_text, glossary,
         ))
         for zh, en in glossary_svc.missing_translator_terms(

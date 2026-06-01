@@ -505,7 +505,9 @@ async def _refresh_observations_for_chapter(
     from backend.services.observations import (  # noqa: PLC0415
         normalize_observer_outputs,
     )
-    from backend.services.queue import _body_correctness_observations  # noqa: PLC0415
+    from backend.services.text_observers import (  # noqa: PLC0415
+        body_correctness_observations,
+    )
 
     # Get the chapter's original source text + novel's muted observers.
     cur = await conn.execute(
@@ -519,7 +521,7 @@ async def _refresh_observations_for_chapter(
     glossary = await global_glossary_svc.list_for_novel_with_globals(
         conn, novel_id,
     )
-    raw_msgs = list(_body_correctness_observations(
+    raw_msgs = list(body_correctness_observations(
         row["original_text"], new_body, glossary,
     ))
     normalized = list(normalize_observer_outputs(raw_msgs))

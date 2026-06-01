@@ -595,7 +595,7 @@ _ADDITIVE_MIGRATIONS = (
     "ALTER TABLE novels ADD COLUMN deleted_at TEXT",
     # 2026-05-25 Bundle 2 (observability) — per-novel observer mute. JSON
     # array of detect_* kind strings (e.g. '["mt_texture","double_possessive"]')
-    # that the queue worker skips when running _body_correctness_observations.
+    # that the queue worker skips when running body_correctness_observations.
     "ALTER TABLE novels ADD COLUMN disabled_observers TEXT",
     # 2026-05-25 Bundle 3 (queue UX) — drag-to-reorder priority. NULL means
     # use FIFO by id (current behavior). Non-NULL takes priority lower-first.

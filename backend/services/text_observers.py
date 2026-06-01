@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 
 from backend.models import GlossaryEntry
-from backend.services.glossary import split_aliases
+from backend.services.glossary import missing_translator_terms, split_aliases
 
 # ---------------------------------------------------------------------------
 # Malformed cultivation-compound detection
@@ -909,3 +909,40 @@ def detect_glossary_predicate_loss(
                 break
 
     return issues
+
+
+def body_correctness_observations(
+    source_zh: str,
+    en_text: str,
+    glossary: list[GlossaryEntry],
+) -> list[str]:
+    """Compose the deterministic correctness observations for a chapter body.
+
+    Orchestrates this module's detect_* observers plus the glossary service's
+    missing_translator_terms into one list of human-readable hit strings. Post
+    single-pass restructure these are observers, not gates: the queue worker
+    logs hits at INFO and never retries. Lives here (not in the queue worker)
+    because it only composes this module's observers and carries no queue
+    state; the queue and the edit-paragraph route both call it.
+
+    Body-only on purpose: title-targeted observations are added at the caller
+    because they reference the translator's res.title_en.
+    """
+    found: list[str] = []
+    for zh, en in missing_translator_terms(source_zh, en_text, glossary):
+        found.append(f'missing locked glossary term {zh!r} → {en!r}')
+    found.extend(detect_locked_idiom_grammar(en_text, glossary))
+    for phrase in detect_malformed_compounds(en_text, glossary):
+        found.append(f"malformed compound {phrase!r}")
+    mt_tells = detect_mt_texture(en_text)
+    if mt_tells:
+        found.append("mt-texture tics: " + "; ".join(mt_tells))
+    found.extend(detect_double_possessive(en_text, glossary))
+    found.extend(detect_intensifier_inflation_on_glossary_term(en_text, glossary))
+    found.extend(detect_mid_sentence_paragraph_break(en_text))
+    found.extend(
+        detect_glossary_predicate_loss(
+            source_zh, en_text, glossary, source_label="chapter body",
+        )
+    )
+    return found
