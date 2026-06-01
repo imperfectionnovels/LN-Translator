@@ -119,24 +119,32 @@ def test_update_entry_stamps_updated_at(client: TestClient) -> None:
     reader / glossary UI depends on this column moving forward whenever
     the term's English text (or any other field) changes; a column that
     only carries the insert time would never make a term "stale" relative
-    to chapters that translated against the previous rendering."""
-    import time
+    to chapters that translated against the previous rendering.
 
+    The service writes `updated_at = datetime('now')` (SQLite second
+    precision). Rather than sleep across the one-second boundary, we force
+    the row's updated_at to an explicit past timestamp; the PATCH then
+    writes a current `datetime('now')` that is strictly later, so the
+    advance is observable without any wall-clock wait."""
     _, entry_id = _seed_entry()
-    # Snapshot the insert-time stamp.
+
+    # Pin updated_at to a fixed, unambiguously-past value so the PATCH's
+    # datetime('now') is guaranteed strictly later (no real-time sleep).
+    PAST = "2000-01-01 00:00:00"
     conn = sqlite3.connect(DB_PATH)
     try:
+        conn.execute(
+            "UPDATE glossary_entries SET updated_at = ? WHERE id = ?",
+            (PAST, entry_id),
+        )
+        conn.commit()
         before = conn.execute(
             "SELECT updated_at FROM glossary_entries WHERE id = ?",
             (entry_id,),
         ).fetchone()[0]
     finally:
         conn.close()
-    assert before is not None, "default-on-insert should have set updated_at"
-
-    # SQLite datetime('now') is second-precision. Sleep just enough to cross
-    # the boundary so the strings differ unambiguously.
-    time.sleep(1.1)
+    assert before == PAST
 
     resp = client.patch(
         f"/api/glossary/{entry_id}", json={"term_en": "Heaven Blade"}
