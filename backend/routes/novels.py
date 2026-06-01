@@ -4,8 +4,8 @@ import re
 from urllib.parse import quote
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from backend.db import get_conn, open_conn
 from backend.genres import is_known_genre
@@ -20,7 +20,13 @@ from backend.models import (
 )
 from backend.services import genres_novel as genres_novel_svc
 from backend.services import queue as queue_svc
-from backend.services.covers import resolve_cover_path
+from backend.services.covers import (
+    MAX_COVER_BYTES,
+    resolve_cover_path,
+    sniff_image_ext,
+    unlink_existing,
+    write_cover_for_novel,
+)
 from backend.services.epub_export import build_epub
 from backend.services.providers import load_provider
 
@@ -813,3 +819,93 @@ async def set_novel_primary_genre(
     return _genres_response(
         await genres_novel_svc.set_primary_genre(conn, novel_id, genre_key)
     )
+
+
+# ----- Cover image (a sub-resource of the novel; lives here so the file
+# boundary matches the /api/novels/{id}/cover URL boundary). Covers land on
+# disk at USER_DATA_ROOT/covers/{novel_id}.{ext}; the DB tracks the relative
+# path. Image validation is a magic-byte sniff (PNG/JPEG/WebP/GIF). -----
+
+async def _ensure_novel_exists(conn: aiosqlite.Connection, novel_id: int) -> None:
+    cur = await conn.execute("SELECT 1 FROM novels WHERE id = ?", (novel_id,))
+    if await cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+
+
+@router.post("/{novel_id}/cover")
+async def upload_cover(
+    novel_id: int,
+    file: UploadFile = File(...),
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Upload (or replace) a novel cover. Validates magic bytes, caps size,
+    writes atomically (temp + rename), updates novels.cover_image_path."""
+    await _ensure_novel_exists(conn, novel_id)
+    head = await file.read(MAX_COVER_BYTES + 1)
+    if len(head) > MAX_COVER_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"cover too large; cap is {MAX_COVER_BYTES // (1024 * 1024)} MB",
+        )
+    if sniff_image_ext(head[:16]) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="unsupported image format; upload PNG, JPEG, GIF, or WebP",
+        )
+
+    written = await write_cover_for_novel(conn, novel_id, bytes(head), source="upload")
+    if written is None:
+        # sniff_image_ext already validated; the only way the helper returns
+        # None now is a header we do not support. Surface as the standard 400.
+        raise HTTPException(
+            status_code=400,
+            detail="unsupported image format; upload PNG, JPEG, GIF, or WebP",
+        )
+    relative_path, size_bytes = written
+    await conn.commit()
+    return {
+        "ok": True,
+        "cover_image_path": relative_path,
+        "size_bytes": size_bytes,
+    }
+
+
+@router.get("/{novel_id}/cover")
+async def serve_cover(
+    novel_id: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> FileResponse:
+    """Stream the cover image. 404 when none uploaded."""
+    cur = await conn.execute(
+        "SELECT cover_image_path FROM novels WHERE id = ?", (novel_id,)
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+    path = resolve_cover_path(row["cover_image_path"])
+    if path is None:
+        raise HTTPException(status_code=404, detail="no cover uploaded")
+    # FileResponse handles ETag + If-Modified-Since automatically; covers
+    # change rarely so the browser cache is well-behaved.
+    return FileResponse(path)
+
+
+@router.delete("/{novel_id}/cover")
+async def delete_cover(
+    novel_id: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Remove the cover. Idempotent: returns ok=True even when none was
+    stored. Clears the column and unlinks the file."""
+    cur = await conn.execute(
+        "SELECT cover_image_path FROM novels WHERE id = ?", (novel_id,)
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+    unlink_existing(row["cover_image_path"])
+    await conn.execute(
+        "UPDATE novels SET cover_image_path = NULL WHERE id = ?", (novel_id,)
+    )
+    await conn.commit()
+    return {"ok": True}

@@ -21,7 +21,6 @@ from backend.routes import (
     cache,
     chapters,
     config_kv,
-    covers,
     find_replace,
     genres,
     global_glossary,
@@ -447,6 +446,13 @@ app = FastAPI(title="LN-Translator", lifespan=lifespan)
 # is config-driven (conftest adds "testserver" for the suite).
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
+# Router mounting convention: a router whose entire surface lives under one
+# resource path gets that domain prefix here (translate, novels, providers,
+# genres, cache, imports), so its decorators carry only the trailing path. A
+# router whose endpoints span multiple resource paths (e.g. chapters and
+# glossary live under BOTH /novels/{id}/... and /{id}/...) mounts at the bare
+# /api prefix and spells the full path in each decorator. Cover endpoints are
+# a novel sub-resource and live on the novels router (see routes/novels.py).
 app.include_router(translate.router, prefix="/api/translate", tags=["translate"])
 app.include_router(novels.router, prefix="/api/novels", tags=["novels"])
 app.include_router(chapters.router, prefix="/api", tags=["chapters"])
@@ -455,7 +461,6 @@ app.include_router(providers.router, prefix="/api/providers", tags=["providers"]
 app.include_router(genres.router, prefix="/api/genres", tags=["genres"])
 app.include_router(cache.router, prefix="/api/cache", tags=["cache"])
 app.include_router(observations.router, prefix="/api", tags=["observations"])
-app.include_router(covers.router, prefix="/api/novels", tags=["covers"])
 app.include_router(bookmarks.router, prefix="/api", tags=["bookmarks"])
 app.include_router(global_glossary.router, prefix="/api", tags=["global-glossary"])
 app.include_router(find_replace.router, prefix="/api", tags=["find-replace"])
