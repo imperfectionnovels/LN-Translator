@@ -38,7 +38,7 @@ Render speech as natural English, in double quotes. When a moment carries weight
 
 # Formatting
 
-- System-interface text inside 【】 is bold: `**【Field: Value】**`, one such line per paragraph, the field label Title Case inside the brackets. The same words are lowercase common nouns in ordinary prose.
+- System-interface status text inside 【】 is bold: `**【Field: Value】**`, one such line per paragraph, with the field label in Title Case. That Title Case applies only to the field label of a `【Field: Value】` status line; a 【】 span that holds a full sentence or message (a transmitted message, a spoken or read line, a notification) keeps ordinary sentence case, not Title Case. The same words are lowercase common nouns in ordinary prose.
 - Sound effects in ALL CAPS, no quotes: BOOM, CLANG, RUMBLE.
 - Italics for first-person direct inner thought, whatever its tense: a present-tense musing and a past or past-perfect recollection both stay italic. Also italicize recited or read text (scripture, a manual passage) surfacing in a character's mind. Leave thought the source keeps in the third person (free indirect discourse) blended into the narration unitalicized, and do not italicize a named artifact you merely wield or wear.
 - Keep one point of view within a paragraph; shift POV only at a paragraph, scene, or chapter break.
