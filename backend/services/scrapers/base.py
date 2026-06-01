@@ -15,11 +15,11 @@ is **two-phase** to support resumable imports:
    may retry on transient errors, and on resume it picks up exactly
    the chapters whose `import_fetched_at` is still NULL.
 
-The legacy `scrape()` method (atomic single-transaction create of
-novel + all chapters) is kept for back-compat with smoke scripts and
-the generic `/scrape` route's non-runner fallback. New code paths
-should go through `import_runner.start_from_recipe` which drives
-`plan + fetch_chapter` with per-chapter commits.
+All recipe imports go through `import_runner.start_from_recipe`, which
+drives `plan + fetch_chapter` with per-chapter commits (resumable across
+restarts). There is no longer a single-call atomic `scrape()` on the
+recipe surface; the recipe end-to-end tests drive plan + fetch_chapter
+through a small test-only helper instead.
 
 Every fetch goes through the injected `fetch` callable (from
 `backend.services.scraper._fetch_with_manual_redirects`) so the SSRF
@@ -34,22 +34,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-import aiosqlite
-
 
 @dataclass(frozen=True)
 class RecipeResult:
-    """Returned by a recipe's `scrape()` (the legacy atomic path) when it
-    has already created the novel + chapters. The route layer
-    (routes/translate.py /scrape) distinguishes this from the generic
-    ScrapeResult via isinstance and skips its own create-novel flow when
-    it sees a RecipeResult.
+    """Summary of a completed recipe import (novel + chapters already
+    created). The production import_runner reports progress + completion
+    through `scrape_jobs` rather than returning this; the recipe
+    end-to-end tests use it as a compact assertion target via the
+    test-only atomic import helper.
 
-    Why the two shapes coexist instead of making everything go through
-    the same parse pipeline: the parse pipeline takes one big text blob
-    and runs heading regexes over it. A recipe already knows what's a
-    chapter heading vs body via site-specific selectors — round-tripping
-    back through the regex parser would lose that fidelity."""
+    Kept as a typed shape (rather than a bare dict) so the test helper and
+    any future single-call caller share one contract: novel_id, the first
+    chapter number, the count added, the source URL, the title, and whether
+    a cover was extracted."""
 
     novel_id: int
     first_chapter_num: int
@@ -126,11 +123,11 @@ class BaseRecipe(ABC):
     name: str = ""
 
     #: Default genre key (from backend/genres.py::GENRES) for novels
-    #: imported via this recipe. The recipe's `scrape()` is expected to
-    #: pass this through to `atomic_create_novel`. The route layer's
-    #: user-supplied `genre` (when present) takes precedence — the
-    #: default is the fallback when the user doesn't pick. NULL leaves
-    #: novels.genre NULL, deferring to the user's edit on the novel page.
+    #: imported via this recipe. The import_runner reads it when creating
+    #: the novel skeleton. The route layer's user-supplied `genre` (when
+    #: present) takes precedence — the default is the fallback when the
+    #: user doesn't pick. NULL leaves novels.genre NULL, deferring to the
+    #: user's edit on the novel page.
     default_genre: str | None = None
 
     @abstractmethod
@@ -180,97 +177,3 @@ class BaseRecipe(ABC):
         raise `TransientScrapeError` so the runner backs off and
         retries rather than marking the chapter dead.
         """
-
-    async def scrape(
-        self,
-        url: str,
-        conn: aiosqlite.Connection,
-        *,
-        cookies: str | None,
-        fetch: Fetcher,
-        progress: ProgressFn = None,
-    ) -> RecipeResult:
-        """Legacy atomic-import path. Kept for back-compat with smoke
-        scripts; the live route layer goes through `import_runner`
-        instead so the per-chapter loop is resumable.
-
-        Default implementation: drive plan + fetch_chapter sequentially
-        and atomic-create at the end (matches pre-refactor behavior).
-        Subclasses that need cross-chapter state (e.g. paginated
-        chapter lists with Referer continuity) can override this, but
-        none of the current four recipes do.
-        """
-        # Lazy imports — keep base.py free of cyclic recipe deps.
-        from backend.services.covers import write_cover_for_novel
-        from backend.services.lang_detect import detect_source_language
-        from backend.services.parser import ParsedChapter
-        from backend.services.uploads import atomic_create_novel
-
-        plan = await self.plan(url, cookies=cookies, fetch=fetch, progress=progress)
-        if progress:
-            await progress("fetching_chapters", 0, len(plan.chapters))
-
-        parsed: list[ParsedChapter] = []
-        for i, p in enumerate(plan.chapters, start=1):
-            fetched = await self.fetch_chapter(
-                p, cookies=cookies, fetch=fetch, recipe_state=plan.recipe_state,
-            )
-            parsed.append(
-                ParsedChapter(
-                    chapter_num=p.chapter_num,
-                    title_zh=fetched.title_zh,
-                    original_text=fetched.original_text,
-                    printed_num=p.printed_num,
-                )
-            )
-            if progress:
-                await progress("fetching_chapters", i, len(plan.chapters))
-
-        # Note: chapter_num reconciliation happens in the runner's
-        # `_reconcile_planned`, not here — the legacy `scrape()` callers
-        # (smoke scripts) historically used the enumerate-based chapter_num
-        # without reconcile, and breaking that here changed first_chapter_num
-        # in syosetu's test fixture. The runner path remains reconciled.
-        if progress:
-            await progress("writing", len(plan.chapters), len(plan.chapters))
-
-        detected_lang = detect_source_language(
-            parsed[0].original_text if parsed else "",
-        )
-        novel_id = await atomic_create_novel(
-            conn,
-            title=plan.title,
-            chapters=parsed,
-            source_type="url",
-            source_url=plan.catalog_url,
-            genre=self.default_genre,
-            source_language=detected_lang,
-        )
-
-        cover_extracted = False
-        if plan.cover_url:
-            try:
-                cs, cbody, cct, _enc = await fetch(
-                    plan.cover_url, cookies=cookies,
-                )
-                if cs < 400 and cct.startswith("image/"):
-                    written = await write_cover_for_novel(
-                        conn, novel_id, cbody, source="url",
-                    )
-                    if written is not None:
-                        cover_extracted = True
-                        await conn.commit()
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "cover fetch failed for novel %d (continuing)", novel_id,
-                )
-
-        return RecipeResult(
-            novel_id=novel_id,
-            first_chapter_num=parsed[0].chapter_num if parsed else 1,
-            added_chapters=len(parsed),
-            source_url=plan.catalog_url,
-            title=plan.title,
-            cover_extracted=cover_extracted,
-        )

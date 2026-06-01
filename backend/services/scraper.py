@@ -64,18 +64,9 @@ import re
 import socket
 import urllib.parse
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Union
 
-import aiosqlite
 import httpx
 import trafilatura
-
-if TYPE_CHECKING:
-    # Import only for the type-annotation forward-reference. The runtime
-    # path imports the same class lazily inside scrape_url so module
-    # import order stays straight (scrapers/__init__.py imports this
-    # module).
-    from backend.services.scrapers.base import RecipeResult  # noqa: F401
 
 from backend.services.covers import MAX_COVER_BYTES, sniff_image_ext
 
@@ -665,9 +656,7 @@ async def fetch_one(
 async def scrape_url(
     url: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS,
     cookies: str | None = None,
-    conn: aiosqlite.Connection | None = None,
-    progress: "Callable[[str, int, int], Awaitable[None]] | None" = None,
-) -> "Union[ScrapeResult, 'RecipeResult']":
+) -> ScrapeResult:
     """Fetch `url`, extract main article text, return ScrapeResult.
 
     `cookies` is an optional Cookie-header string ("name1=value1; name2=value2")
@@ -685,16 +674,12 @@ async def scrape_url(
     The whole fetch+stream phase is wrapped in `asyncio.timeout(timeout)`
     so the 15s cap is a true wall-clock deadline, not just a per-op limit.
 
-    Recipe dispatch: when ``conn`` is provided AND a site recipe matches
-    the URL's hostname (see ``backend/services/scrapers``), the recipe
-    owns the entire import — fetches the index, walks the chapter list,
-    creates the novel + chapters in one transaction, optionally writes
-    a cover, and returns a ``RecipeResult``. The route layer
-    distinguishes RecipeResult from ScrapeResult via isinstance and
-    skips its own ``_create_novel_and_chapters`` call when it sees a
-    RecipeResult. Callers that don't pass ``conn`` (smoke tests, direct
-    callers) get the legacy ScrapeResult path even when a recipe could
-    have handled the URL.
+    This is the generic, single-page trafilatura path only. Per-site recipe
+    imports (69shuba, syosetu, uukanshu, piaotian) are dispatched and driven
+    entirely by `import_runner.start_from_recipe` (resumable skeleton + fill);
+    the route layer (`routes/translate.py::translate_scrape`) checks the
+    recipe dispatcher itself and never reaches this function for a
+    recipe-backed URL.
     """
     url = (url or "").strip()
     if not url:
@@ -704,25 +689,6 @@ async def scrape_url(
     # SSRF guard for the initial URL. Redirects are validated per-hop
     # inside _fetch_with_manual_redirects.
     await _resolve_and_validate(parsed.hostname)
-
-    # Recipe dispatch: per-site code paths (encoding, URL transforms,
-    # chapter-list crawl) for known hosts. Recipes own the full import
-    # — they call `atomic_create_novel` themselves and return a
-    # RecipeResult. Only fires when the caller passed ``conn`` (without
-    # it the recipe can't write to the DB).
-    if conn is not None:
-        from backend.services.scrapers import (
-            dispatch,  # noqa: PLC0415 — avoid circular at module load
-        )
-        recipe = dispatch(parsed.hostname)
-        if recipe is not None:
-            logger.info(
-                "scrape_url: dispatching %s to recipe %r", url, recipe.name,
-            )
-            return await recipe.scrape(
-                url, conn, cookies=cookies, fetch=fetch_one,
-                progress=progress,
-            )
 
     # Build a request that looks like a real Chrome navigation. The
     # Accept-Language puts zh-CN first because the overwhelming majority

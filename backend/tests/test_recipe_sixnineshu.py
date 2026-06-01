@@ -1,9 +1,9 @@
 """69shuba recipe end-to-end test.
 
 Mocks the fetcher to return canned 69shuba-shaped HTML (overview page +
-chapter-list page + N chapter bodies), runs the recipe through
-`scrape_url`, and asserts the resulting novel has the expected chapters
-in order with the expected title and cover.
+chapter-list page + N chapter bodies), runs the recipe through the
+test-only `atomic_import_via_recipe` helper, and asserts the resulting
+novel has the expected chapters in order with the expected title and cover.
 
 GBK encoding: the canned bytes are actually encoded as GBK so the recipe's
 decode path is exercised end-to-end.
@@ -172,16 +172,17 @@ def test_han_digits_to_int_basic_cases(han, expected):
 
 @pytest.mark.asyncio
 async def test_recipe_imports_a_full_novel_with_cover(monkeypatch):
-    """Mock a 5-chapter 69shuba novel + cover. Run the recipe through
-    scrape_url. Assert: novel exists, has 5 chapters in order with
-    correct printed_num, cover bytes were written, cover_source='url'.
+    """Mock a 5-chapter 69shuba novel + cover. Run the recipe through the
+    atomic_import_via_recipe helper. Assert: novel exists, has 5 chapters in
+    order with correct printed_num, cover bytes were written, cover_source='url'.
 
     Patches _CHAPTER_FETCH_INTERVAL to 0 — the live recipe sleeps 1s
     between chapters to stay under Cloudflare's rate limit, but in
     tests the mocked fetcher returns instantly and the sleep is pure
     overhead."""
-    from backend.services.scraper import scrape_url
     from backend.services.scrapers import sixnineshu as six_mod
+    from backend.services.scrapers.sixnineshu import SixNineShuRecipe
+    from backend.tests._recipe_atomic_helper import atomic_import_via_recipe
     monkeypatch.setattr(six_mod, "_CHAPTER_FETCH_INTERVAL", 0)
 
     chapter_links = [(i, f"章节{i}") for i in range(1, 6)]
@@ -227,39 +228,23 @@ async def test_recipe_imports_a_full_novel_with_cover(monkeypatch):
             return 200, _PNG_1x1, "image/png", "utf-8"
         raise AssertionError(f"unexpected fetch URL in test: {url}")
 
-    # Monkeypatch scrape_url's fetch_one with our canned fetcher.
-    from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod.fetch_one
-    scraper_mod.fetch_one = fake_fetch
-    # Also bypass DNS for the SSRF guard at the start of scrape_url
-    # (the recipe is dispatched before the trafilatura path's fetch, but
-    # scrape_url still SSRF-validates the initial URL).
-    real_resolve = scraper_mod._resolve_and_validate
+    await init_db()
+    async with open_conn() as conn:
+        # Clean slate so we know which novel id to inspect.
+        for t in ("chapters", "novels"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
 
-    async def fake_resolve(host):
-        return None
-
-    scraper_mod._resolve_and_validate = fake_resolve
-
-    try:
-        await init_db()
-        async with open_conn() as conn:
-            # Clean slate so we know which novel id to inspect.
-            for t in ("chapters", "novels"):
-                try:
-                    await conn.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            await conn.commit()
-
-            result = await scrape_url(
-                "https://www.69shuba.com/book/99999.htm",
-                cookies=None,
-                conn=conn,
-            )
-    finally:
-        scraper_mod.fetch_one = real_fetch
-        scraper_mod._resolve_and_validate = real_resolve
+        result = await atomic_import_via_recipe(
+            SixNineShuRecipe(),
+            "https://www.69shuba.com/book/99999.htm",
+            conn,
+            cookies=None,
+            fetch=fake_fetch,
+        )
 
     assert isinstance(result, RecipeResult)
     assert result.title == "测试小说"
@@ -318,6 +303,8 @@ async def test_recipe_retries_chapter_fetch_on_cf_403(monkeypatch):
     book 88724 hit a transient 403 and the recipe aborted the entire
     1424-chapter crawl over one transient failure)."""
     from backend.services.scrapers import sixnineshu as six_mod
+    from backend.services.scrapers.sixnineshu import SixNineShuRecipe
+    from backend.tests._recipe_atomic_helper import atomic_import_via_recipe
     monkeypatch.setattr(six_mod, "_CHAPTER_FETCH_INTERVAL", 0)
     monkeypatch.setattr(six_mod, "_CHAPTER_RETRY_BACKOFFS", (0, 0, 0))
 
@@ -350,34 +337,21 @@ async def test_recipe_retries_chapter_fetch_on_cf_403(monkeypatch):
             return 200, _PNG_1x1, "image/png", "utf-8"
         raise AssertionError(f"unexpected fetch URL: {url}")
 
-    from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod.fetch_one
-    real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod.fetch_one = fake_fetch
-
-    async def fake_resolve(host):
-        return None
-
-    scraper_mod._resolve_and_validate = fake_resolve
-
-    try:
-        await init_db()
-        async with open_conn() as conn:
-            for t in ("chapters", "novels"):
-                try:
-                    await conn.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            await conn.commit()
-            from backend.services.scraper import scrape_url
-            result = await scrape_url(
-                "https://www.69shuba.com/book/99998.htm",
-                cookies=None,
-                conn=conn,
-            )
-    finally:
-        scraper_mod.fetch_one = real_fetch
-        scraper_mod._resolve_and_validate = real_resolve
+    await init_db()
+    async with open_conn() as conn:
+        for t in ("chapters", "novels"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
+        result = await atomic_import_via_recipe(
+            SixNineShuRecipe(),
+            "https://www.69shuba.com/book/99998.htm",
+            conn,
+            cookies=None,
+            fetch=fake_fetch,
+        )
 
     # All 5 chapters land — the retry recovered chapter 3.
     assert result.added_chapters == 5

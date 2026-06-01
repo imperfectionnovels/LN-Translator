@@ -173,8 +173,9 @@ async def test_recipe_imports_with_mocked_fetcher(monkeypatch):
     """Run the recipe against the captured catalog + chapter fixtures.
     Patch _CHAPTER_FETCH_INTERVAL to 0 so the test doesn't sleep for
     ~9 minutes (the captured fixture has 2000+ chapters)."""
-    from backend.services.scraper import scrape_url
     from backend.services.scrapers import piaotian as pt_mod
+    from backend.services.scrapers.piaotian import PiaotianRecipe
+    from backend.tests._recipe_atomic_helper import atomic_import_via_recipe
     monkeypatch.setattr(pt_mod, "_CHAPTER_FETCH_INTERVAL", 0)
 
     overview_bytes = (FIXTURES / "overview.html").read_text(encoding="utf-8").encode("gbk", errors="replace")
@@ -199,33 +200,21 @@ async def test_recipe_imports_with_mocked_fetcher(monkeypatch):
             return 200, png_1x1, "image/png", "utf-8"
         raise AssertionError(f"unexpected fetch URL: {url}")
 
-    from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod.fetch_one
-    real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod.fetch_one = fake_fetch
-
-    async def fake_resolve(host):
-        return None
-
-    scraper_mod._resolve_and_validate = fake_resolve
-
-    try:
-        await init_db()
-        async with open_conn() as conn:
-            for t in ("chapters", "novels"):
-                try:
-                    await conn.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            await conn.commit()
-            result = await scrape_url(
-                "https://www.piaotia.com/bookinfo/1/1705.html",
-                cookies=None,
-                conn=conn,
-            )
-    finally:
-        scraper_mod.fetch_one = real_fetch
-        scraper_mod._resolve_and_validate = real_resolve
+    await init_db()
+    async with open_conn() as conn:
+        for t in ("chapters", "novels"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
+        result = await atomic_import_via_recipe(
+            PiaotianRecipe(),
+            "https://www.piaotia.com/bookinfo/1/1705.html",
+            conn,
+            cookies=None,
+            fetch=fake_fetch,
+        )
 
     assert isinstance(result, RecipeResult)
     assert result.title == "傲世九重天"

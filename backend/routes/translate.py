@@ -354,22 +354,35 @@ async def translate_scrape(
     HTTPException(400) directly.
     """
     # Decide recipe-vs-generic before touching scrape_url so we know
-    # whether to background. dispatch_for_url is cheap (one urlparse +
-    # a few dict lookups).
+    # whether to background. dispatch is cheap (one urlparse + a few
+    # dict lookups).
     from urllib.parse import urlparse  # noqa: PLC0415
 
     from backend.services.scrapers import dispatch  # noqa: PLC0415
     parsed = urlparse(payload.url) if payload.url else None
-    is_recipe_url = (
-        parsed is not None
-        and dispatch(parsed.hostname) is not None
-        and payload.novel_id is None  # recipe-driven append not supported
-    )
+    recipe = dispatch(parsed.hostname) if parsed is not None else None
 
-    if is_recipe_url:
+    if recipe is not None:
+        # A per-site recipe matched. Recipe imports always create a fresh
+        # novel via the resumable import_runner (background job) — they do
+        # not support append-mode. Reject append BEFORE doing any fetch so
+        # we never run a full crawl just to 400 afterward.
+        if payload.novel_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Append-mode URL import is not supported for sites with "
+                    "a per-site recipe (e.g. 69shuba). The recipe creates a "
+                    "fresh novel from the URL; to add chapters to an "
+                    "existing novel from this site, delete the duplicate "
+                    "afterwards or use a different import method."
+                ),
+            )
         from backend.services import scrape_jobs  # noqa: PLC0415
         job_id = await scrape_jobs.create_job(payload.url)
-        # Fire-and-forget. The task survives the request returning.
+        # Fire-and-forget. The task survives the request returning. The
+        # job runs through import_runner.start_from_recipe (resumable
+        # skeleton + per-chapter fill), not the route.
         scrape_jobs.spawn(job_id, payload.url, payload.cookies)
         return {
             "job_id": job_id,
@@ -378,11 +391,11 @@ async def translate_scrape(
             "background": True,
         }
 
+    # Generic (non-recipe) URL: trafilatura article extraction. No conn is
+    # passed — recipe dispatch is handled entirely above, so scrape_url
+    # always returns a ScrapeResult here.
     try:
-        # Pass conn so scrape_url can dispatch to a per-site recipe (e.g.
-        # 69shuba). Recipes own the full import end-to-end and return a
-        # RecipeResult instead of the legacy ScrapeResult.
-        result = await scrape_url(payload.url, cookies=payload.cookies, conn=conn)
+        result = await scrape_url(payload.url, cookies=payload.cookies)
     except ScrapeError as e:
         # 2026-05-25 (F06): differentiated error UI. Surface error_kind
         # in the JSON so the frontend can render per-cause recovery
@@ -395,37 +408,6 @@ async def translate_scrape(
                 "error_kind": getattr(e, "error_kind", "unknown"),
             },
         ) from e
-
-    # Recipe path: the novel + chapters + cover were created inside the
-    # recipe via atomic_create_novel. Return the assembled response
-    # shape — no second create flow needed. Append-mode (novel_id set)
-    # isn't supported through recipes yet; fall back to the legacy text
-    # parsing path by re-scraping without conn.
-    from backend.services.scrapers.base import RecipeResult  # noqa: PLC0415
-    if isinstance(result, RecipeResult):
-        if payload.novel_id is not None:
-            # Recipe-driven append isn't implemented; the recipe already
-            # created a brand-new novel. Surface this as a 400 so the
-            # user picks a different URL or unsets novel_id.
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Append-mode URL import is not supported for sites with "
-                    "a per-site recipe (e.g. 69shuba). The recipe creates a "
-                    "fresh novel from the URL; to add chapters to an "
-                    "existing novel from this site, delete the duplicate "
-                    "afterwards or use a different import method."
-                ),
-            )
-        return {
-            "novel_id": result.novel_id,
-            "first_chapter": result.first_chapter_num,
-            "added_chapters": result.added_chapters,
-            "scraped_url": result.source_url,
-            "scraped_title": result.title,
-            "cover_extracted": result.cover_extracted,
-            "recipe": True,
-        }
 
     if payload.novel_id is not None:
         # Append flow. The novel must already exist.

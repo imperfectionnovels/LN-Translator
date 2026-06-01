@@ -181,14 +181,15 @@ def test_recipe_is_registered_with_dispatcher():
 @pytest.mark.asyncio
 async def test_recipe_imports_with_mocked_fetcher(monkeypatch):
     """Mock the fetcher with the captured fixtures and run the recipe
-    via scrape_url. Assert the novel + N chapters land in the DB with
-    the expected title, genre, source_language.
+    via the atomic_import_via_recipe helper. Assert the novel + N chapters
+    land in the DB with the expected title, genre, source_language.
 
     Patches _CHAPTER_FETCH_INTERVAL to 0 — the 0.2s polite throttle is
     a live-site nicety; with 1000+ mocked chapters it would balloon CI
     by ~4 minutes for no test signal."""
-    from backend.services.scraper import scrape_url
     from backend.services.scrapers import uukanshu as uu_mod
+    from backend.services.scrapers.uukanshu import UukanshuRecipe
+    from backend.tests._recipe_atomic_helper import atomic_import_via_recipe
     monkeypatch.setattr(uu_mod, "_CHAPTER_FETCH_INTERVAL", 0)
 
     overview_bytes = (FIXTURES / "overview.html").read_bytes()
@@ -216,33 +217,21 @@ async def test_recipe_imports_with_mocked_fetcher(monkeypatch):
             return 200, png_1x1, "image/png", "utf-8"
         raise AssertionError(f"unexpected fetch URL: {url}")
 
-    from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod.fetch_one
-    real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod.fetch_one = fake_fetch
-
-    async def fake_resolve(host):
-        return None
-
-    scraper_mod._resolve_and_validate = fake_resolve
-
-    try:
-        await init_db()
-        async with open_conn() as conn:
-            for t in ("chapters", "novels"):
-                try:
-                    await conn.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            await conn.commit()
-            result = await scrape_url(
-                "https://www.uukanshu.cc/book/17474/",
-                cookies=None,
-                conn=conn,
-            )
-    finally:
-        scraper_mod.fetch_one = real_fetch
-        scraper_mod._resolve_and_validate = real_resolve
+    await init_db()
+    async with open_conn() as conn:
+        for t in ("chapters", "novels"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
+        result = await atomic_import_via_recipe(
+            UukanshuRecipe(),
+            "https://www.uukanshu.cc/book/17474/",
+            conn,
+            cookies=None,
+            fetch=fake_fetch,
+        )
 
     assert isinstance(result, RecipeResult)
     assert "斗羅大陸" in result.title

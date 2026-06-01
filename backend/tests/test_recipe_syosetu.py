@@ -193,8 +193,9 @@ async def test_recipe_imports_novel_with_mocked_fetcher(monkeypatch):
 
     Patches _CHAPTER_FETCH_INTERVAL to 0 — the 0.2s polite throttle is
     a live-site nicety, not load-bearing for the test."""
-    from backend.services.scraper import scrape_url
     from backend.services.scrapers import syosetu as syo_mod
+    from backend.services.scrapers.syosetu import SyosetuRecipe
+    from backend.tests._recipe_atomic_helper import atomic_import_via_recipe
     monkeypatch.setattr(syo_mod, "_CHAPTER_FETCH_INTERVAL", 0)
 
     overview_bytes = (FIXTURES / "overview.html").read_bytes()
@@ -223,34 +224,22 @@ async def test_recipe_imports_novel_with_mocked_fetcher(monkeypatch):
             return 200, chapter_bytes, "text/html; charset=utf-8", "utf-8"
         raise AssertionError(f"unexpected fetch URL: {url}")
 
-    from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod.fetch_one
-    real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod.fetch_one = fake_fetch
+    await init_db()
+    async with open_conn() as conn:
+        for t in ("chapters", "novels"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
 
-    async def fake_resolve(host):
-        return None
-
-    scraper_mod._resolve_and_validate = fake_resolve
-
-    try:
-        await init_db()
-        async with open_conn() as conn:
-            for t in ("chapters", "novels"):
-                try:
-                    await conn.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            await conn.commit()
-
-            result = await scrape_url(
-                "https://ncode.syosetu.com/n9669bk/",
-                cookies=None,
-                conn=conn,
-            )
-    finally:
-        scraper_mod.fetch_one = real_fetch
-        scraper_mod._resolve_and_validate = real_resolve
+        result = await atomic_import_via_recipe(
+            SyosetuRecipe(),
+            "https://ncode.syosetu.com/n9669bk/",
+            conn,
+            cookies=None,
+            fetch=fake_fetch,
+        )
 
     assert isinstance(result, RecipeResult)
     assert "無職転生" in result.title
