@@ -46,11 +46,34 @@ async def _reset_db() -> None:
         await conn.commit()
 
 
+async def _drain_runner_tasks() -> None:
+    """Await any background runner tasks left over from a prior test.
+
+    drain_imports_on_startup() / spawn_resume() schedule fill-loop tasks via
+    import_runner._spawn(); if a previous test returns before those settle,
+    they keep mutating the shared temp DB during the next test. Awaiting them
+    here (with a bounded shield) makes each test own a quiet DB at setup time
+    and prevents cross-test contamination of novels / chapters / scrape_jobs.
+    """
+    for _ in range(50):
+        pending = [t for t in import_runner._RUNNER_TASKS if not t.done()]
+        if not pending:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True), timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            return
+
+
 @pytest.fixture(autouse=True)
 async def fresh_db():
     await init_db()
+    await _drain_runner_tasks()
     await _reset_db()
     yield
+    await _drain_runner_tasks()
     await _reset_db()
 
 
@@ -219,13 +242,19 @@ async def test_resume_picks_up_where_left_off(monkeypatch):
 
 
 async def test_cancel_during_fill_exits_cleanly(monkeypatch):
-    """A status flip to 'paused' mid-fetch causes the runner to exit
-    between iterations. Chapters fetched before the cancel survive."""
+    """A status flip to 'paused' mid-fetch causes the runner to exit at
+    the next batch boundary. Chapters fetched before the cancel survive.
 
-    # Trigger cancel after the 3rd chapter is committed by hooking on
-    # the fetch_chapter callback.
+    Deterministic by construction: the cancel is fired from inside the
+    recipe's fetch_chapter the moment chapter 3 is reached, after looking
+    the novel_id up directly from the DB. The skeleton (the novel row
+    carrying title 'Test Novel') is committed by _create_novel_skeleton
+    BEFORE the fill loop calls fetch_chapter for chapter 1, so the
+    novel_id is always resolvable here, with no cross-task polling race.
+    """
+
     cancel_event = asyncio.Event()
-    novel_id_holder: dict = {}
+    cancelled_novel_id: dict = {}
 
     class CancelingRecipe(FakeRecipe):
         async def fetch_chapter(
@@ -234,57 +263,64 @@ async def test_cancel_during_fill_exits_cleanly(monkeypatch):
             result = await super().fetch_chapter(
                 planned, cookies=cookies, fetch=fetch, recipe_state=recipe_state,
             )
-            if planned.chapter_num == 3 and novel_id_holder.get("id"):
-                # Cancel BETWEEN chapter 3 and 4. The runner's status
-                # check at the next batch boundary will see 'paused'
-                # and exit.
-                await import_runner.cancel_import(novel_id_holder["id"])
+            if planned.chapter_num == 3:
+                # Resolve our own novel_id from the committed skeleton and
+                # cancel. cancel_import flips import_status to 'paused';
+                # the fill loop's between-batch status check then exits.
+                async with open_conn() as conn:
+                    cur = await conn.execute(
+                        "SELECT id FROM novels WHERE title = 'Test Novel'"
+                    )
+                    nid = (await cur.fetchone())["id"]
+                flipped = await import_runner.cancel_import(nid)
+                assert flipped is True, "cancel_import should flip in_progress"
+                cancelled_novel_id["id"] = nid
                 cancel_event.set()
             return result
 
     recipe = CancelingRecipe(chapter_count=10)
     _patch_recipe(monkeypatch, recipe)
 
-    # Spawn the runner; let it interleave with the cancel.
     job_id = await scrape_jobs.create_job("https://fake.test/novel/4")
-    # Sneak in: stamp novel_id once it's created. We can't directly
-    # observe skeleton creation, but the runner stamps scrape_jobs
-    # immediately after.
-
-    async def watcher():
-        # Poll the job row until novel_id is stamped, then expose it.
-        for _ in range(200):
-            j = await scrape_jobs.get_job(job_id)
-            if j and j["novel_id"]:
-                novel_id_holder["id"] = j["novel_id"]
-                return
-            await asyncio.sleep(0.01)
-
-    runner_task = asyncio.create_task(
-        import_runner.start_from_recipe(job_id, "https://fake.test/novel/4", None)
+    # Run the runner to completion inline. No separate watcher task is
+    # needed: the cancel is self-contained in the recipe, so the result
+    # does not depend on event-loop scheduling order.
+    await import_runner.start_from_recipe(
+        job_id, "https://fake.test/novel/4", None,
     )
-    await watcher()
-    await runner_task
+
+    assert cancel_event.is_set(), "cancel hook never fired"
+    novel_id = cancelled_novel_id["id"]
 
     async with open_conn() as conn:
         cur = await conn.execute(
-            "SELECT import_status FROM novels WHERE id = ?",
-            (novel_id_holder["id"],),
+            "SELECT import_status FROM novels WHERE id = ?", (novel_id,),
         )
+        # The cancel always fires (deterministic), so the novel must end
+        # paused, never 'done'. This is the core invariant the test pins.
         assert (await cur.fetchone())["import_status"] == "paused"
         cur = await conn.execute(
             "SELECT COUNT(*) FROM chapters WHERE novel_id = ? "
             "AND import_fetched_at IS NOT NULL",
-            (novel_id_holder["id"],),
+            (novel_id,),
         )
         filled = (await cur.fetchone())[0]
-    # The first batch is 25 chapters, but only 10 exist; the loop
-    # commits each chapter individually. After cancel fires post-ch.3,
-    # the loop finishes its current batch (all 10) — verify chapter
-    # count is between 3 and 10. The strict guarantee is "no chapters
-    # lost"; the exact stop point depends on batch boundary.
-    assert filled >= 3, f"expected ≥3 committed chapters, got {filled}"
-    assert cancel_event.is_set()
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM chapters WHERE novel_id = ?", (novel_id,),
+        )
+        total = (await cur.fetchone())[0]
+
+    # _drive_fill only re-checks import_status at the TOP of the while
+    # loop, between batches, not within a batch's for-loop. The first
+    # batch (LIMIT 25, but only 10 rows exist) is processed fully before
+    # the status re-check sees 'paused', so all 10 chapters commit. The
+    # contract under test: no committed chapter is lost (>= the 3 fetched
+    # before cancel) and every skeleton row is preserved.
+    assert filled >= 3, f"expected >=3 committed chapters, got {filled}"
+    assert filled == 10, (
+        f"first batch should finish before the status re-check, got {filled}"
+    )
+    assert total == 10, "skeleton rows must be preserved, not deleted"
 
 
 async def test_drain_resumes_in_progress_recipe(monkeypatch):
