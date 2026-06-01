@@ -6,7 +6,7 @@ client; we spawn a subprocess per chapter, write the prompt to stdin, and read
 a JSON envelope from stdout.
 
 Subprocess invocation:
-    claude -p --output-format json --max-turns 1 [--model <name>]
+    claude -p --output-format json --max-turns 1 [--system-prompt-file <path>] [--model <name>]
 
 - `-p`: print mode, non-interactive (with no positional prompt, reads stdin).
 - `--output-format json`: returns one JSON envelope with `result` field.
@@ -32,12 +32,18 @@ import asyncio
 import json
 import logging
 import subprocess
+import tempfile
 
 from backend.config import CLAUDE_CLI_PATH, CLAUDE_CLI_TRANSLATOR_MODEL
 from backend.services.providers import Provider
 
 from ._claude_errors import classify as _classify_cli_error
-from ._subprocess_utils import build_argv, kill_process_tree, resolve_binary
+from ._subprocess_utils import (
+    build_argv,
+    kill_process_tree,
+    resolve_binary,
+    system_prompt_file_for,
+)
 from .base import (
     BACKOFF_SCHEDULE,
     BaseTranslator,
@@ -75,25 +81,31 @@ class ClaudeCliTranslator(BaseTranslator):
         self._semaphore = asyncio.Semaphore(1)
 
     async def _complete(self, prompt: str) -> str:
-        # CLI has no separate system slot — prepend with explicit markers.
-        full = (
-            f"SYSTEM INSTRUCTIONS:\n{self.system_instruction}\n\n"
-            f"USER REQUEST:\n{prompt}"
-        )
-        return await self._call_cli(full)
+        # Deliver the genre brief as a REAL system prompt via --system-prompt-file
+        # (replaces Claude Code's coding-assistant persona) rather than folding it
+        # into the user turn. The bare user prompt pipes on stdin.
+        return await self._call_cli(prompt, system_instruction=self.system_instruction)
 
     async def _complete_plain(self, prompt: str) -> str:
-        return await self._call_cli(prompt)
+        # Plain path = the envelope-parse fallback AND the refiner's editor pass
+        # (complete_editor_pass stashes the editor role on self.system_instruction).
+        # Forward whatever instruction is set so the editor role / literary persona
+        # governs here too, instead of running under the bare coding persona.
+        return await self._call_cli(prompt, system_instruction=self.system_instruction)
 
-    async def _call_cli(self, prompt: str) -> str:
+    async def _call_cli(
+        self, prompt: str, *, system_instruction: str | None = None
+    ) -> str:
         async with self._semaphore:
-            return await self._call_cli_with_retry(prompt)
+            return await self._call_cli_with_retry(prompt, system_instruction)
 
-    async def _call_cli_with_retry(self, prompt: str) -> str:
+    async def _call_cli_with_retry(
+        self, prompt: str, system_instruction: str | None = None
+    ) -> str:
         last_exc: BaseException | None = None
         for attempt in range(len(BACKOFF_SCHEDULE) + 1):
             try:
-                return await self._run_subprocess(prompt)
+                return await self._run_subprocess(prompt, system_instruction)
             except (ClaudeCliError, TransientTranslatorError):
                 # Both are classified errors. ClaudeCliError = non-retryable
                 # (bad model name, auth, etc.). TransientTranslatorError =
@@ -119,13 +131,23 @@ class ClaudeCliTranslator(BaseTranslator):
             "try Retranslate later."
         ) from last_exc
 
-    async def _run_subprocess(self, prompt: str) -> str:
+    async def _run_subprocess(
+        self, prompt: str, system_instruction: str | None = None
+    ) -> str:
         args = [
             resolve_binary(CLAUDE_CLI_PATH),
             "-p",
             "--output-format", "json",
             "--max-turns", "1",
         ]
+        # Replace the coding-assistant persona with the literary brief, passed as
+        # a file (the composed brief overflows the ~8 KB Windows command-line cap
+        # if inlined). Empty/unset → no flag, so the CLI's default persona applies.
+        if system_instruction and system_instruction.strip():
+            args.extend([
+                "--system-prompt-file",
+                str(system_prompt_file_for(system_instruction)),
+            ])
         if self.model_id and self.model_id != "default":
             args.extend(["--model", self.model_id])
         args = build_argv(args)
@@ -140,6 +162,10 @@ class ClaudeCliTranslator(BaseTranslator):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            # Run from a neutral dir so `claude` does not auto-discover this
+            # project's CLAUDE.md/AGENTS.md and inject the coding-repo dev guide
+            # into a literary-translation call (~13 KB of stray context, verified).
+            cwd=tempfile.gettempdir(),
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.to_thread(

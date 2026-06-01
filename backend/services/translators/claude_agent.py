@@ -17,10 +17,8 @@ quality cannot "drift over a long conversation" because no conversation exists.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import sys
-from pathlib import Path
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -37,10 +35,12 @@ from backend.config import (
     CLAUDE_AGENT_TRANSLATOR_EFFORT,
     CLAUDE_AGENT_TRANSLATOR_MODEL,
     CLAUDE_CLI_PATH,
-    USER_DATA_ROOT,
 )
 from backend.services.providers import Provider
-from backend.services.translators._subprocess_utils import resolve_binary
+from backend.services.translators._subprocess_utils import (
+    resolve_binary,
+    system_prompt_file_for,
+)
 
 from ._claude_errors import classify as _classify_error_string
 from .base import (
@@ -57,35 +57,9 @@ logger = logging.getLogger(__name__)
 _CALL_TIMEOUT_SECONDS = 600.0
 
 
-# The SDK ships `system_prompt` to the CLI via the `--system-prompt` CLI flag
-# (a string arg on the command line). The translator's system instruction is
-# ~5 KB and on Windows the cmd.exe command-line length cap is ~8 KB total —
-# combined with the other args the SDK passes (`--output-format`, `--model`,
-# `--allowedTools`, `--input-format`, etc.) the CLI invocation overflows and
-# the subprocess hangs (initialize control request times out). The SDK's
-# escape hatch is `system_prompt={"type": "file", "path": ...}` which maps to
-# `--system-prompt-file <path>` instead. We write the prompt once at module
-# import to a stable project path and reuse it on every call.
-# Per-(genre, custom_brief) system-prompt files, named by content hash so
-# two calls with identical instructions share one file. Lands in
-# USER_DATA_ROOT (= repo/data in dev, %APPDATA%/LN-Translator in the
-# frozen EXE bundle) so the SDK can read them at fetch time without
-# hitting the bundle's read-only _MEIPASS dir.
-_SYSTEM_PROMPT_DIR = USER_DATA_ROOT / "runtime"
-
-
-def _system_prompt_file_for(content: str) -> Path:
-    """Hash the system-instruction content to derive a stable filename;
-    two calls with identical instructions share one file (cache-friendly),
-    and changing the genre or brief writes to a fresh path. Bypasses the
-    8 KB Windows command-line cap by passing `--system-prompt-file <path>`
-    rather than the inline string."""
-    _SYSTEM_PROMPT_DIR.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
-    path = _SYSTEM_PROMPT_DIR / f"translator_system_prompt-{digest}.txt"
-    if not path.is_file():
-        path.write_text(content, encoding="utf-8")
-    return path
+# The genre brief is passed to the SDK as a system-prompt FILE (see
+# `system_prompt_file_for` in `_subprocess_utils`): an inline --system-prompt
+# would overflow the ~8 KB Windows command-line cap and hang the subprocess.
 
 
 class ClaudeAgentError(Exception):
@@ -184,7 +158,7 @@ class ClaudeAgentTranslator(BaseTranslator):
         self._semaphore = asyncio.Semaphore(self.max_parallel)
         # System-prompt file is written lazily per call (one file per
         # genre+brief hash) because the system instruction is now genre-aware
-        # and varies across calls. See _system_prompt_file_for.
+        # and varies across calls. See system_prompt_file_for.
 
     async def _complete(self, prompt: str) -> str:
         return await self._call_sdk(prompt, with_system=True)
@@ -320,13 +294,13 @@ class ClaudeAgentTranslator(BaseTranslator):
             # lands in the envelope payload.
             effort=CLAUDE_AGENT_TRANSLATOR_EFFORT or None,
             # Pass the system prompt as a file reference, not an inline string —
-            # see _SYSTEM_PROMPT_DIR comment for the Windows cmd-line cap rationale.
+            # see system_prompt_file_for in _subprocess_utils for the cap rationale.
             # File path derives from a hash of self.system_instruction, so a
             # genre swap routes to a different file without touching the cache
             # of pre-existing files (warm prompt-cache server-side, when the
             # path is unchanged across calls).
             system_prompt=(
-                {"type": "file", "path": str(_system_prompt_file_for(self.system_instruction))}
+                {"type": "file", "path": str(system_prompt_file_for(self.system_instruction))}
                 if with_system
                 else None
             ),

@@ -12,10 +12,14 @@ exec safely, drain pipes, kill the tree on cancel.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
+
+from backend.config import USER_DATA_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,29 @@ def build_argv(args: list[str]) -> list[str]:
                 )
         return ["cmd", "/c", *args]
     return args
+
+
+# Per-(system-instruction) prompt files, named by content hash so two calls
+# with identical instructions share one file (a byte-stable path also keeps the
+# server-side prompt cache warm). Lands in USER_DATA_ROOT/runtime (= repo/data
+# in dev, %APPDATA%/LN-Translator in the frozen EXE). Both the claude_agent SDK
+# (system_prompt={"type": "file", ...}) and the claude_cli subprocess
+# (--system-prompt-file <path>) pass the genre brief as a FILE reference rather
+# than an inline arg: the composed brief is well over the ~8 KB Windows
+# command-line cap, so an inline --system-prompt would overflow and hang.
+_SYSTEM_PROMPT_DIR = USER_DATA_ROOT / "runtime"
+
+
+def system_prompt_file_for(content: str) -> Path:
+    """Hash the system-instruction content to a stable filename and write it
+    once; identical instructions share one file (cache-friendly), and changing
+    the genre or brief writes to a fresh path."""
+    _SYSTEM_PROMPT_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    path = _SYSTEM_PROMPT_DIR / f"translator_system_prompt-{digest}.txt"
+    if not path.is_file():
+        path.write_text(content, encoding="utf-8")
+    return path
 
 
 def kill_process_tree(proc: subprocess.Popen) -> None:
