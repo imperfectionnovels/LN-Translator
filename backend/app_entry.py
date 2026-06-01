@@ -68,7 +68,7 @@ from pathlib import Path
 # --- Re-exported helpers (moved into sibling modules) -----------------------
 # These imports both wire the orchestrator below AND keep every
 # `backend.app_entry.<name>` reference working for callers and tests.
-from backend.app_platform import (
+from backend.app_platform import (  # noqa: F401  (re-exported for tests/callers)
     _CONSOLE_CLOSE_EVENTS,
     _CREATE_NO_WINDOW,
     _CTRL_CLOSE_EVENT,
@@ -78,7 +78,7 @@ from backend.app_platform import (
     _install_windows_console_handler,
     _make_console_handler,
 )
-from backend.app_ports import (
+from backend.app_ports import (  # noqa: F401  (re-exported for tests/callers)
     _HEALTH_POLL_INTERVAL_SECONDS,
     _HEALTH_POLL_TIMEOUT_SECONDS,
     _PORT_PROBE_MAX_ATTEMPTS,
@@ -92,7 +92,7 @@ from backend.app_ports import (
     _write_port_sentinel,
 )
 from backend.app_shutdown import _server_ref, _signal_shutdown
-from backend.app_ui import (
+from backend.app_ui import (  # noqa: F401  (re-exported for tests/callers)
     _install_startup_log_handler,
     _resolve_webview_storage_path,
     _run_browser_fallback,
