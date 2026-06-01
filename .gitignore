@@ -44,3 +44,7 @@ build-log.txt
 .serena/
 # Local Claude Code skills: may carry machine-specific paths / internal notes.
 .claude/skills/
+# Desloppify local state (scan cache, living plan, review packets): not committed.
+.desloppify/
+# Desloppify generated health badge: regenerated every scan, binary churn.
+scorecard.png
