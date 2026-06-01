@@ -17,7 +17,7 @@ What this base provides:
 - HTTP plumbing through the `openai.AsyncOpenAI` async SDK (Bearer auth,
   configurable base_url, configurable timeout).
 - Exponential backoff on transient errors (429 / 5xx / network).
-- Token-usage emit so `chapters.cost_usd` keeps working.
+- Token-usage emit so the per-chapter token columns keep working.
 
 What subclasses can override:
 - `DEFAULT_BASE_URL` — used when the Provider doesn't pin one.
@@ -187,8 +187,9 @@ class OpenAICompatibleTranslator(BaseTranslator):
                 if not choices:
                     raise ValueError(f"{self.name} returned no choices")
                 choice = choices[0]
-                # Plumb usage so chapters.cost_usd keeps working. The OpenAI
-                # schema's `prompt_tokens_details.cached_tokens` shows up when
+                # Plumb usage so the per-chapter token columns keep working.
+                # The OpenAI schema's `prompt_tokens_details.cached_tokens`
+                # shows up when
                 # the vendor advertises prompt caching (OpenAI itself,
                 # OpenRouter via underlying provider). Coerce missing fields
                 # to 0 — vendor schemas vary on which sub-objects are present.

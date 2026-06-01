@@ -50,12 +50,12 @@ def _insert_novel(title: str = "Novel A") -> int:
     return novel_id
 
 
-def _insert_chapter(novel_id: int, chapter_num: int, *, cost_usd: float = 0.0) -> int:
+def _insert_chapter(novel_id: int, chapter_num: int) -> int:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.execute(
-        "INSERT INTO chapters (novel_id, chapter_num, original_text, status, cost_usd) "
-        "VALUES (?, ?, '...', 'done', ?)",
-        (novel_id, chapter_num, cost_usd),
+        "INSERT INTO chapters (novel_id, chapter_num, original_text, status) "
+        "VALUES (?, ?, '...', 'done')",
+        (novel_id, chapter_num),
     )
     conn.commit()
     chapter_id = cur.lastrowid
@@ -71,21 +71,20 @@ def client():
 
 @pytest.mark.asyncio
 async def test_delete_counts_aggregates():
-    """delete_counts returns chapters, cost, etc. across the affected tables."""
+    """delete_counts returns chapters, glossary, etc. across the affected tables."""
     from backend.db import open_conn
     from backend.services.soft_delete import delete_counts
 
     _setup_db()
     novel_id = _insert_novel()
-    _insert_chapter(novel_id, 1, cost_usd=0.50)
-    _insert_chapter(novel_id, 2, cost_usd=0.75)
+    _insert_chapter(novel_id, 1)
+    _insert_chapter(novel_id, 2)
 
     async with open_conn() as conn:
         counts = await delete_counts(conn, novel_id)
 
     assert counts.novel_id == novel_id
     assert counts.chapters == 2
-    assert counts.total_cost_usd == pytest.approx(1.25)
     assert counts.glossary_entries == 0
     assert counts.bookmarks == 0
 

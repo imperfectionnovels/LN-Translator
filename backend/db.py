@@ -163,6 +163,10 @@ CREATE TABLE IF NOT EXISTS chapters (
     input_tokens INTEGER,
     output_tokens INTEGER,
     cached_input_tokens INTEGER,
+    -- Retained-but-unused: per-chapter cost tracking was removed when
+    -- per-model pricing input was dropped (2026-05-26 catalog redesign).
+    -- Column stays for migration safety (drops need a risky rebuild) but is
+    -- never read or written now. Token columns above are still live.
     cost_usd REAL,
     -- Initiative 6: timestamp of the successful translation commit. Lets
     -- the stats dashboard plot throughput-per-day. NULL on chapters that

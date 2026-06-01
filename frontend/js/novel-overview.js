@@ -64,7 +64,6 @@ const els = {
   statChapters: document.getElementById("no-stat-chapters"),
   statDone: document.getElementById("no-stat-done"),
   statQueued: document.getElementById("no-stat-queued"),
-  statCost: document.getElementById("no-stat-cost"),
   statGlossary: document.getElementById("no-stat-glossary"),
   glossaryLink: document.getElementById("no-glossary-link"),
 };
@@ -355,7 +354,6 @@ els.archiveBtn.addEventListener("click", async () => {
     if (counts.chapters) lines.push(`${counts.chapters} chapter${counts.chapters === 1 ? "" : "s"}`);
     if (counts.glossary_entries) lines.push(`${counts.glossary_entries} glossary ${counts.glossary_entries === 1 ? "entry" : "entries"}`);
     if (counts.bookmarks) lines.push(`${counts.bookmarks} bookmark${counts.bookmarks === 1 ? "" : "s"}`);
-    if (counts.total_cost_usd > 0) lines.push(`$${counts.total_cost_usd.toFixed(2)} of translation spend`);
   }
   const breakdown = lines.length
     ? `<p>This will archive: <strong>${lines.join(" + ")}</strong>.</p>`
@@ -397,10 +395,5 @@ function renderStats(novel, glossary) {
   els.statChapters.textContent = novel.total_chapters || 0;
   els.statDone.textContent = novel.done_chapters || 0;
   els.statQueued.textContent = novel.queue_chapters || novel.translate_queue || 0;
-  if (typeof novel.cost_usd === "number") {
-    els.statCost.textContent = `$${novel.cost_usd.toFixed(2)}`;
-  } else {
-    els.statCost.textContent = "…";
-  }
   els.statGlossary.textContent = Array.isArray(glossary) ? glossary.length : "…";
 }

@@ -257,11 +257,6 @@ function fmtRel(iso) {
   const days = Math.floor(h / 24);
   return `${days}d ago`;
 }
-function fmtMoney(usd) {
-  if (usd == null || !Number.isFinite(usd)) return "$0.00";
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
-}
 
 let _toastTimer = null;
 function showToast(message, undoAction) {
@@ -469,7 +464,7 @@ function _skeletonStats() {
       <div class="v">…</div>
       <div class="sparkline">${_sparkSpans([])}</div>
     </div>`;
-  return tile("Translated · 30 d") + tile("Spend · 30 d") +
+  return tile("Translated · 30 d") +
          tile("Failure rate") + tile("Last tested");
 }
 
@@ -492,18 +487,12 @@ function _renderStatsSlot(card, stats) {
     return;
   }
   const chBuckets = stats.chapters_translated_buckets || [];
-  const spBuckets = stats.spend_30d_buckets || [];
   const failPct = (stats.failure_rate_30d * 100).toFixed(stats.failure_rate_30d < 0.01 ? 2 : 1);
   slot.innerHTML = `
     <div class="prov-stat">
       <div class="lbl">Translated · 30 d</div>
       <div class="v">${stats.chapters_translated_30d.toLocaleString()} <small>chapters</small></div>
       <div class="sparkline">${_sparkSpans(chBuckets)}</div>
-    </div>
-    <div class="prov-stat">
-      <div class="lbl">Spend · 30 d</div>
-      <div class="v">${fmtMoney(stats.spend_30d_usd)}</div>
-      <div class="sparkline cin">${_sparkSpans(spBuckets, "")}</div>
     </div>
     <div class="prov-stat">
       <div class="lbl">Failure rate</div>

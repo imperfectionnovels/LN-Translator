@@ -3,8 +3,8 @@
 Covers:
 - providers.last_tested_at migration applies and `/test` stamps it on success.
 - `/api/providers/{id}/stats` returns bucket arrays of the right length and
-  aggregates over `chapters.translated_at` / `cost_usd` filtered by the
-  novel's `translator_provider_id`.
+  aggregates over `chapters.translated_at` filtered by the novel's
+  `translator_provider_id`.
 - `/api/providers/{id}/routed-novels` returns novels routed through this
   provider with the role discriminator.
 - `/api/providers/{id}/activity` joins the attempts log to chapters/novels.
@@ -74,18 +74,16 @@ def _seed_novel(provider_id: int, title: str = "Test Novel") -> int:
 
 
 def _seed_chapter(novel_id: int, num: int, *, translated: bool = True,
-                  cost: float = 0.05, status: str = "done",
-                  days_ago: int = 0) -> int:
+                  status: str = "done", days_ago: int = 0) -> int:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.execute(
         "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-        "translated_text, status, translated_at, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "translated_text, status, translated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (novel_id, num, f"原文 {num}",
          f"english {num}" if translated else None,
          status,
-         _now_iso(days_ago) if translated else None,
-         cost if translated else None),
+         _now_iso(days_ago) if translated else None),
     )
     cid = cur.lastrowid
     conn.commit()
@@ -140,25 +138,22 @@ def test_stats_empty_provider_returns_zeros(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["chapters_translated_30d"] == 0
-    assert body["spend_30d_usd"] == 0
     assert body["failure_rate_30d"] == 0
     assert len(body["chapters_translated_buckets"]) == 14
-    assert len(body["spend_30d_buckets"]) == 14
     assert all(x == 0 for x in body["chapters_translated_buckets"])
 
 
 def test_stats_aggregates_translated_chapters(client: TestClient) -> None:
     pid = _seed_provider()
     nid = _seed_novel(pid)
-    _seed_chapter(nid, 1, cost=0.10, days_ago=0)
-    _seed_chapter(nid, 2, cost=0.12, days_ago=1)
-    _seed_chapter(nid, 3, cost=0.08, days_ago=5)
+    _seed_chapter(nid, 1, days_ago=0)
+    _seed_chapter(nid, 2, days_ago=1)
+    _seed_chapter(nid, 3, days_ago=5)
     # A chapter from BEFORE the window is excluded.
-    _seed_chapter(nid, 4, cost=99.00, days_ago=400)
+    _seed_chapter(nid, 4, days_ago=400)
 
     body = client.get(f"/api/providers/{pid}/stats").json()
     assert body["chapters_translated_30d"] == 3
-    assert body["spend_30d_usd"] == pytest.approx(0.30, rel=1e-3)
 
 
 def test_stats_failure_rate_from_attempts(client: TestClient) -> None:

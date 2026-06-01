@@ -137,10 +137,6 @@ class NovelWithProgress(Novel):
     queue_chapters: int = 0
     translating_now: int = 0
     first_chapter_num: int | None = None
-    # Running per-novel cost (USD) summed from chapters.cost_usd. Defaults
-    # to 0.0 — the library card decides whether to show it based on
-    # whether any chapter had usage recorded yet.
-    cost_usd: float = 0.0
     # 2026-05-26 resumable imports: surface the lifecycle so the library
     # card can render an in-progress / paused badge. NULL means atomic-
     # create path or pre-feature row (treated as done).

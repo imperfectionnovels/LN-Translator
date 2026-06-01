@@ -266,8 +266,9 @@ async def test_test_provider_warns_about_missing_secret():
 # 2026-05-26 when the user-entered pricing fields were removed from the
 # Add Provider dialog (catalog redesign expanding providers from 4 to
 # 17 types). The Provider dataclass and providers DB table no longer
-# carry pricing columns; chapters.cost_usd (actual recorded spend) is
-# unchanged and still exercised by test_token_cost.py.
+# carry pricing columns; per-chapter cost tracking was subsequently
+# removed too (chapters.cost_usd is now vestigial). Token persistence is
+# still exercised by test_token_cost.py.
 
 
 async def test_test_provider_makes_no_network_call(monkeypatch):

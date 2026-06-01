@@ -4,12 +4,12 @@ Verifies:
 - TranslationResult carries TokenUsage when a backend emits one.
 - Queue worker writes input_tokens / output_tokens / cached_input_tokens
   to the chapters row on success.
-- cost_usd stays NULL — user-entered pricing was removed in the
-  2026-05-26 catalog redesign, so the queue's `_compute_cost_usd` now
-  always returns None.
-- /api/novels/{id}/cost still aggregates token counts (cost is always 0).
-- /api/novels/{id}/cost-estimate returns confidence=no_pricing for every
-  novel (stable API surface for older frontends).
+- The legacy `_drop_dead_columns` rebuild carries the token columns (and
+  the vestigial cost_usd column) through without blanking live data.
+
+Per-chapter cost tracking was removed in the 2026-05-26 catalog redesign:
+the chapters.cost_usd column is retained for migration safety but is never
+read or written, so there are no cost assertions here.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from backend.db import init_db, open_conn
 from backend.models import TokenUsage, TranslationResult
 from backend.services import providers as providers_svc
 from backend.services import queue as queue_svc
-from backend.services.queue import _compute_cost_usd
 
 
 async def _reset_db() -> None:
@@ -39,26 +38,6 @@ async def fresh_db():
     await _reset_db()
     yield
     await _reset_db()
-
-
-# ---- _compute_cost_usd unit tests -------------------------------------------
-
-def _provider() -> providers_svc.Provider:
-    return providers_svc.Provider(
-        id=1, name="t", provider_type="gemini", base_url=None, model_id="m",
-        params={}, secret_ref="K", is_default=True,
-        created_at="", updated_at="",
-    )
-
-
-def test_compute_cost_always_returns_none():
-    """Post-redesign: cost computation is decommissioned. The function is
-    retained as a no-op so the queue worker's call site doesn't need a
-    refactor."""
-    usage = TokenUsage(input_tokens=500_000, output_tokens=200_000)
-    assert _compute_cost_usd(usage, _provider()) is None
-    assert _compute_cost_usd(usage, None) is None
-    assert _compute_cost_usd(TokenUsage(), _provider()) is None
 
 
 # ---- queue worker end-to-end ------------------------------------------------
@@ -104,7 +83,7 @@ def _stub_translate_with_usage(monkeypatch, usage: TokenUsage | None) -> None:
 
 async def test_queue_writes_token_columns(monkeypatch):
     """Fresh translate run with usage attached: token counts land on the
-    chapter row. cost_usd stays NULL (pricing removed in catalog redesign)."""
+    chapter row."""
     await _seed_provider()
     novel_id, chapter_id = await _make_novel_with_chapter()
     _stub_translate_with_usage(
@@ -115,8 +94,8 @@ async def test_queue_writes_token_columns(monkeypatch):
     async with open_conn() as conn:
         await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
         cur = await conn.execute(
-            "SELECT status, input_tokens, output_tokens, cached_input_tokens, "
-            "cost_usd FROM chapters WHERE id = ?",
+            "SELECT status, input_tokens, output_tokens, cached_input_tokens "
+            "FROM chapters WHERE id = ?",
             (chapter_id,),
         )
         row = await cur.fetchone()
@@ -124,10 +103,6 @@ async def test_queue_writes_token_columns(monkeypatch):
     assert row["input_tokens"] == 10_000
     assert row["output_tokens"] == 5_000
     assert row["cached_input_tokens"] == 2_000
-    assert row["cost_usd"] is None, (
-        "cost_usd must stay NULL — pricing was removed from the Add Provider "
-        "form in the 2026-05-26 catalog redesign"
-    )
 
 
 async def test_queue_skips_token_columns_when_usage_missing(monkeypatch):
@@ -140,13 +115,12 @@ async def test_queue_skips_token_columns_when_usage_missing(monkeypatch):
     async with open_conn() as conn:
         await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
         cur = await conn.execute(
-            "SELECT input_tokens, output_tokens, cost_usd "
+            "SELECT input_tokens, output_tokens "
             "FROM chapters WHERE id = ?", (chapter_id,),
         )
         row = await cur.fetchone()
     assert row["input_tokens"] is None
     assert row["output_tokens"] is None
-    assert row["cost_usd"] is None
 
 
 async def test_queue_preserves_existing_columns_on_cache_hit_retranslate(monkeypatch):
@@ -173,7 +147,7 @@ async def test_queue_preserves_existing_columns_on_cache_hit_retranslate(monkeyp
     async with open_conn() as conn:
         await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
         cur = await conn.execute(
-            "SELECT input_tokens, output_tokens, cost_usd "
+            "SELECT input_tokens, output_tokens "
             "FROM chapters WHERE id = ?", (chapter_id,),
         )
         row = await cur.fetchone()
@@ -181,117 +155,16 @@ async def test_queue_preserves_existing_columns_on_cache_hit_retranslate(monkeyp
     assert row["output_tokens"] == 4000
 
 
-# ---- /api/novels/{id}/cost endpoint -----------------------------------------
-
-async def test_novel_cost_endpoint(monkeypatch):
-    """The aggregate endpoint sums token counts across chapters. cost_usd
-    aggregate is 0 (never populated post-redesign)."""
-    from fastapi.testclient import TestClient
-    async def _no_probe(_default):
-        return None
-    async def _no_drain():
-        return None
-    monkeypatch.setattr("backend.main._probe_backends", _no_probe)
-    monkeypatch.setattr("backend.services.queue.drain_on_startup", _no_drain)
-
-    await _seed_provider()
-    novel_id, _ = await _make_novel_with_chapter()
-    async with open_conn() as conn:
-        await conn.execute(
-            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-            "status, input_tokens, output_tokens) "
-            "VALUES (?, 2, '原', 'done', 1000, 500)",
-            (novel_id,),
-        )
-        await conn.execute(
-            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-            "status, input_tokens, output_tokens) "
-            "VALUES (?, 3, '原', 'done', 2000, 1000)",
-            (novel_id,),
-        )
-        await conn.commit()
-
-    from backend.main import app
-    with TestClient(app) as client:
-        resp = client.get(f"/api/novels/{novel_id}/cost")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["novel_id"] == novel_id
-    assert body["input_tokens"] == 3000
-    assert body["output_tokens"] == 1500
-
-
-async def test_cost_estimate_returns_no_pricing(monkeypatch):
-    """The endpoint is intentionally a no-op after the catalog redesign —
-    confirms it still answers 200 with the stable no_pricing shape."""
-    from fastapi.testclient import TestClient
-    async def _no_probe(_default):
-        return None
-    async def _no_drain():
-        return None
-    monkeypatch.setattr("backend.main._probe_backends", _no_probe)
-    monkeypatch.setattr("backend.services.queue.drain_on_startup", _no_drain)
-
-    await _seed_provider()
-    novel_id, _ = await _make_novel_with_chapter()
-
-    from backend.main import app
-    with TestClient(app) as client:
-        resp = client.get(f"/api/novels/{novel_id}/cost-estimate")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["confidence"] == "no_pricing"
-    assert body["estimated_cost_usd"] is None
-
-
-async def test_list_and_get_novel_agree_on_cost_aggregate(monkeypatch):
-    """Regression for Block 1.1: GET /api/novels (list) and GET
-    /api/novels/{id} (detail) return the same cost_usd for the same novel.
-    Post-redesign, the projection field is gone; cost_usd is just the
-    SUM aggregate."""
-    from fastapi.testclient import TestClient
-    async def _no_probe(_default):
-        return None
-    async def _no_drain():
-        return None
-    monkeypatch.setattr("backend.main._probe_backends", _no_probe)
-    monkeypatch.setattr("backend.services.queue.drain_on_startup", _no_drain)
-
-    provider_id = await _seed_provider()
-    novel_id, chapter_id = await _make_novel_with_chapter()
-    async with open_conn() as conn:
-        await conn.execute(
-            "UPDATE novels SET translator_provider_id = ? WHERE id = ?",
-            (provider_id, novel_id),
-        )
-        await conn.commit()
-
-    from backend.main import app
-    with TestClient(app) as client:
-        list_resp = client.get("/api/novels")
-        detail_resp = client.get(f"/api/novels/{novel_id}")
-    assert list_resp.status_code == 200, list_resp.text
-    assert detail_resp.status_code == 200, detail_resp.text
-
-    list_row = next(n for n in list_resp.json() if n["id"] == novel_id)
-    detail_row = detail_resp.json()
-    assert list_row["cost_usd"] == detail_row["cost_usd"]
-    # estimated_remaining_cost_usd field was removed from the NovelWithProgress
-    # response; neither endpoint should expose it.
-    assert "estimated_remaining_cost_usd" not in list_row
-    assert "estimated_remaining_cost_usd" not in detail_row
-
-
 async def test_drop_dead_columns_rebuild_preserves_token_data():
     """Block 1.2 regression: `_drop_dead_columns` rebuilds the chapters
     table to drop legacy `humanized_text`. The rebuild was patched to
-    carry the four cost columns through; without this test, a future
-    refactor of the CREATE TABLE / INSERT statements could silently
-    blank live token data on the one DB where the rebuild fires (a
-    humanizer-era install that already accumulated cost rows).
+    carry the token columns through; without this test, a future refactor
+    of the CREATE TABLE / INSERT statements could silently blank live token
+    data on the one DB where the rebuild fires (a humanizer-era install).
 
     cost_usd is still in the schema (legacy data carries forward) but is
-    no longer written to post-redesign."""
+    no longer read or written post-redesign; the rebuild keeps the column
+    intact, which this test still pins."""
     async with open_conn() as conn:
         await conn.execute("PRAGMA foreign_keys = OFF")
         await conn.execute("DROP TABLE IF EXISTS chapter_fts")

@@ -31,7 +31,6 @@ class DeleteCounts:
     chapter_observations: int
     tm_segments: int
     fr_snapshots: int
-    total_cost_usd: float
 
 
 async def _novel_row(conn: aiosqlite.Connection, novel_id: int) -> aiosqlite.Row:
@@ -62,11 +61,9 @@ async def delete_counts(
                 WHERE c.novel_id = ?) AS observations,
             (SELECT COUNT(*) FROM tm_segments WHERE novel_id = ?) AS tm,
             (SELECT COUNT(*) FROM find_replace_snapshots
-                WHERE novel_id = ?) AS fr,
-            (SELECT COALESCE(SUM(cost_usd), 0.0) FROM chapters
-                WHERE novel_id = ?) AS cost
+                WHERE novel_id = ?) AS fr
         """,
-        (novel_id, novel_id, novel_id, novel_id, novel_id, novel_id, novel_id),
+        (novel_id, novel_id, novel_id, novel_id, novel_id, novel_id),
     )
     row = await cur.fetchone()
     return DeleteCounts(
@@ -77,7 +74,6 @@ async def delete_counts(
         chapter_observations=int(row["observations"] or 0),
         tm_segments=int(row["tm"] or 0),
         fr_snapshots=int(row["fr"] or 0),
-        total_cost_usd=float(row["cost"] or 0.0),
     )
 
 

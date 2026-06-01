@@ -526,7 +526,7 @@ class BaseTranslator(ABC):
     # translate_chapter; backends call _emit_usage(...) after each
     # successful _complete / _complete_plain to add to the totals, and the
     # final TranslationResult carries the summed counts so the queue
-    # worker can persist them + compute cost.
+    # worker can persist them.
     _usage_accumulator: TokenUsage | None = None
 
     def cache_identity(self) -> str:

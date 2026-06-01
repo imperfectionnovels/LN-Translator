@@ -214,7 +214,6 @@ async def provider_stats(provider_id: int) -> dict:
     """30-day rollup for the provider control-room card. All columns
     referenced here already exist:
       - chapters.translated_at  (Initiative 6)
-      - chapters.cost_usd       (Section 6.1)
       - chapters.status         (the pipeline state machine)
       - chapter_translation_attempts.status (Bundle 2 F22)
       - novels.translator_provider_id (per-novel routing)
@@ -237,12 +236,11 @@ async def provider_stats(provider_id: int) -> dict:
     ).isoformat(timespec="seconds").replace("+00:00", "")
 
     async with open_conn() as conn:
-        # Throughput + spend per day for the sparkline window.
+        # Throughput per day for the sparkline window.
         cur = await conn.execute(
             """
             SELECT substr(c.translated_at, 1, 10) AS day,
-                   COUNT(*) AS chapters,
-                   COALESCE(SUM(c.cost_usd), 0.0) AS spend
+                   COUNT(*) AS chapters
             FROM chapters c
             JOIN novels n ON n.id = c.novel_id
             WHERE n.translator_provider_id = ?
@@ -253,14 +251,14 @@ async def provider_stats(provider_id: int) -> dict:
             (provider_id, first_bucket_iso),
         )
         by_day: dict[str, dict] = {
-            r["day"]: {"chapters": r["chapters"], "spend": float(r["spend"])}
+            r["day"]: {"chapters": r["chapters"]}
             for r in await cur.fetchall()
         }
 
-        # 30-day totals (chapters + spend).
+        # 30-day totals (chapters).
         cur = await conn.execute(
             """
-            SELECT COUNT(*) AS chapters, COALESCE(SUM(c.cost_usd), 0.0) AS spend
+            SELECT COUNT(*) AS chapters
             FROM chapters c
             JOIN novels n ON n.id = c.novel_id
             WHERE n.translator_provider_id = ?
@@ -271,7 +269,6 @@ async def provider_stats(provider_id: int) -> dict:
         )
         row = await cur.fetchone()
         chapters_30d = int(row["chapters"] or 0)
-        spend_30d = float(row["spend"] or 0.0)
 
         # Failure rate from the attempts log over the same window.
         cur = await conn.execute(
@@ -293,15 +290,12 @@ async def provider_stats(provider_id: int) -> dict:
         failure_rate = (failures_30d / attempts_30d) if attempts_30d else 0.0
 
     chapters_buckets = [by_day.get(d, {}).get("chapters", 0) for d in days]
-    spend_buckets = [round(by_day.get(d, {}).get("spend", 0.0), 4) for d in days]
 
     return {
         "provider_id": provider_id,
         "window_days": _STATS_WINDOW_DAYS,
         "chapters_translated_30d": chapters_30d,
         "chapters_translated_buckets": chapters_buckets,
-        "spend_30d_usd": round(spend_30d, 4),
-        "spend_30d_buckets": spend_buckets,
         "failure_rate_30d": round(failure_rate, 4),
         "failure_count_30d": failures_30d,
         "attempts_30d": attempts_30d,

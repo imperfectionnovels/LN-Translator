@@ -38,12 +38,6 @@ async function loadNovelList() {
 }
 
 /* ---- Formatting helpers ---- */
-function fmtUsd(v) {
-  if (v == null) return "…";
-  // Sub-cent figures often look weird as "$0.00" — show 4 decimals for
-  // smaller values so cost-per-chapter stays meaningful.
-  return v < 0.01 && v > 0 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`;
-}
 function fmtInt(v) {
   if (v == null) return "…";
   return Number(v).toLocaleString();
@@ -99,24 +93,16 @@ function cardCoverage(s) {
     </div>`;
 }
 
-function cardCost(s) {
-  const c = s.cost;
-  const unknownNote = c.chapters_with_unknown_cost > 0
-    ? `<div class="stats-warning">${c.chapters_with_unknown_cost} chapter${c.chapters_with_unknown_cost === 1 ? "" : "s"} had no usage data recorded. Actual cost is higher than shown.</div>`
-    : "";
+function cardTokens(s) {
+  const t = s.tokens;
+  if (!t) return "";
   return `
     <div class="stats-card">
-      <h3>Cost</h3>
-      <div class="stats-headline">${fmtUsd(c.total_usd)}</div>
-      <div class="stats-sub">Total across ${c.chapters_with_known_cost} chapter${c.chapters_with_known_cost === 1 ? "" : "s"} with known usage</div>
-      ${c.average_usd_per_chapter != null ? `
-      <div class="stats-row"><span class="lbl">Avg / chapter</span><span class="val">${fmtUsd(c.average_usd_per_chapter)}</span></div>` : ""}
-      ${c.cost_per_1k_english_words != null ? `
-      <div class="stats-row"><span class="lbl">Per 1k English words</span><span class="val">${fmtUsd(c.cost_per_1k_english_words)}</span></div>` : ""}
-      ${c.input_tokens_total != null ? `
-      <div class="stats-row"><span class="lbl">Input tokens</span><span class="val">${fmtInt(c.input_tokens_total)}</span></div>
-      <div class="stats-row"><span class="lbl">Output tokens</span><span class="val">${fmtInt(c.output_tokens_total)}</span></div>` : ""}
-      ${unknownNote}
+      <h3>Tokens</h3>
+      <div class="stats-row"><span class="lbl">Input tokens</span><span class="val">${fmtInt(t.input_tokens_total)}</span></div>
+      <div class="stats-row"><span class="lbl">Output tokens</span><span class="val">${fmtInt(t.output_tokens_total)}</span></div>
+      ${t.cached_input_tokens_total ? `
+      <div class="stats-row"><span class="lbl">Cached input tokens</span><span class="val">${fmtInt(t.cached_input_tokens_total)}</span></div>` : ""}
     </div>`;
 }
 
@@ -197,16 +183,16 @@ function cardProviderMix(s) {
         <div class="stats-empty">No completed chapters yet.</div>
       </div>`;
   }
-  const totalCost = s.provider_mix.reduce((a, p) => a + p.cost_total, 0);
+  const totalChapters = s.provider_mix.reduce((a, p) => a + p.chapter_count, 0);
   return `
     <div class="stats-card">
       <h3>Provider mix</h3>
       ${s.provider_mix.map(p => {
-        const share = totalCost ? (100 * p.cost_total / totalCost).toFixed(0) : 0;
+        const share = totalChapters ? (100 * p.chapter_count / totalChapters).toFixed(0) : 0;
         return `
           <div class="stats-bar-row">
             <span class="lbl">${escapeHtml(p.provider_name)}</span>
-            <span>${fmtUsd(p.cost_total)} · ${p.chapter_count} ch</span>
+            <span>${p.chapter_count} ch</span>
             <div class="bar"><span class="fill" style="width:${share}%"></span></div>
           </div>`;
       }).join("")}
@@ -239,8 +225,8 @@ async function render() {
     const parts = [
       cardNovelHeader(s),
       cardCoverage(s),
-      cardCost(s),
     ];
+    if (novelId) parts.push(cardTokens(s));
     if (!novelId) parts.push(cardProviderMix(s));
     if (novelId) parts.push(cardWords(s));
     parts.push(cardThroughput(s));

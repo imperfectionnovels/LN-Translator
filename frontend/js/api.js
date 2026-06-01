@@ -175,8 +175,6 @@ const api = {
   // F44 in-app diagnostics.
   diagnostics: () => apiFetch("/api/diagnostics"),
   novel: (id) => apiFetch(`/api/novels/${id}`),
-  novelCost: (id) => apiFetch(`/api/novels/${id}/cost`),
-  novelCostEstimate: (id) => apiFetch(`/api/novels/${id}/cost-estimate`),
   cacheStats: () => apiFetch(`/api/cache/stats`),
   chapterPreCheck: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/pre-check`),
   renameNovel: (id, title) => apiFetch(`/api/novels/${id}`, {

@@ -64,14 +64,10 @@ _NOVEL_BASE_COLS = (
     "n.last_read_chapter_num, n.last_read_at"
 )
 
-# Cost aggregate — recorded per-chapter spend summed across the novel.
-# The per-token-pricing projection that used to live here was removed when
-# user-entered pricing fields were dropped (2026-05-26 catalog redesign).
-# 2026-05-26 resumable imports: also surface the count of skeleton chapter
-# rows still awaiting fetch, so the library card's "Importing 800 / 1500"
-# badge can render without a second SELECT round-trip.
-_COST_AGGREGATES_SQL = (
-    "COALESCE(SUM(c.cost_usd), 0) AS cost_usd, "
+# 2026-05-26 resumable imports: surface the count of skeleton chapter rows
+# still awaiting fetch, so the library card's "Importing 800 / 1500" badge
+# can render without a second SELECT round-trip.
+_IMPORT_AGGREGATES_SQL = (
     "SUM(CASE WHEN c.import_source_url IS NOT NULL "
     "         AND c.import_fetched_at IS NULL "
     "         THEN 1 ELSE 0 END) AS import_pending_chapters"
@@ -132,7 +128,7 @@ async def list_novels(
                SUM(CASE WHEN c.translate_queued = 1 THEN 1 ELSE 0 END) AS translate_queue,
                SUM(CASE WHEN c.status = 'translating' THEN 1 ELSE 0 END) AS translating_now,
                MIN(c.chapter_num) AS first_chapter_num,
-               {_COST_AGGREGATES_SQL}
+               {_IMPORT_AGGREGATES_SQL}
         FROM novels n
         LEFT JOIN chapters c ON c.novel_id = n.id
         WHERE {archive_predicate}
@@ -152,7 +148,6 @@ async def list_novels(
                 queue_chapters=r["translate_queue"] or 0,
                 translating_now=r["translating_now"] or 0,
                 first_chapter_num=r["first_chapter_num"],
-                cost_usd=float(r["cost_usd"] or 0.0),
                 import_pending_chapters=int(r["import_pending_chapters"] or 0),
             )
         )
@@ -171,7 +166,7 @@ async def get_novel(
                SUM(CASE WHEN c.translate_queued = 1 THEN 1 ELSE 0 END) AS translate_queue,
                SUM(CASE WHEN c.status = 'translating' THEN 1 ELSE 0 END) AS translating_now,
                MIN(c.chapter_num) AS first_chapter_num,
-               {_COST_AGGREGATES_SQL}
+               {_IMPORT_AGGREGATES_SQL}
         FROM novels n
         LEFT JOIN chapters c ON c.novel_id = n.id
         WHERE n.id = ?
@@ -190,7 +185,6 @@ async def get_novel(
         queue_chapters=r["translate_queue"] or 0,
         translating_now=r["translating_now"] or 0,
         first_chapter_num=r["first_chapter_num"],
-        cost_usd=float(r["cost_usd"] or 0.0),
     )
 
 
@@ -333,60 +327,6 @@ async def set_reading_position(
     return {"novel_id": novel_id, "last_read_chapter_num": body.chapter_num}
 
 
-@router.get("/{novel_id}/cost-estimate")
-async def novel_cost_estimate(
-    novel_id: int,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
-    """Cost projection is gone — user-entered pricing was removed in the
-    2026-05-26 catalog redesign. The endpoint stays for API stability so
-    older frontends don't 404, but it always returns confidence=no_pricing
-    with a null estimate.
-    """
-    cur = await conn.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
-    if await cur.fetchone() is None:
-        raise HTTPException(status_code=404, detail="novel not found")
-    return {
-        "novel_id": novel_id,
-        "confidence": "no_pricing",
-        "estimated_cost_usd": None,
-    }
-
-
-@router.get("/{novel_id}/cost")
-async def novel_cost(
-    novel_id: int,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
-    """Per-novel cost summary. Sums the cost_usd / token columns across
-    every chapter that recorded usage. Backends that don't expose tokens
-    (older claude_cli, cache hits) contribute NULL columns which COALESCE
-    to 0 in the aggregate — the totals are "what we have records for",
-    not "the universe of calls", so the user reads them as a floor."""
-    cur = await conn.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
-    if await cur.fetchone() is None:
-        raise HTTPException(status_code=404, detail="novel not found")
-    cur = await conn.execute(
-        "SELECT "
-        "  COALESCE(SUM(input_tokens), 0) AS input_tokens, "
-        "  COALESCE(SUM(output_tokens), 0) AS output_tokens, "
-        "  COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens, "
-        "  COALESCE(SUM(cost_usd), 0) AS cost_usd, "
-        "  COUNT(cost_usd) AS chapters_with_cost "
-        "FROM chapters WHERE novel_id = ?",
-        (novel_id,),
-    )
-    row = await cur.fetchone()
-    return {
-        "novel_id": novel_id,
-        "input_tokens": int(row["input_tokens"] or 0),
-        "output_tokens": int(row["output_tokens"] or 0),
-        "cached_input_tokens": int(row["cached_input_tokens"] or 0),
-        "cost_usd": float(row["cost_usd"] or 0.0),
-        "chapters_with_cost": int(row["chapters_with_cost"] or 0),
-    }
-
-
 @router.delete("/queue/all")
 async def cancel_global_queue(
     conn: aiosqlite.Connection = Depends(get_conn),
@@ -500,7 +440,7 @@ async def delete_novel(
 ) -> dict:
     # F11 (2026-05-25): DELETE soft-archives instead of hard-deleting.
     # Returns the quantified counts so the UI's confirm dialog can show
-    # exactly what was archived ("247 chapters, 89 glossary, $12.40").
+    # exactly what was archived ("247 chapters, 89 glossary").
     # Hard delete is the separate POST /api/novels/{id}/purge endpoint
     # below; purge requires that the novel was archived first.
     from backend.services.soft_delete import archive_novel  # noqa: PLC0415
@@ -513,7 +453,6 @@ async def delete_novel(
         "chapter_observations": counts.chapter_observations,
         "tm_segments": counts.tm_segments,
         "fr_snapshots": counts.fr_snapshots,
-        "total_cost_usd": counts.total_cost_usd,
     }
 
 
@@ -544,7 +483,6 @@ async def purge_archived_novel(
         "chapter_observations": counts.chapter_observations,
         "tm_segments": counts.tm_segments,
         "fr_snapshots": counts.fr_snapshots,
-        "total_cost_usd": counts.total_cost_usd,
     }
 
 
@@ -565,7 +503,6 @@ async def get_delete_counts(
         "chapter_observations": counts.chapter_observations,
         "tm_segments": counts.tm_segments,
         "fr_snapshots": counts.fr_snapshots,
-        "total_cost_usd": counts.total_cost_usd,
     }
 
 

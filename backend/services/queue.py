@@ -184,16 +184,6 @@ async def cancel_translate(chapter_id: int) -> bool:
 # 32766 on newer; 500 is comfortably under both.
 _QUEUE_BATCH_CHUNK = 500
 
-def _compute_cost_usd(usage, provider) -> float | None:
-    """Returns None — cost computation was removed when user-entered pricing
-    was dropped from the Add Provider dialog (2026-05-26 catalog redesign).
-    Kept as a function so the queue worker call site stays unchanged; the
-    column simply stays NULL on every translate. Token counts
-    (input_tokens / output_tokens / cached_input_tokens) are still recorded
-    and surface in the per-chapter diagnostics.
-    """
-    return None
-
 
 # Minimum draft length (stripped) to bother calling the refiner. Drafts
 # shorter than this are usually parse errors or stray author-note rows;
@@ -652,20 +642,18 @@ async def _translate_chapter_in_db(
             # Malformed JSON: treat as no mutes (fail-open).
             pass
 
-        # Token usage + cost. Only present on a fresh translation (cache
-        # hits and providers that don't emit usage leave it None); preserve
-        # the chapter's existing usage columns when this call didn't
-        # produce new ones, so a force-retranslate that hits the cache
-        # doesn't blank out the original record.
+        # Token usage. Only present on a fresh translation (cache hits and
+        # providers that don't emit usage leave it None); preserve the
+        # chapter's existing usage columns when this call didn't produce new
+        # ones, so a force-retranslate that hits the cache doesn't blank out
+        # the original record.
         input_tokens = output_tokens = cached_input_tokens = None
-        cost_usd: float | None = None
         if result.usage is not None and (
             result.usage.input_tokens or result.usage.output_tokens
         ):
             input_tokens = result.usage.input_tokens
             output_tokens = result.usage.output_tokens
             cached_input_tokens = result.usage.cached_input_tokens
-            cost_usd = _compute_cost_usd(result.usage, provider)
 
         # Atomic success commit. Also flag the chapter for the refinement
         # pass when the novel has refinement_provider_id set — single
@@ -712,7 +700,7 @@ async def _translate_chapter_in_db(
                 "refinement_status = ?, refined_text = NULL, "
                 "refinement_error = NULL, refined_at = NULL, "
                 "input_tokens = ?, output_tokens = ?, "
-                "cached_input_tokens = ?, cost_usd = ?, "
+                "cached_input_tokens = ?, "
                 "translated_by_provider_id = ?, "
                 "translated_at = datetime('now') "
                 "WHERE id = ? AND novel_id = ? AND status = 'translating'",
@@ -720,7 +708,7 @@ async def _translate_chapter_in_db(
                     title_en, cleaned_text,
                     1 if translation_degraded else 0,
                     new_refinement_status,
-                    input_tokens, output_tokens, cached_input_tokens, cost_usd,
+                    input_tokens, output_tokens, cached_input_tokens,
                     translated_by_id,
                     chapter_id, novel_id,
                 ),

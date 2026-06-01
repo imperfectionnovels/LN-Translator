@@ -8,9 +8,9 @@ Both return plain dicts so the routes layer can pass them through without
 a Pydantic round-trip. The router still wraps the responses in models for
 schema discoverability.
 
-Key invariant from the plan: NULL `cost_usd` rows are NEVER folded into $0.
-The cost section returns separate "known" and "unknown" counts so the UI
-can render "$X across N chapters · M chapters with unknown usage."
+Per-chapter cost tracking was removed (chapters.cost_usd went permanently
+NULL when per-model pricing input was dropped in the 2026-05-26 catalog
+redesign), so these rollups carry token counts and throughput only.
 """
 
 from __future__ import annotations
@@ -62,10 +62,6 @@ async def novel_stats(
             COUNT(*) AS total,
             SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
             SUM(CASE WHEN refinement_status = 'done' THEN 1 ELSE 0 END) AS refined,
-            SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS cost_known,
-            SUM(CASE WHEN status = 'done' AND cost_usd IS NULL THEN 1 ELSE 0 END) AS cost_unknown,
-            COALESCE(SUM(cost_usd), 0.0) AS cost_total,
-            AVG(cost_usd) AS cost_avg,
             COALESCE(SUM(input_tokens), 0) AS input_tokens_total,
             COALESCE(SUM(output_tokens), 0) AS output_tokens_total,
             COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens_total
@@ -199,21 +195,10 @@ async def novel_stats(
             "style_edit_chapters": style_edit_chapters,
             "observation_chapters": observation_chapters,
         },
-        "cost": {
-            "total_usd": float(chapter_agg["cost_total"] or 0.0),
-            "average_usd_per_chapter": (
-                float(chapter_agg["cost_avg"]) if chapter_agg["cost_avg"] is not None
-                else None
-            ),
-            "chapters_with_known_cost": chapter_agg["cost_known"] or 0,
-            "chapters_with_unknown_cost": chapter_agg["cost_unknown"] or 0,
+        "tokens": {
             "input_tokens_total": chapter_agg["input_tokens_total"] or 0,
             "output_tokens_total": chapter_agg["output_tokens_total"] or 0,
             "cached_input_tokens_total": chapter_agg["cached_input_tokens_total"] or 0,
-            "cost_per_1k_english_words": (
-                (chapter_agg["cost_total"] / english_words * 1000)
-                if english_words > 0 and chapter_agg["cost_total"] else None
-            ),
         },
         "observations": {
             "by_kind": observation_kinds,
@@ -252,10 +237,7 @@ async def global_stats(conn: aiosqlite.Connection) -> dict:
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
-            SUM(CASE WHEN refinement_status = 'done' THEN 1 ELSE 0 END) AS refined,
-            SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS cost_known,
-            SUM(CASE WHEN status = 'done' AND cost_usd IS NULL THEN 1 ELSE 0 END) AS cost_unknown,
-            COALESCE(SUM(cost_usd), 0.0) AS cost_total
+            SUM(CASE WHEN refinement_status = 'done' THEN 1 ELSE 0 END) AS refined
         FROM chapters
         """,
     )
@@ -275,30 +257,26 @@ async def global_stats(conn: aiosqlite.Connection) -> dict:
         {"day": r["day"], "count": r["n"]} for r in await cur.fetchall()
     ]
 
-    # Provider cost mix — group successful chapters by their resolved
-    # provider (translator_provider_id on the novel). NULL provider rows
-    # fall under "default" so the UI doesn't show an empty label.
+    # Provider mix: group successful chapters by their resolved provider
+    # (translator_provider_id on the novel). NULL provider rows fall under
+    # "default" so the UI doesn't show an empty label.
     cur = await conn.execute(
         """
         SELECT
             COALESCE(p.name, '(default)') AS provider_name,
-            COUNT(c.id) AS chapter_count,
-            COALESCE(SUM(c.cost_usd), 0.0) AS cost_total,
-            SUM(CASE WHEN c.cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS cost_known_count
+            COUNT(c.id) AS chapter_count
         FROM chapters c
         JOIN novels n ON n.id = c.novel_id
         LEFT JOIN providers p ON p.id = n.translator_provider_id
         WHERE c.status = 'done'
         GROUP BY provider_name
-        ORDER BY cost_total DESC
+        ORDER BY chapter_count DESC
         """,
     )
     provider_mix = [
         {
             "provider_name": r["provider_name"],
             "chapter_count": r["chapter_count"],
-            "cost_total": float(r["cost_total"]),
-            "cost_known_count": r["cost_known_count"] or 0,
         }
         for r in await cur.fetchall()
     ]
@@ -315,11 +293,6 @@ async def global_stats(conn: aiosqlite.Connection) -> dict:
             "total_chapters": chapter_agg["total"] or 0,
             "done_chapters": chapter_agg["done"] or 0,
             "refined_chapters": chapter_agg["refined"] or 0,
-        },
-        "cost": {
-            "total_usd": float(chapter_agg["cost_total"] or 0.0),
-            "chapters_with_known_cost": chapter_agg["cost_known"] or 0,
-            "chapters_with_unknown_cost": chapter_agg["cost_unknown"] or 0,
         },
         "throughput": throughput,
         "provider_mix": provider_mix,
