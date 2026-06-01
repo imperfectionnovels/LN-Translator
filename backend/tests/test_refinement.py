@@ -367,15 +367,15 @@ async def test_refiner_cache_hit_avoids_call(monkeypatch):
 
     call_count = {"n": 0}
 
-    # Stub the backend's _complete_plain so we can count calls without
-    # touching Google.
+    # Stub the backend's public complete_editor_pass seam so we can count
+    # calls without touching Google.
     class _FakeBackend:
         name = "fake"
         model_id = "m"
         system_instruction = ""
         def cache_identity(self):
             return f"{self.name}:{self.model_id}"
-        async def _complete_plain(self, prompt):
+        async def complete_editor_pass(self, prompt, *, system_instruction):
             call_count["n"] += 1
             return "POLISHED OUTPUT"
 
@@ -406,7 +406,7 @@ async def test_refiner_cache_misses_on_different_draft(monkeypatch):
         system_instruction = ""
         def cache_identity(self):
             return f"{self.name}:{self.model_id}"
-        async def _complete_plain(self, prompt):
+        async def complete_editor_pass(self, prompt, *, system_instruction):
             seen_prompts.append(prompt)
             return f"polished:{len(prompt)}"
 

@@ -104,11 +104,6 @@ async def refine_chapter(
     no envelope to parse — the output is the polished prose, full stop.
     """
     backend = get_translator(provider)
-    # Stash the refiner's system instruction on the backend instance so
-    # backends that read self.system_instruction (gemini, deepseek,
-    # claude_agent) route the correct system message. Single-threaded
-    # queue lock keeps this safe.
-    backend.system_instruction = _REFINER_SYSTEM_INSTRUCTION
     prompt = _build_refiner_prompt(draft, glossary)
     cache_key = llm_cache.refinement_key(
         backend_id=backend.cache_identity(),
@@ -132,7 +127,13 @@ async def refine_chapter(
             "refiner cache SKIP (key %s…, provider=%s)",
             cache_key[:12], provider.name,
         )
-    refined = (await backend._complete_plain(prompt)).strip()
+    # Run the polish pass through the public editor seam: it stashes the
+    # editor system instruction for backends that forward it (gemini,
+    # deepseek, claude_agent) and calls the plain-completion hook, so the
+    # refiner no longer reaches into the translator's protected state.
+    refined = (await backend.complete_editor_pass(
+        prompt, system_instruction=_REFINER_SYSTEM_INSTRUCTION,
+    )).strip()
     if not refined:
         raise RuntimeError(
             f"refiner ({provider.name}) returned empty output for a "

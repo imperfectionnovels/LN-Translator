@@ -707,6 +707,21 @@ class BaseTranslator(ABC):
             degraded=True,
         )
 
+    async def complete_editor_pass(
+        self, prompt: str, *, system_instruction: str
+    ) -> str:
+        """Public seam for a standalone editor / polish pass (the refiner).
+
+        Stashes `system_instruction` for backends that forward it as the
+        system message, then runs the plain-completion hook. The caller owns
+        the prompt body; this method owns the instruction stash plus the hook
+        call, so the polish boundary is a named part of the translator contract
+        instead of an external reach into protected state. The process-global
+        queue lock keeps the instruction stash single-writer.
+        """
+        self.system_instruction = system_instruction
+        return await self._complete_plain(prompt)
+
     @abstractmethod
     async def _complete(self, prompt: str) -> str:
         """Run the primary translation call. Return the raw model text — the
