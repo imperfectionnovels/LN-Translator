@@ -27,6 +27,7 @@ import aiosqlite
 import pytest
 
 from backend.db import _ADDITIVE_MIGRATIONS, init_db
+from backend.services import prompt_inputs
 from backend.services import queue as queue_module
 from backend.services.providers import Provider
 
@@ -198,11 +199,11 @@ async def test_fetch_style_note_returns_none_when_flag_off(tmp_path, monkeypatch
         # default factory is fine here because aiosqlite.Row supports
         # subscript access by both index and column name.
 
-        monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_NOTE", True)
-        assert await queue_module._fetch_style_note(conn, 1) == "voice anchor text"
+        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_NOTE", True)
+        assert await prompt_inputs.fetch_style_note(conn, 1) == "voice anchor text"
 
-        monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_NOTE", False)
-        assert await queue_module._fetch_style_note(conn, 1) is None
+        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_NOTE", False)
+        assert await prompt_inputs.fetch_style_note(conn, 1) is None
 
 
 @pytest.mark.asyncio
@@ -224,10 +225,10 @@ async def test_fetch_style_edits_returns_empty_when_flag_off(tmp_path, monkeypat
         )
         await conn.commit()
 
-        monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_EDITS", True)
-        on_result = await queue_module._fetch_style_edits(conn, 1)
+        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", True)
+        on_result = await prompt_inputs.fetch_style_edits(conn, 1)
         assert on_result == [("before phrase", "after phrase")]
 
-        monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_EDITS", False)
-        off_result = await queue_module._fetch_style_edits(conn, 1)
+        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", False)
+        off_result = await prompt_inputs.fetch_style_edits(conn, 1)
         assert off_result == []

@@ -33,8 +33,8 @@ Caveats:
     refined text while this harness compares against fresh DRAFTS. That lowers
     the absolute ratios for both arms equally; the arm-A-minus-arm-B DELTA
     stays a clean read of the style-edit effect on the draft.
-  - This deliberately bypasses _fetch_style_edits / the global flag and feeds
-    style_edits directly, because _fetch_style_edits has no held-out-chapter
+  - This deliberately bypasses fetch_style_edits / the global flag and feeds
+    style_edits directly, because fetch_style_edits has no held-out-chapter
     exclusion and would leak the ground truth.
 """
 
@@ -48,18 +48,18 @@ from datetime import datetime
 from backend.config import PROJECT_ROOT, PROMPT_INCLUDE_FREE_DRAFT
 from backend.db import open_conn
 from backend.services import global_glossary as global_glossary_svc
-from backend.services.queue import (
-    _STYLE_EDIT_LIMIT,
-    _fetch_novel_genre_brief,
-    _fetch_previous_chapter_tail,
-    _fetch_style_note,
-    _resolve_translator_provider,
+from backend.services.prompt_inputs import (
+    STYLE_EDIT_LIMIT,
+    fetch_novel_genre_brief,
+    fetch_previous_chapter_tail,
+    fetch_style_note,
+    resolve_translator_provider,
 )
 from backend.services.translators import translate_chapter
 
 
 def _dedupe_pairs(rows) -> list[tuple[str, str]]:
-    """Mirror _fetch_style_edits' within-window dedup of (before, after)."""
+    """Mirror fetch_style_edits' within-window dedup of (before, after)."""
     seen: set[tuple[str, str]] = set()
     out: list[tuple[str, str]] = []
     for r in rows:
@@ -75,7 +75,7 @@ async def _training_edits(
     conn, novel_id: int, exclude_chapter_id: int, limit: int
 ) -> list[tuple[str, str]]:
     """The style edits arm A injects: same recency + dedup as the worker's
-    _fetch_style_edits, but with the held-out chapter's own edits removed so
+    fetch_style_edits, but with the held-out chapter's own edits removed so
     the ground truth can't leak into the prompt."""
     cur = await conn.execute(
         "SELECT before_text, after_text FROM style_edits "
@@ -168,12 +168,12 @@ async def run(novel_id: int, chapter_num: int, limit: int, write_report: bool) -
         glossary = await global_glossary_svc.list_for_novel_with_globals(
             conn, novel_id
         )
-        previous_context = await _fetch_previous_chapter_tail(
+        previous_context = await fetch_previous_chapter_tail(
             conn, novel_id, chapter_num
         )
-        style_note = await _fetch_style_note(conn, novel_id)
-        provider = await _resolve_translator_provider(conn, novel_id)
-        novel_meta = await _fetch_novel_genre_brief(conn, novel_id)
+        style_note = await fetch_style_note(conn, novel_id)
+        provider = await resolve_translator_provider(conn, novel_id)
+        novel_meta = await fetch_novel_genre_brief(conn, novel_id)
         free_draft = ch["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
 
         # Snapshot every field needed outside the connection scope.
@@ -315,9 +315,9 @@ def main() -> None:
         "be translated AND have user edits)",
     )
     ap.add_argument(
-        "--limit", type=int, default=_STYLE_EDIT_LIMIT,
-        help=f"style-edit window size for arm A (default {_STYLE_EDIT_LIMIT}, "
-        "matches the worker's _STYLE_EDIT_LIMIT)",
+        "--limit", type=int, default=STYLE_EDIT_LIMIT,
+        help=f"style-edit window size for arm A (default {STYLE_EDIT_LIMIT}, "
+        "matches the worker's STYLE_EDIT_LIMIT)",
     )
     ap.add_argument(
         "--no-report", action="store_true",
