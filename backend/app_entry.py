@@ -78,19 +78,34 @@ logger = logging.getLogger(__name__)
 # stdout/stderr piping is unaffected — CREATE_NO_WINDOW only suppresses
 # the console-window allocation, so dev users running uvicorn from a
 # terminal lose nothing.
-if sys.platform == "win32":
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _install_no_window_subprocess_patch() -> None:
+    """Apply the win32 CREATE_NO_WINDOW Popen patch described above.
+
+    Called from main(), NOT at import, so merely importing this module has no
+    process-global side effect (tests import it freely). Gated behind the
+    frozen build: a dev run from a terminal already has a console and does not
+    need the patch. Idempotent, so a harness that calls main() twice in one
+    process does not stack patches.
+    """
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
     import subprocess
 
-    _CREATE_NO_WINDOW = 0x08000000
-    _orig_popen_init = subprocess.Popen.__init__
+    if getattr(subprocess.Popen.__init__, "_ln_no_window", False):
+        return
+    orig_popen_init = subprocess.Popen.__init__
 
     def _popen_init_no_window(self, *args, **kwargs):
-        if "creationflags" in kwargs and kwargs["creationflags"] is not None:
+        if kwargs.get("creationflags") is not None:
             kwargs["creationflags"] |= _CREATE_NO_WINDOW
         else:
             kwargs["creationflags"] = _CREATE_NO_WINDOW
-        _orig_popen_init(self, *args, **kwargs)
+        orig_popen_init(self, *args, **kwargs)
 
+    _popen_init_no_window._ln_no_window = True  # type: ignore[attr-defined]
     subprocess.Popen.__init__ = _popen_init_no_window
 
 
@@ -638,6 +653,10 @@ def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Frozen-EXE only: suppress the console-window flash on child subprocesses.
+    # Applied here rather than at import so importing this module is side-effect
+    # -free. Must run before uvicorn (and thus the queue worker) spawns anything.
+    _install_no_window_subprocess_patch()
     # Install the startup-log handler EARLY so failures during port
     # finding / uvicorn boot land in the file. Returns the log path so
     # we can mention it in error messages.

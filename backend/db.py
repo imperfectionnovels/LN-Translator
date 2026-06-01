@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 
-from backend.config import DB_PATH
+from backend.config import DB_PATH, ensure_data_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -1293,6 +1293,10 @@ async def _drop_glossary_category_check(conn: aiosqlite.Connection) -> None:
 
 
 async def init_db() -> None:
+    # Create the data directories before opening the DB. Done here (and in the
+    # app_entry launch path) instead of at config import so importing config is
+    # side-effect-free.
+    ensure_data_dirs()
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("PRAGMA journal_mode = WAL")
         await _apply_conn_pragmas(conn)

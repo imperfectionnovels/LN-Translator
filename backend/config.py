@@ -233,5 +233,11 @@ else:
     DB_PATH = USER_DATA_ROOT / "novels.db"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-USER_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+def ensure_data_dirs() -> None:
+    """Create the mutable-data directories (the DB's parent and USER_DATA_ROOT).
+
+    Called once at startup from db.init_db() (which runs in the FastAPI
+    lifespan and in every test fixture) rather than at module import, so
+    importing backend.config has no filesystem side effect. Idempotent."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    USER_DATA_ROOT.mkdir(parents=True, exist_ok=True)
