@@ -2,8 +2,8 @@
 
 `BaseTranslator` owns the prompt structure, JSON parsing, retry-then-fallback
 orchestration, and plain-text fallback. Backends only have to implement two
-hooks — `_complete_json` for the structured call and `_complete_plain` for the
-last-ditch plain-text retry — so the per-backend code is just "how do I run an
+hooks (`_complete` for the structured call and `_complete_plain` for the
+last-ditch plain-text retry) so the per-backend code is just "how do I run an
 LLM call." The system instruction, glossary formatting, and response schema
 stay identical across backends so a switch doesn't change translation behavior.
 

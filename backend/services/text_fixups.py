@@ -388,6 +388,6 @@ def enforce_locked_term_casing(
 # to happen inside the translator's thinking phase, so these failure
 # modes are LOGGED by `detect_double_possessive` /
 # `detect_mid_sentence_paragraph_break` in `text_observers.py` and the
-# observer hits flow into the QA dashboard for review. The mid-sentence
-# helper's `_is_mid_sentence_paragraph_boundary` internal is still
-# imported above because it remains shared with the observer.
+# observer hits flow into the QA dashboard for review. The
+# `_is_mid_sentence_paragraph_boundary` helper lives in text_observers.py;
+# this module does not import it.

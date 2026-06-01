@@ -21,12 +21,9 @@ configures a per-novel refinement provider (`novels.refinement_provider_id` ->
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
 import time
 
-import httpx
 import openai
 
 from backend.config import (
@@ -36,17 +33,18 @@ from backend.config import (
     DEEPSEEK_TRANSLATOR_MODEL,
     DEEPSEEK_TRANSLATOR_TEMPERATURE,
 )
-from backend.models import GlossaryEntry, NewTerm, TokenUsage, TranslationResult
+from backend.models import GlossaryEntry, TokenUsage, TranslationResult
 from backend.services import llm_cache
 from backend.services.providers import Provider, resolve_secret
 
+from ._openai_errors import is_transient_openai_error as _is_transient
 from .base import (
     DELIMITED_OUTPUT_INSTRUCTION,
     BaseTranslator,
     TransientTranslatorError,
-    _strip_code_fence,
     build_prompt,
     build_system_instruction,
+    parse_delimited_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,29 +67,6 @@ _TERMS_DELIM = "=====TERMS====="
 # via BaseTranslator.translate_chapter, which sets self.system_instruction
 # from (genre, custom_brief) before invoking the translation call. Use
 # self.system_instruction everywhere a constant was tempting.
-
-
-def _is_transient(exc: BaseException) -> bool:
-    if isinstance(
-        exc,
-        (
-            openai.RateLimitError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-            openai.InternalServerError,
-        ),
-    ):
-        return True
-    if isinstance(exc, openai.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        if isinstance(status, int) and (status == 408 or status == 429 or status >= 500):
-            return True
-        return False
-    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
-        return True
-    if isinstance(exc, (asyncio.TimeoutError, ConnectionError)):
-        return True
-    return False
 
 
 def _log_deepseek_usage(label: str, response: object) -> None:
@@ -119,77 +94,22 @@ def _log_deepseek_usage(label: str, response: object) -> None:
     )
 
 
-def _unwrap_outer_fence(text: str) -> str:
-    """Strip a single code fence wrapping the WHOLE response, if present.
-
-    Unlike base.py's `_strip_code_fence` (which returns the inner content of
-    the last fenced block), this only peels an outer wrapper — it must not be
-    applied to the full delimited envelope, because a model that fences just
-    the trailing TERMS JSON would otherwise have its title + body discarded."""
-    t = text.strip()
-    if not t.startswith("```"):
-        return t
-    first_nl = t.find("\n")
-    if first_nl != -1:
-        t = t[first_nl + 1:]
-    t = t.rstrip()
-    if t.endswith("```"):
-        t = t[:-3]
-    return t.strip()
-
-
-def _parse_terms(raw: str) -> list[NewTerm]:
-    """Best-effort parse of the TERMS JSON array. Any failure → empty list:
-    new-term extraction is a nice-to-have, never a reason to fail a chapter."""
-    raw = _strip_code_fence(raw.strip())
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("DeepSeek: could not parse TERMS block — dropping new_terms")
-        return []
-    if not isinstance(data, list):
-        return []
-    terms: list[NewTerm] = []
-    for t in data:
-        if not (isinstance(t, dict) and t.get("zh") and t.get("en")):
-            continue
-        try:
-            terms.append(NewTerm(**t))
-        except Exception:
-            logger.warning("DeepSeek: dropping malformed new_term: %r", t)
-    return terms
-
-
 def _parse_deepseek_response(
     raw: str, *, expect_terms: bool = True
 ) -> TranslationResult:
     """Parse the delimited free-form envelope into a TranslationResult.
 
-    Raises ValueError when the BODY delimiter or the body text is missing, so
-    the caller's retry-then-fallback path engages. A missing or malformed TERMS
-    block is tolerated (new_terms → []). `expect_terms=False` parses an envelope
-    that omits the TERMS section."""
-    text = _unwrap_outer_fence(raw)
-    if _BODY_DELIM not in text:
-        raise ValueError("DeepSeek response missing the BODY delimiter")
-    head, _, rest = text.partition(_BODY_DELIM)
-    title_match = re.search(
-        r"TITLE_EN\s*:\s*(.+?)\s*$", head.strip(), re.MULTILINE
-    )
-    title_en = (title_match.group(1).strip() if title_match else "") or "(untitled)"
-    if _TERMS_DELIM in rest:
-        body, _, terms_raw = rest.partition(_TERMS_DELIM)
-    else:
-        body, terms_raw = rest, ""
-    body = body.strip()
-    if not body:
-        raise ValueError("DeepSeek response missing body text")
-    new_terms = _parse_terms(terms_raw) if expect_terms else []
-    return TranslationResult(
-        title_en=title_en, translated_text=body, new_terms=new_terms
-    )
+    Delegates to the shared `base.parse_delimited_response` so the envelope
+    shape (TITLE_EN / =====BODY===== / =====TERMS=====) lives in exactly one
+    place. Raises ValueError when the BODY delimiter or the body text is
+    missing, so the caller's retry-then-fallback path engages; a missing or
+    malformed TERMS block is tolerated (new_terms -> []). `expect_terms=False`
+    keeps the body but discards any parsed new terms (used by the polish
+    pass)."""
+    result = parse_delimited_response(raw)
+    if not expect_terms:
+        return result.model_copy(update={"new_terms": []})
+    return result
 
 
 class DeepSeekTranslator(BaseTranslator):
@@ -326,11 +246,12 @@ class DeepSeekTranslator(BaseTranslator):
             try:
                 raw = await self._call_deepseek(prompt, label="translate")
                 return _parse_deepseek_response(raw), False
-            except (ValueError, json.JSONDecodeError) as e:
+            except ValueError as e:
                 # Covers a malformed envelope AND a non-transient ValueError
-                # from the API call (e.g. "no choices"). TransientTranslatorError
-                # — transient exhaustion or a truncated response — is not a
-                # ValueError, so it propagates and errors the chapter instead.
+                # from the API call (e.g. "no choices"). A
+                # TransientTranslatorError (transient exhaustion or a truncated
+                # response) is not a ValueError, so it propagates and errors the
+                # chapter instead.
                 logger.warning(
                     "deepseek call/parse failed (attempt %d): %s",
                     attempt + 1,
@@ -347,7 +268,10 @@ class DeepSeekTranslator(BaseTranslator):
         return await self._call_deepseek(prompt, label="fallback")
 
     async def _complete_plain(self, prompt: str) -> str:
-        return await self._call_deepseek(prompt, label="fallback")
+        # Identical to `_complete`: DeepSeek runs the same single-pass call for
+        # both the ABC's structured hook and the plain-text fallback. Delegate
+        # so a future label/temperature change only has to be made once.
+        return await self._complete(prompt)
 
     async def _call_deepseek(
         self,

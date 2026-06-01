@@ -6,10 +6,10 @@ Kimi, Groq, Ollama's `/v1` proxy, and the generic catch-all
 `openai_compatible` type. Each subclass is typically <20 lines — set `name`,
 declare `DEFAULT_BASE_URL`, and that's it.
 
-Deliberately NOT used by `deepseek.py`. DeepSeek has its own translate→reflect
-→improve revision pipeline and overrides `translate_chapter` end-to-end; it
-stays as a standalone class so this shared base can keep its happy path
-narrow.
+Deliberately NOT used by `deepseek.py`. DeepSeek is a single-pass translator
+that overrides `translate_chapter` end-to-end (its body rides in the same
+delimited envelope), so it stays a standalone class and this shared base can
+keep its happy path narrow.
 
 What this base provides:
 - `_complete` and `_complete_plain` (the two abstract hooks `BaseTranslator`
@@ -33,11 +33,11 @@ import asyncio
 import logging
 import time
 
-import httpx
 import openai
 
 from backend.services.providers import Provider, resolve_secret
 
+from ._openai_errors import is_transient_openai_error as _is_transient
 from .base import (
     BACKOFF_SCHEDULE,
     BaseTranslator,
@@ -49,32 +49,6 @@ logger = logging.getLogger(__name__)
 # Per-request timeout. 5 minutes covers slow long-context calls without
 # letting a hung connection wedge the serial queue forever.
 DEFAULT_REQUEST_TIMEOUT = 300.0
-
-
-def _is_transient(exc: BaseException) -> bool:
-    """Same classification rule across every OpenAI-compatible vendor: 408,
-    429, 5xx, and any transport-level network blip is retryable; auth and
-    bad-model are not."""
-    if isinstance(
-        exc,
-        (
-            openai.RateLimitError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-            openai.InternalServerError,
-        ),
-    ):
-        return True
-    if isinstance(exc, openai.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        if isinstance(status, int) and (status == 408 or status == 429 or status >= 500):
-            return True
-        return False
-    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
-        return True
-    if isinstance(exc, (asyncio.TimeoutError, ConnectionError)):
-        return True
-    return False
 
 
 class OpenAICompatibleTranslator(BaseTranslator):
