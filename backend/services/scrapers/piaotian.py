@@ -30,7 +30,7 @@ piaotia.com/html/1/1705/ = 傲世九重天 / Aoshi Jiu Chong Tian):
   are decomposed (they're navigation + ad shims).
 - Encoding: GBK.
 - Cloudflare: not present on the verified mirrors. The recipe routes
-  through `_fetch_one`'s CF bypass chain anyway so future protection
+  through `fetch_one`'s CF bypass chain anyway so future protection
   is handled transparently.
 """
 

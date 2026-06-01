@@ -274,7 +274,7 @@ async def translate_upload(
     genre_norm = _validate_genre(genre)
     decoded, source_type = await _decode_upload(file)
     # 2026-05-25 (F07): EPUB spine / DOCX heading paths surface a
-    # structured chapter list. Use it directly via _atomic_create_novel
+    # structured chapter list. Use it directly via atomic_create_novel
     # rather than running parse_chapters over the flattened text blob.
     # Source-language detection runs on the first chapter's body.
     if decoded.pre_parsed_chapters:
@@ -397,7 +397,7 @@ async def translate_scrape(
         ) from e
 
     # Recipe path: the novel + chapters + cover were created inside the
-    # recipe via _atomic_create_novel. Return the assembled response
+    # recipe via atomic_create_novel. Return the assembled response
     # shape — no second create flow needed. Append-mode (novel_id set)
     # isn't supported through recipes yet; fall back to the legacy text
     # parsing path by re-scraping without conn.

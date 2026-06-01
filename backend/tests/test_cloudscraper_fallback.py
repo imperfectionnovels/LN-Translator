@@ -155,11 +155,11 @@ async def test_cloudscraper_status_400_treated_as_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_one_transparently_retries_cf_403_via_cloudscraper(monkeypatch):
-    """The recipe-facing _fetch_one helper also gets the cloudscraper
+    """The recipe-facing fetch_one helper also gets the cloudscraper
     fallback. A 69shuba / similar recipe makes a fetch, hits a CF 403,
     and gets back a 200 with cloudscraper's body — completely
     transparently. No changes needed on the recipe side."""
-    from backend.services.scraper import _fetch_one
+    from backend.services.scraper import fetch_one
 
     monkeypatch.setattr(scraper_mod.socket, "getaddrinfo", _public_resolver)
 
@@ -187,8 +187,8 @@ async def test_fetch_one_transparently_retries_cf_403_via_cloudscraper(monkeypat
         fake_cs_fetch,
     )
 
-    status, body, ct, _enc = await _fetch_one("https://cf-protected.example/ch1")
-    # _fetch_one returned the cloudscraper-served body with synthetic 200.
+    status, body, ct, _enc = await fetch_one("https://cf-protected.example/ch1")
+    # fetch_one returned the cloudscraper-served body with synthetic 200.
     assert status == 200
     assert b"bright cold day" in body
     assert cs_called["n"] == 1
@@ -196,10 +196,10 @@ async def test_fetch_one_transparently_retries_cf_403_via_cloudscraper(monkeypat
 
 @pytest.mark.asyncio
 async def test_fetch_one_does_not_retry_non_cf_403(monkeypatch):
-    """A plain 403 without CF headers in _fetch_one's response → no
+    """A plain 403 without CF headers in fetch_one's response → no
     cloudscraper retry. Caller (recipe) sees the raw 403. Recipes can
     surface their own non-CF error messages."""
-    from backend.services.scraper import _fetch_one
+    from backend.services.scraper import fetch_one
 
     monkeypatch.setattr(scraper_mod.socket, "getaddrinfo", _public_resolver)
 
@@ -223,7 +223,7 @@ async def test_fetch_one_does_not_retry_non_cf_403(monkeypatch):
         cs_fetch,
     )
 
-    status, _body, _ct, _enc = await _fetch_one("https://plain-403.example/ch1")
+    status, _body, _ct, _enc = await fetch_one("https://plain-403.example/ch1")
     assert status == 403
     assert cs_called["n"] == 0  # not invoked — no CF headers
 

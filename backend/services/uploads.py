@@ -12,7 +12,7 @@ Three groups live here:
   decoding that closes the chardet-misdetects-windows-1252 trap.
 
 - **Atomic create** (`_insert_novel_row`, `_insert_parsed_chapters`,
-  `_atomic_create_novel`, `_create_novel_and_chapters`) — novel + chapter
+  `atomic_create_novel`, `_create_novel_and_chapters`) — novel + chapter
   rows committed in a single BEGIN IMMEDIATE transaction so a crash can't
   leave an orphan novel.
 
@@ -223,7 +223,7 @@ class DecodedDoc:
     # 2026-05-25: structured chapter list when the format carries its own
     # chapter boundaries (EPUB spine items, DOCX Heading-1 styles). When
     # set, the upload route SHOULD use these directly via
-    # _atomic_create_novel(chapters=...) instead of running parse_chapters
+    # atomic_create_novel(chapters=...) instead of running parse_chapters
     # over `text`. NULL = no structural signal; caller falls back to text-
     # blob + heading regex (current behavior).
     pre_parsed_chapters: list[ParsedChapter] | None = None
@@ -736,7 +736,7 @@ async def _decode_epub(file: UploadFile) -> DecodedDoc:
 
     2026-05-25 (F07): if the spine has ≥_EPUB_SPINE_MIN_ITEMS items, also
     return pre_parsed_chapters with one ParsedChapter per spine item. The
-    upload route uses that directly via _atomic_create_novel(chapters=...)
+    upload route uses that directly via atomic_create_novel(chapters=...)
     and skips the text-blob + parse_chapters fallback path."""
     if file.size is not None:
         _enforce_upload_size(file.size, file.filename)
@@ -937,7 +937,7 @@ async def _insert_parsed_chapters(
         )
 
 
-async def _atomic_create_novel(
+async def atomic_create_novel(
     conn: aiosqlite.Connection,
     title: str,
     chapters: list[ParsedChapter],
@@ -975,7 +975,7 @@ async def _atomic_create_novel(
 # mid-fetch then leaves partial state intact: any chapter whose
 # `import_fetched_at` is still NULL is still pending.
 #
-# The skeleton helpers below are designed to coexist with _atomic_create_novel
+# The skeleton helpers below are designed to coexist with atomic_create_novel
 # (still used by /paste, generic /scrape, and small uploads) rather than
 # replace it — the atomic path is fine when the import completes in seconds
 # and a crash window is negligible.
@@ -1137,7 +1137,7 @@ async def _create_novel_and_chapters(
     # to be fast, large enough to be representative. Avoids scanning the
     # whole concatenated text for a per-import one-shot decision.
     detected_lang = lang_detect.detect_source_language(chapters[0].original_text)
-    novel_id = await _atomic_create_novel(
+    novel_id = await atomic_create_novel(
         conn, title, chapters, source_type, source_url,
         genre=genre, source_language=detected_lang,
     )

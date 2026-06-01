@@ -127,7 +127,7 @@ class BaseRecipe(ABC):
 
     #: Default genre key (from backend/genres.py::GENRES) for novels
     #: imported via this recipe. The recipe's `scrape()` is expected to
-    #: pass this through to `_atomic_create_novel`. The route layer's
+    #: pass this through to `atomic_create_novel`. The route layer's
     #: user-supplied `genre` (when present) takes precedence — the
     #: default is the fallback when the user doesn't pick. NULL leaves
     #: novels.genre NULL, deferring to the user's edit on the novel page.
@@ -204,7 +204,7 @@ class BaseRecipe(ABC):
         from backend.services.covers import write_cover_for_novel
         from backend.services.lang_detect import detect_source_language
         from backend.services.parser import ParsedChapter
-        from backend.services.uploads import _atomic_create_novel
+        from backend.services.uploads import atomic_create_novel
 
         plan = await self.plan(url, cookies=cookies, fetch=fetch, progress=progress)
         if progress:
@@ -237,7 +237,7 @@ class BaseRecipe(ABC):
         detected_lang = detect_source_language(
             parsed[0].original_text if parsed else "",
         )
-        novel_id = await _atomic_create_novel(
+        novel_id = await atomic_create_novel(
             conn,
             title=plan.title,
             chapters=parsed,

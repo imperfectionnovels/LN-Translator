@@ -21,7 +21,7 @@ Called from two places:
   1. `scraper.py::scrape_url` — when the primary httpx attempt comes
      back with a CF-shaped 403 / 503 / 429, we run the bypass chain
      before surfacing the cookies-helpful error.
-  2. `scraper.py::_fetch_one` (the recipe-facing fetcher) — same logic
+  2. `scraper.py::fetch_one` (the recipe-facing fetcher) — same logic
      on a per-fetch basis so site recipes benefit too.
 
 Both libraries are sync, so we bridge to async via `asyncio.to_thread`.

@@ -227,10 +227,10 @@ async def test_recipe_imports_a_full_novel_with_cover(monkeypatch):
             return 200, _PNG_1x1, "image/png", "utf-8"
         raise AssertionError(f"unexpected fetch URL in test: {url}")
 
-    # Monkeypatch scrape_url's _fetch_one with our canned fetcher.
+    # Monkeypatch scrape_url's fetch_one with our canned fetcher.
     from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod._fetch_one
-    scraper_mod._fetch_one = fake_fetch
+    real_fetch = scraper_mod.fetch_one
+    scraper_mod.fetch_one = fake_fetch
     # Also bypass DNS for the SSRF guard at the start of scrape_url
     # (the recipe is dispatched before the trafilatura path's fetch, but
     # scrape_url still SSRF-validates the initial URL).
@@ -258,7 +258,7 @@ async def test_recipe_imports_a_full_novel_with_cover(monkeypatch):
                 conn=conn,
             )
     finally:
-        scraper_mod._fetch_one = real_fetch
+        scraper_mod.fetch_one = real_fetch
         scraper_mod._resolve_and_validate = real_resolve
 
     assert isinstance(result, RecipeResult)
@@ -351,9 +351,9 @@ async def test_recipe_retries_chapter_fetch_on_cf_403(monkeypatch):
         raise AssertionError(f"unexpected fetch URL: {url}")
 
     from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod._fetch_one
+    real_fetch = scraper_mod.fetch_one
     real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod._fetch_one = fake_fetch
+    scraper_mod.fetch_one = fake_fetch
 
     async def fake_resolve(host):
         return None
@@ -376,7 +376,7 @@ async def test_recipe_retries_chapter_fetch_on_cf_403(monkeypatch):
                 conn=conn,
             )
     finally:
-        scraper_mod._fetch_one = real_fetch
+        scraper_mod.fetch_one = real_fetch
         scraper_mod._resolve_and_validate = real_resolve
 
     # All 5 chapters land — the retry recovered chapter 3.
@@ -388,7 +388,7 @@ async def test_recipe_retries_chapter_fetch_on_cf_403(monkeypatch):
 
 def test_recipe_declares_default_genre() -> None:
     """The recipe surface contract: default_genre must be set on the
-    recipe class. The route layer passes it through to _atomic_create_novel
+    recipe class. The route layer passes it through to atomic_create_novel
     when the user doesn't override."""
     from backend.services.scrapers.sixnineshu import SixNineShuRecipe
     assert SixNineShuRecipe.default_genre == "xianxia"

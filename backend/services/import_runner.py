@@ -46,7 +46,7 @@ from backend.services.parser import (
     ParsedChapter,
     reconcile_chapter_numbers,
 )
-from backend.services.scraper import ScrapeError, _fetch_one
+from backend.services.scraper import ScrapeError, fetch_one
 from backend.services.scrapers import dispatch as recipe_dispatch
 from backend.services.scrapers.base import (
     BaseRecipe,
@@ -124,7 +124,7 @@ async def start_from_recipe(
 
         await scrape_jobs.update_progress(job_id, "fetching_overview", 0, 0)
         plan = await recipe.plan(
-            url, cookies=cookies, fetch=_fetch_one, progress=progress,
+            url, cookies=cookies, fetch=fetch_one, progress=progress,
         )
 
         # Phase 2: skeleton create. Reconcile chapter_num against printed
@@ -375,7 +375,7 @@ async def _drive_fill(
                 fetched = await recipe.fetch_chapter(
                     planned,
                     cookies=cookies,
-                    fetch=_fetch_one,
+                    fetch=fetch_one,
                     recipe_state=recipe_state,
                 )
             except ScrapeError as e:
@@ -417,7 +417,7 @@ async def _fetch_and_store_cover(
     completion — same policy as the legacy atomic path."""
     try:
         from backend.services.covers import write_cover_for_novel  # noqa: PLC0415
-        status, body, content_type, _enc = await _fetch_one(
+        status, body, content_type, _enc = await fetch_one(
             cover_url, cookies=cookies,
         )
         if status < 400 and content_type.startswith("image/"):
@@ -548,7 +548,7 @@ async def insert_chapters_incrementally(
     batches of `batch_size`, committing after each batch. On the final
     batch flips to 'done'.
 
-    Differs from `_atomic_create_novel`: that one wraps the whole
+    Differs from `atomic_create_novel`: that one wraps the whole
     novel + every chapter in ONE transaction; this one creates the
     novel in its own short transaction and then commits chapters in
     chunks. A crash between batches leaves the novel with the

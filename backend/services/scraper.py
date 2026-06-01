@@ -551,7 +551,7 @@ async def _try_cf_bypass_fallback(
     return body, content_type, encoding
 
 
-async def _fetch_one(
+async def fetch_one(
     url: str,
     *,
     headers: dict | None = None,
@@ -654,7 +654,7 @@ async def _fetch_one(
         if recovered is not None:
             body, ct, enc = recovered
             logger.info(
-                "_fetch_one: cloudscraper bypass succeeded for %s (%d bytes)",
+                "fetch_one: cloudscraper bypass succeeded for %s (%d bytes)",
                 url, len(body),
             )
             return 200, body, ct, enc
@@ -707,7 +707,7 @@ async def scrape_url(
 
     # Recipe dispatch: per-site code paths (encoding, URL transforms,
     # chapter-list crawl) for known hosts. Recipes own the full import
-    # — they call `_atomic_create_novel` themselves and return a
+    # — they call `atomic_create_novel` themselves and return a
     # RecipeResult. Only fires when the caller passed ``conn`` (without
     # it the recipe can't write to the DB).
     if conn is not None:
@@ -720,7 +720,7 @@ async def scrape_url(
                 "scrape_url: dispatching %s to recipe %r", url, recipe.name,
             )
             return await recipe.scrape(
-                url, conn, cookies=cookies, fetch=_fetch_one,
+                url, conn, cookies=cookies, fetch=fetch_one,
                 progress=progress,
             )
 

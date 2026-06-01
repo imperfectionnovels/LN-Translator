@@ -224,9 +224,9 @@ async def test_recipe_imports_novel_with_mocked_fetcher(monkeypatch):
         raise AssertionError(f"unexpected fetch URL: {url}")
 
     from backend.services import scraper as scraper_mod
-    real_fetch = scraper_mod._fetch_one
+    real_fetch = scraper_mod.fetch_one
     real_resolve = scraper_mod._resolve_and_validate
-    scraper_mod._fetch_one = fake_fetch
+    scraper_mod.fetch_one = fake_fetch
 
     async def fake_resolve(host):
         return None
@@ -249,7 +249,7 @@ async def test_recipe_imports_novel_with_mocked_fetcher(monkeypatch):
                 conn=conn,
             )
     finally:
-        scraper_mod._fetch_one = real_fetch
+        scraper_mod.fetch_one = real_fetch
         scraper_mod._resolve_and_validate = real_resolve
 
     assert isinstance(result, RecipeResult)
