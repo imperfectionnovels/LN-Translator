@@ -43,7 +43,7 @@ async def list_global(
     return await global_svc.list_all(conn)
 
 
-@router.post("/glossary/global")
+@router.post("/glossary/global", status_code=201)
 async def create_global(
     body: NewGlobalGlossaryEntry,
     conn: aiosqlite.Connection = Depends(get_conn),
@@ -163,7 +163,7 @@ async def apply_in_place_global(
     )
 
 
-@router.post("/glossary/{entry_id}/promote-to-global")
+@router.post("/glossary/{entry_id}/promote-to-global", status_code=201)
 async def promote_to_global(
     entry_id: int,
     conn: aiosqlite.Connection = Depends(get_conn),

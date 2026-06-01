@@ -366,7 +366,7 @@ async def test_delete_secret_route_204(monkeypatch, quiet_app_p6):
     from fastapi.testclient import TestClient
     with TestClient(quiet_app_p6) as client:
         resp = client.delete(f"/api/providers/{p.id}/secret")
-    assert resp.status_code == 204
+    assert resp.status_code == 200
     fake_keyring.delete_password.assert_called_once_with("LN-Translator", "MY_KEY")
 
 

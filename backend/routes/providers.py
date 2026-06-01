@@ -120,12 +120,13 @@ async def update_provider(provider_id: int, body: ProviderUpdate) -> ProviderMod
     return _to_model(p)
 
 
-@router.delete("/{provider_id}", status_code=204)
-async def delete_provider(provider_id: int) -> None:
+@router.delete("/{provider_id}")
+async def delete_provider(provider_id: int) -> dict:
     ok = await providers_svc.delete_provider(provider_id)
     if not ok:
         raise HTTPException(status_code=404, detail="provider not found")
     invalidate_provider_cache(provider_id)
+    return {"deleted": provider_id}
 
 
 @router.post("/{provider_id}/set-default")
@@ -176,17 +177,18 @@ async def set_secret(provider_id: int, body: SetSecretBody) -> dict:
     return {"ok": True, "stored_under": p.secret_ref}
 
 
-@router.delete("/{provider_id}/secret", status_code=204)
-async def delete_secret(provider_id: int) -> None:
-    """Remove a stored secret from the OS keychain. Returns 204 whether
-    or not anything was actually stored — idempotent so the UI's "clear
-    saved key" button never errors on a no-op."""
+@router.delete("/{provider_id}/secret")
+async def delete_secret(provider_id: int) -> dict:
+    """Remove a stored secret from the OS keychain. Succeeds whether or not
+    anything was actually stored: idempotent so the UI's "clear saved key"
+    button never errors on a no-op."""
     p = await providers_svc.load_provider(provider_id)
     if p is None:
         raise HTTPException(status_code=404, detail="provider not found")
     if p.secret_ref:
         providers_svc.delete_secret(p.secret_ref)
     invalidate_provider_cache(provider_id)
+    return {"provider_id": provider_id, "secret_cleared": True}
 
 
 # ============================================================

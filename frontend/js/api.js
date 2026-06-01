@@ -273,12 +273,7 @@ const api = {
     method: "PATCH",
     body: JSON.stringify(fields),
   }),
-  deleteProvider: (id) => fetch(`/api/providers/${id}`, { method: "DELETE" })
-    .then(async r => {
-      if (!r.ok) throw await _extractError(r);
-      // 204 has no body — return null instead of attempting r.json().
-      return null;
-    }),
+  deleteProvider: (id) => apiFetch(`/api/providers/${id}`, { method: "DELETE" }),
   setDefaultProvider: (id) => apiFetch(`/api/providers/${id}/set-default`, {
     method: "POST",
   }),
@@ -287,11 +282,7 @@ const api = {
     method: "POST",
     body: JSON.stringify({ value }),
   }),
-  deleteProviderSecret: (id) => fetch(`/api/providers/${id}/secret`, { method: "DELETE" })
-    .then(async r => {
-      if (!r.ok) throw await _extractError(r);
-      return null;
-    }),
+  deleteProviderSecret: (id) => apiFetch(`/api/providers/${id}/secret`, { method: "DELETE" }),
   providerStats: (id) => apiFetch(`/api/providers/${id}/stats`),
   providerRoutedNovels: (id, limit = 12) =>
     apiFetch(`/api/providers/${id}/routed-novels?limit=${limit}`),

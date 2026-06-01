@@ -59,7 +59,7 @@ async def list_bookmarks(
     ]
 
 
-@router.post("/novels/{novel_id}/chapters/{chapter_num}/bookmarks")
+@router.post("/novels/{novel_id}/chapters/{chapter_num}/bookmarks", status_code=201)
 async def create_bookmark(
     novel_id: int,
     chapter_num: int,

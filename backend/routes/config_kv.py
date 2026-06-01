@@ -53,10 +53,11 @@ async def set_config(
     return {"key": key, "value": body.value}
 
 
-@router.delete("/config/{key}", status_code=204)
+@router.delete("/config/{key}")
 async def delete_config(
     key: str, conn: aiosqlite.Connection = Depends(get_conn)
-) -> None:
-    """Idempotent — DELETE on a missing key returns 204, not 404."""
+) -> dict:
+    """Idempotent: DELETE on a missing key still succeeds (200), not 404."""
     await conn.execute("DELETE FROM config_kv WHERE key = ?", (key,))
     await conn.commit()
+    return {"deleted": key}

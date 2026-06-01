@@ -61,16 +61,16 @@ def test_put_upserts_existing_key(client: TestClient) -> None:
 
 
 def test_delete_is_idempotent(client: TestClient) -> None:
-    """Deleting a key that doesn't exist returns 204, not 404. The
+    """Deleting a key that doesn't exist still succeeds (200), not 404. The
     settings UI's 'clear saved key' button needs this to never error."""
     resp = client.delete("/api/config/never_set_this_key")
-    assert resp.status_code == 204, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 def test_delete_removes_existing_key(client: TestClient) -> None:
     client.put("/api/config/foo", json={"value": "v"})
     resp = client.delete("/api/config/foo")
-    assert resp.status_code == 204, resp.text
+    assert resp.status_code == 200, resp.text
 
     resp = client.get("/api/config/foo")
     assert resp.status_code == 404
