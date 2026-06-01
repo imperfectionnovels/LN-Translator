@@ -46,8 +46,9 @@ def _chinese_char_count(text: str) -> int:
 
 async def novel_stats(
     conn: aiosqlite.Connection, novel_id: int
-) -> dict:
-    """Full per-novel rollup. Returns None when the novel doesn't exist."""
+) -> dict | None:
+    """Full per-novel rollup. Returns None when the novel doesn't exist
+    (the route turns that into a 404)."""
     cur = await conn.execute(
         "SELECT id, title FROM novels WHERE id = ?", (novel_id,)
     )

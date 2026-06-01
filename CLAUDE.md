@@ -30,7 +30,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   └── gotchas.md             # recurring pitfalls
 ├── backend/
 │   ├── main.py                # FastAPI app, lifespan, _probe_backends
-│   ├── app_entry.py           # frozen-mode entry: port-pick, uvicorn thread, pywebview window, _shutdown_event funnel
+│   ├── app_entry.py           # frozen-mode entry orchestrator: main(), first-run routing, _run_uvicorn (re-exports the app_* helpers)
+│   ├── app_ports.py, app_platform.py, app_ui.py, app_shutdown.py  # app_entry helpers: port probe + sentinel, win32 console/Popen shim, pywebview/browser UI, server-ref + _signal_shutdown bridge
 │   ├── config.py              # env vars, USER_DATA_ROOT / PROJECT_ROOT resolution
 │   ├── db.py                  # SCHEMA, _ADDITIVE_MIGRATIONS, init_db, _drop_dead_columns, drain_on_startup hooks
 │   ├── models.py              # Pydantic models
@@ -45,7 +46,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── genres.py              # GET /api/genres for the UI dropdown
 │   │   ├── config_kv.py           # /config/{key} GET/PUT — first_run_complete + novel_defaults live here
 │   │   ├── observations.py        # observer hits (read-only)
-│   │   ├── stats.py, cache.py, covers.py, bookmarks.py, find_replace.py, tm.py
+│   │   ├── imports.py             # resumable scrape/import job status feed
+│   │   ├── stats.py, cache.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
 │   │   ├── uploads.py             # file decode (txt/docx/epub/html) + transactional novel/chapter insert
@@ -60,21 +62,30 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── llm_cache.py           # content-addressed on-disk cache (USER_DATA_ROOT/llm_cache)
 │   │   ├── providers.py           # Provider dataclass, CRUD, set_default, resolve_secret, ensure_default_provider
 │   │   ├── pre_check.py           # chapter_saturation glossary/OCR preflight
+│   │   ├── prompt_inputs.py       # per-novel prompt-input fetchers (style edits/note, prev-chapter tail, provider resolve)
+│   │   ├── translator_catalog.py  # _CATALOG: single source of truth for provider types / models / form defaults
+│   │   ├── free_draft_queue.py    # mechanical NMT draft lane (own FREE_DRAFT_LOCK)
+│   │   ├── import_runner.py, scrape_jobs.py        # resumable recipe/bulk import (skeleton + fill)
+│   │   ├── translation_attempts.py, fr_snapshots.py, soft_delete.py, genres_novel.py, lang_detect.py
 │   │   ├── epub_export.py, covers.py, stats.py
+│   │   ├── scrapers/              # per-site recipe registry: base.py + cloudflare/piaotian/sixnineshu/syosetu/uukanshu/...
 │   │   └── translators/
 │   │       ├── base.py            # BaseTranslator, build_prompt, parse_delimited_response, build_system_instruction(genre, custom_brief)
 │   │       ├── factory.py         # get_translator(provider) routes by provider_type; translator_factory() = legacy startup-probe shim
 │   │       ├── claude_agent.py    # Claude Agent SDK (subscription auth)
 │   │       ├── claude_cli.py      # claude subprocess wrapper
 │   │       ├── gemini.py          # Google Gemini API
-│   │       └── deepseek.py        # OpenAI-compatible single-pass translator
+│   │       ├── deepseek.py        # OpenAI-compatible single-pass translator (delimited envelope)
+│   │       ├── openai_compatible.py, _openai_errors.py  # shared OpenAI-SDK base + transient-retry helper (openai/xai/mistral/qwen/zhipu/moonshot/groq/openrouter/ollama subclasses)
+│   │       ├── anthropic_api.py, google_translate_free.py  # Anthropic API + free Google-Translate NMT backends
+│   │       └── _subprocess_utils.py  # shared run_subprocess/resolve_binary for CLI backends (codex_cli/gemini_cli/opencode)
 │   ├── prompts/                   # genre-aware prompt hierarchy (ships in the EXE bundle)
 │   │   ├── base.md                # genre-agnostic literary translator core
 │   │   ├── genres/<key>.md        # 10 overlays: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl (+ generic as legacy fallback)
 │   │   └── examples/<key>.md      # per-genre worked examples
 │   ├── scripts/
 │   │   └── load_glossary_md.py    # active: load data/glossary.md preset
-│   └── tests/                     # 70+ pytest modules
+│   └── tests/                     # 80+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, find-replace.html, onboarding.html
@@ -213,7 +224,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 870 tests.
+- `pytest backend/tests`. Currently 950 tests.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 
