@@ -235,3 +235,57 @@ async def test_fk_cascade_on_chapter_delete():
     async with open_conn() as conn:
         rows = await list_for_chapter(conn, chapter_id)
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_failed_translation_records_error_attempt(monkeypatch):
+    """A translation that raises must record an 'error' attempt row in the
+    same transaction as the status='error' update, so the provider's
+    failure_rate_30d metric reflects real failures. Regression: the error
+    path previously only updated the chapter and never logged an attempt,
+    pinning failure_rate_30d at 0."""
+    from backend.db import init_db, open_conn
+    from backend.services import providers as providers_svc
+    from backend.services import queue as queue_svc
+    from backend.services.translation_attempts import list_for_chapter
+
+    await init_db()
+    async with open_conn() as conn:
+        for t in ("chapter_translation_attempts", "chapters", "novels", "providers"):
+            try:
+                await conn.execute(f"DELETE FROM {t}")
+            except Exception:
+                pass
+        await conn.commit()
+
+    p = await providers_svc.create_provider(
+        name="failing", provider_type="gemini", model_id="m", is_default=True,
+    )
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type) VALUES ('N', 'paste')"
+        )
+        novel_id = cur.lastrowid
+        cur = await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "status, translate_queued) VALUES (?, 1, '原文', 'pending', 1)",
+            (novel_id,),
+        )
+        chapter_id = cur.lastrowid
+        await conn.commit()
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("simulated upstream failure")
+    monkeypatch.setattr("backend.services.queue.translate_chapter", _boom)
+
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
+        cur = await conn.execute(
+            "SELECT status FROM chapters WHERE id = ?", (chapter_id,)
+        )
+        assert (await cur.fetchone())["status"] == "error"
+        rows = await list_for_chapter(conn, chapter_id)
+    assert len(rows) == 1
+    assert rows[0].status == "error"
+    assert rows[0].provider_id == p.id
+    assert "simulated upstream failure" in (rows[0].parse_error or "")

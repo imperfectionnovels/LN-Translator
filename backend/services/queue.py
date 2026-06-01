@@ -511,6 +511,10 @@ async def _translate_chapter_in_db(
         )
         await conn.commit()
         return
+    # Initialized before the try so the error handler can still record an
+    # attempt row (and provider attribution) when the failure happens before
+    # provider resolution below.
+    provider: Provider | None = None
     try:
         # Initiative 3: union of per-novel + global glossary. Per-novel
         # entries (locked or auto) shadow any global entry on the same term.
@@ -872,6 +876,29 @@ async def _translate_chapter_in_db(
             "WHERE id = ? AND novel_id = ? AND status = 'translating'",
             (str(e)[:4000], chapter_id, novel_id),
         )
+        # F22: record an 'error' attempt row in the same transaction so the
+        # provider's failure_rate_30d metric reflects real failures instead of
+        # staying pinned at 0. Best-effort; a diagnostics write must never mask
+        # the original failure or block the error commit.
+        try:
+            from backend.services.translation_attempts import (  # noqa: PLC0415
+                record_attempt,
+            )
+            await record_attempt(
+                conn,
+                chapter_id=chapter_id,
+                provider_id=provider.id if provider else None,
+                model_id=provider.model_id if provider else None,
+                status="error",
+                parse_error=str(e)[:4000],
+                prompt_snapshot=None,
+                retry_count=0,
+            )
+        except Exception:
+            logger.exception(
+                "queue: failed to record error attempt for ch %d",
+                r["chapter_num"],
+            )
         await conn.commit()
 
 
