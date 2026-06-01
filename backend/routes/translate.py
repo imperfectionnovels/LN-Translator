@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from backend.db import get_conn
-from backend.genres import is_known_genre
+from backend.genres import normalize_and_validate_genre
 from backend.models import (
     MAX_TITLE_CHARS,
     AppendPasteRequest,
@@ -88,22 +88,12 @@ _ALLOWED_UPLOAD_EXTS = frozenset({"txt", "epub", "docx", "html", "htm"})
 
 
 def _validate_genre(genre: str | None) -> str | None:
-    """Normalize + validate a user-supplied genre key. Empty / None →
-    None (no genre selected; column stays NULL). Unknown key → 400.
+    """Normalize + validate a user-supplied genre key for the import routes.
 
-    Centralized here so paste/upload/bulk/scrape all get identical
-    validation. Mirrors the genre-PATCH validation in routes/novels.py."""
-    if genre is None:
-        return None
-    g = genre.strip().lower()
-    if not g:
-        return None
-    if not is_known_genre(g):
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown genre {g!r}; see backend/genres.py for valid keys",
-        )
-    return g
+    Thin wrapper over the single-source `genres.normalize_and_validate_genre`
+    so paste/upload/bulk/scrape and the novel-PATCH path can't drift: empty /
+    None -> None (column stays NULL), unknown key -> 400."""
+    return normalize_and_validate_genre(genre)
 
 
 def _validate_upload_filename(filename: str | None) -> str:

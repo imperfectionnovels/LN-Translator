@@ -1,11 +1,12 @@
 """Shared translator scaffolding.
 
-`BaseTranslator` owns the prompt structure, JSON parsing, retry-then-fallback
-orchestration, and plain-text fallback. Backends only have to implement two
-hooks (`_complete` for the structured call and `_complete_plain` for the
-last-ditch plain-text retry) so the per-backend code is just "how do I run an
-LLM call." The system instruction, glossary formatting, and response schema
-stay identical across backends so a switch doesn't change translation behavior.
+`BaseTranslator` owns the prompt structure, the delimited-envelope response
+parsing (`parse_delimited_response`), retry-then-fallback orchestration, and
+the plain-text fallback. Backends only have to implement two hooks (`_complete`
+for the structured delimited call and `_complete_plain` for the last-ditch
+plain-text retry) so the per-backend code is just "how do I run an LLM call."
+The system instruction, glossary formatting, and response envelope stay
+identical across backends so a switch doesn't change translation behavior.
 
 System instructions are GENRE-AWARE. The text is composed per call from
 three files under `backend/prompts/`:
@@ -533,6 +534,43 @@ class BaseTranslator(ABC):
         """Stable backend identifier used as part of the LLM cache key."""
         return f"{self.name}:{self.model_id}:{PROMPT_TEMPLATE_VERSION}"
 
+    def _begin_chapter(
+        self,
+        chapter_zh: str,
+        title_zh: str | None,
+        glossary: list[GlossaryEntry],
+        previous_context: str | None,
+        style_edits: list[tuple[str, str]] | None,
+        *,
+        style_note: str | None,
+        genre: str | None,
+        custom_brief: str | None,
+        free_draft: str | None,
+    ) -> tuple[str, str]:
+        """Shared translate_chapter prologue: reset the per-chapter call
+        counter + usage accumulator, stash the genre-aware system instruction,
+        build the user prompt, and derive the LLM cache key.
+
+        Returns (prompt, cache_key). Both the standard `translate_chapter`
+        loop and DeepSeek's single-pass override call this so the scaffolding
+        lives in one place. The system instruction is stashed on `self` BEFORE
+        the cache key is built so the key folds in the prompt content.
+        """
+        self._llm_call_count = 0
+        self._usage_accumulator = TokenUsage()
+        self.system_instruction = build_system_instruction(genre, custom_brief)
+        prompt = build_prompt(
+            chapter_zh, title_zh, glossary, previous_context, style_edits,
+            style_note=style_note,
+            free_draft=free_draft,
+        )
+        cache_key = llm_cache.translation_key(
+            backend_id=self.cache_identity(),
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+        )
+        return prompt, cache_key
+
     def _emit_usage(
         self,
         *,
@@ -588,25 +626,18 @@ class BaseTranslator(ABC):
         # from the source text. ``free_draft`` is the optional mechanical-NMT
         # reference layer threaded into build_prompt for PEMT mode.
 
-        # Reset the per-chapter LLM call counter + usage accumulator at
-        # the start of each translate_chapter. _check_call_budget() ticks
-        # the counter once per _complete / _complete_plain invocation;
-        # _emit_usage() adds to the accumulator after each successful call.
-        self._llm_call_count = 0
-        self._usage_accumulator = TokenUsage()
-        # Build the genre-aware system instruction BEFORE the cache key, so
-        # the key folds in the prompt content. Stash on self so backend
-        # _complete hooks pick it up without signature changes.
-        self.system_instruction = build_system_instruction(genre, custom_brief)
-        prompt = build_prompt(
+        # Reset the per-chapter call counter + usage accumulator, stash the
+        # genre-aware system instruction, build the prompt, and derive the
+        # cache key. _check_call_budget() ticks the counter once per _complete
+        # / _complete_plain invocation; _emit_usage() adds to the accumulator
+        # after each successful call. The system instruction is built BEFORE
+        # the cache key so the key folds in the prompt content; backend
+        # _complete hooks read self.system_instruction without signature
+        # changes.
+        prompt, cache_key = self._begin_chapter(
             chapter_zh, title_zh, glossary, previous_context, style_edits,
-            style_note=style_note,
+            style_note=style_note, genre=genre, custom_brief=custom_brief,
             free_draft=free_draft,
-        )
-        cache_key = llm_cache.translation_key(
-            backend_id=self.cache_identity(),
-            system_instruction=self.system_instruction,
-            prompt=prompt,
         )
         if use_cache:
             cached = llm_cache.load_translation(cache_key)
@@ -666,10 +697,11 @@ class BaseTranslator(ABC):
     async def _plain_text_fallback(
         self, chapter_zh: str, title_zh: str | None
     ) -> TranslationResult:
-        """Last-ditch fallback when structured JSON keeps failing. Asks for the
-        title and body in a delimited plain-text format so the reader doesn't
-        end up with a Chinese title above an English body. If the model fails
-        to follow the format, falls back to title_zh (or "(untitled)")."""
+        """Last-ditch fallback when the delimited envelope keeps failing to
+        parse. Asks for the title and body in a simple plain-text format so the
+        reader doesn't end up with a Chinese title above an English body. If the
+        model fails to follow the format, falls back to title_zh (or
+        "(untitled)")."""
         self._check_call_budget()
         if title_zh:
             prompt = (
@@ -731,4 +763,5 @@ class BaseTranslator(ABC):
 
     @abstractmethod
     async def _complete_plain(self, prompt: str) -> str:
-        """Run a plain-text completion (no JSON schema) for the fallback path."""
+        """Run a plain-text completion (no delimited envelope) for the
+        fallback path."""

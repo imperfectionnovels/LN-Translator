@@ -40,6 +40,7 @@ from backend.services.observations import (
     implicit_observation_tm_inconsistency,
     implicit_observation_translation_degraded,
     normalize_observer_outputs,
+    parse_disabled_observers,
 )
 from backend.services.parser import normalize_title_en, strip_leading_title_line
 from backend.services.prompt_inputs import (
@@ -634,21 +635,17 @@ async def _translate_chapter_in_db(
         # observation list before persistence. Lets users mute false-
         # positive observer categories per-novel without losing the
         # other observers' signal.
-        try:
-            cur = await conn.execute(
-                "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
-            )
-            mute_row = await cur.fetchone()
-            if mute_row and mute_row["disabled_observers"]:
-                import json as _json  # noqa: PLC0415
-                muted = set(_json.loads(mute_row["disabled_observers"]) or [])
-                if muted:
-                    normalized_observations = [
-                        o for o in normalized_observations if o.kind not in muted
-                    ]
-        except Exception:
-            # Malformed JSON: treat as no mutes (fail-open).
-            pass
+        cur = await conn.execute(
+            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+        )
+        mute_row = await cur.fetchone()
+        muted = parse_disabled_observers(
+            mute_row["disabled_observers"] if mute_row else None
+        )
+        if muted:
+            normalized_observations = [
+                o for o in normalized_observations if o.kind not in muted
+            ]
 
         # Token usage. Only present on a fresh translation (cache hits and
         # providers that don't emit usage leave it None); preserve the
@@ -678,49 +675,36 @@ async def _translate_chapter_in_db(
         # re-deriving from novels.translator_provider_id (which can change
         # later — see refined_by_provider_id for the same pattern).
         translated_by_id = provider.id if provider is not None else None
-        if input_tokens is None:
-            # No fresh usage. Use COALESCE to keep whatever's already on
-            # the row (don't blank existing records on a cache hit).
-            upd = await conn.execute(
-                "UPDATE chapters SET "
-                "title_en = ?, translated_text = ?, status = 'done', "
-                "error_msg = NULL, force_retranslate = 0, "
-                "translation_degraded = ?, translate_queued = 0, "
-                "refinement_status = ?, refined_text = NULL, "
-                "refinement_error = NULL, refined_at = NULL, "
-                "translated_by_provider_id = ?, "
-                "translated_at = datetime('now') "
-                "WHERE id = ? AND novel_id = ? AND status = 'translating'",
-                (
-                    title_en, cleaned_text,
-                    1 if translation_degraded else 0,
-                    new_refinement_status,
-                    translated_by_id,
-                    chapter_id, novel_id,
-                ),
-            )
-        else:
-            upd = await conn.execute(
-                "UPDATE chapters SET "
-                "title_en = ?, translated_text = ?, status = 'done', "
-                "error_msg = NULL, force_retranslate = 0, "
-                "translation_degraded = ?, translate_queued = 0, "
-                "refinement_status = ?, refined_text = NULL, "
-                "refinement_error = NULL, refined_at = NULL, "
-                "input_tokens = ?, output_tokens = ?, "
-                "cached_input_tokens = ?, "
-                "translated_by_provider_id = ?, "
-                "translated_at = datetime('now') "
-                "WHERE id = ? AND novel_id = ? AND status = 'translating'",
-                (
-                    title_en, cleaned_text,
-                    1 if translation_degraded else 0,
-                    new_refinement_status,
-                    input_tokens, output_tokens, cached_input_tokens,
-                    translated_by_id,
-                    chapter_id, novel_id,
-                ),
-            )
+        # One success-commit UPDATE. The only difference between the
+        # fresh-usage and cache-hit paths is whether the token columns are
+        # written: on a cache hit (input_tokens is None) we leave them alone so
+        # the original record isn't blanked; on a fresh translation we overwrite
+        # them with this call's counts. Build the SET list + params once with
+        # the token clause inserted conditionally.
+        set_clauses = [
+            "title_en = ?", "translated_text = ?", "status = 'done'",
+            "error_msg = NULL", "force_retranslate = 0",
+            "translation_degraded = ?", "translate_queued = 0",
+            "refinement_status = ?", "refined_text = NULL",
+            "refinement_error = NULL", "refined_at = NULL",
+        ]
+        params: list = [
+            title_en, cleaned_text,
+            1 if translation_degraded else 0,
+            new_refinement_status,
+        ]
+        if input_tokens is not None:
+            set_clauses += [
+                "input_tokens = ?", "output_tokens = ?", "cached_input_tokens = ?",
+            ]
+            params += [input_tokens, output_tokens, cached_input_tokens]
+        set_clauses += ["translated_by_provider_id = ?", "translated_at = datetime('now')"]
+        params += [translated_by_id, chapter_id, novel_id]
+        upd = await conn.execute(
+            "UPDATE chapters SET " + ", ".join(set_clauses)
+            + " WHERE id = ? AND novel_id = ? AND status = 'translating'",
+            tuple(params),
+        )
         # Observation replacement runs in the SAME transaction as the chapter
         # UPDATE — atomic swap, no panel-side mixed-generation view. Done only
         # when the claim succeeded; a lost-claim branch below skips this.

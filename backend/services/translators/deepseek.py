@@ -20,7 +20,6 @@ configures a per-novel refinement provider (`novels.refinement_provider_id` ->
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 
@@ -33,17 +32,15 @@ from backend.config import (
     DEEPSEEK_TRANSLATOR_MODEL,
     DEEPSEEK_TRANSLATOR_TEMPERATURE,
 )
-from backend.models import GlossaryEntry, TokenUsage, TranslationResult
+from backend.models import GlossaryEntry, TranslationResult
 from backend.services import llm_cache
 from backend.services.providers import Provider, resolve_secret
 
 from ._openai_errors import is_transient_openai_error as _is_transient
+from ._openai_errors import request_with_backoff
 from .base import (
-    DELIMITED_OUTPUT_INSTRUCTION,
     BaseTranslator,
     TransientTranslatorError,
-    build_prompt,
-    build_system_instruction,
     parse_delimited_response,
 )
 
@@ -180,31 +177,17 @@ class DeepSeekTranslator(BaseTranslator):
     ) -> TranslationResult:
         """DeepSeek-specific flow: a single free-form delimited translation
         pass, with a parse-retry and a plain-text fallback."""
-        # Reset the per-chapter LLM call counter + usage accumulator at the
-        # start of each translate_chapter call. DeepSeek overrides this method
-        # entirely so the reset has to happen here too (Base does not run for
-        # this backend). _check_call_budget() ticks once per _call_deepseek;
-        # _emit_usage() folds in token counts from each SDK response.
-        self._llm_call_count = 0
-        self._usage_accumulator = TokenUsage()
-        # Build the genre-aware system instruction before the cache key, same
-        # pattern as BaseTranslator.translate_chapter — DeepSeek overrides
-        # translate_chapter entirely, so the stash has to happen here too.
-        self.system_instruction = build_system_instruction(genre, custom_brief)
-        prompt = build_prompt(
-            chapter_zh,
-            title_zh,
-            glossary,
-            previous_context,
-            style_edits,
-            output_instruction=DELIMITED_OUTPUT_INSTRUCTION,
-            style_note=style_note,
+        # DeepSeek overrides translate_chapter entirely (single-pass envelope),
+        # so it can't reuse the base loop — but the prologue is identical, so
+        # it shares BaseTranslator._begin_chapter: counter/usage reset, genre-
+        # aware system-instruction stash, prompt build, and cache-key derive.
+        # The base build_prompt already defaults output_instruction to
+        # DELIMITED_OUTPUT_INSTRUCTION, so the prompt (and cache key) match what
+        # the explicit call produced before.
+        prompt, cache_key = self._begin_chapter(
+            chapter_zh, title_zh, glossary, previous_context, style_edits,
+            style_note=style_note, genre=genre, custom_brief=custom_brief,
             free_draft=free_draft,
-        )
-        cache_key = llm_cache.translation_key(
-            backend_id=self.cache_identity(),
-            system_instruction=self.system_instruction,
-            prompt=prompt,
         )
         # use_cache=False (an explicit Retranslate) skips the read but still
         # stores the fresh result below, so the cache stays warm afterward.
@@ -308,67 +291,60 @@ class DeepSeekTranslator(BaseTranslator):
             "max_tokens": max_tokens,
         }
 
+        def _exhausted(last_exc: BaseException | None) -> Exception:
+            status = getattr(last_exc, "status_code", None)
+            return TransientTranslatorError(
+                f"DeepSeek temporarily unavailable "
+                f"({status or 'transient error'}). "
+                "The chapter is unchanged, try Retranslate later."
+            )
+
         t0 = time.perf_counter()
-        last_exc: BaseException | None = None
-        for attempt in range(len(_DEEPSEEK_BACKOFF) + 1):
-            try:
-                response = await self._client.chat.completions.create(**kwargs)
-                choices = response.choices or []
-                if not choices:
-                    raise ValueError("DeepSeek returned no choices")
-                choice = choices[0]
-                # Log usage regardless of outcome — on a truncation this is
-                # the only place the reasoning/visible token split is visible.
-                _log_deepseek_usage(label, response)
-                # Plumb usage into the BaseTranslator accumulator. DeepSeek's
-                # OpenAI-compatible API doesn't expose a cached-input concept;
-                # cached_input_tokens stays 0 here.
-                usage = getattr(response, "usage", None)
-                if usage is not None:
-                    self._emit_usage(
-                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    )
-                if choice.finish_reason == "length":
-                    # Output hit the token cap — the body is cut off mid-text.
-                    # Retrying yields the same truncation, so fail loudly with a
-                    # clear message rather than committing a partial chapter.
-                    # TransientTranslatorError is not transient per _is_transient,
-                    # so the handler below re-raises it without retrying.
-                    raise TransientTranslatorError(
-                        f"DeepSeek {label} pass output was cut off at the token "
-                        f"limit ({max_tokens} tokens). The chapter "
-                        "is unchanged. If the chapter is genuinely long, raise "
-                        "DEEPSEEK_MAX_OUTPUT_TOKENS; if it is short, the model is "
-                        "looping or over-reasoning — check the "
-                        f"'deepseek {label} usage' log line for the "
-                        "reasoning/completion token split. Then Retranslate."
-                    )
-                logger.info(
-                    "deepseek %s call: %.1fs", label, time.perf_counter() - t0
-                )
-                return choice.message.content or ""
-            except Exception as e:
-                if not _is_transient(e):
-                    raise
-                last_exc = e
-                if attempt >= len(_DEEPSEEK_BACKOFF):
-                    break
-                delay = _DEEPSEEK_BACKOFF[attempt]
-                logger.warning(
-                    "DeepSeek transient error (attempt %d/%d): %s — retrying in %.1fs",
-                    attempt + 1,
-                    len(_DEEPSEEK_BACKOFF) + 1,
-                    e,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-        status = getattr(last_exc, "status_code", None)
-        pretty = (
-            f"DeepSeek temporarily unavailable ({status or 'transient error'}). "
-            "The chapter is unchanged — try Retranslate later."
+        # Shared transient-retry loop (with OpenAICompatibleTranslator). It owns
+        # only the backoff scaffolding; the response processing below stays
+        # here. A non-transient error (ValueError, the truncation
+        # TransientTranslatorError) raised below was never retried inside the
+        # loop, so running it after the loop returns is behavior-equivalent.
+        response = await request_with_backoff(
+            lambda: self._client.chat.completions.create(**kwargs),
+            backoff=_DEEPSEEK_BACKOFF,
+            name="DeepSeek",
+            transient_error_factory=_exhausted,
         )
-        raise TransientTranslatorError(pretty) from last_exc
+        choices = response.choices or []
+        if not choices:
+            raise ValueError("DeepSeek returned no choices")
+        choice = choices[0]
+        # Log usage regardless of outcome: on a truncation this is the only
+        # place the reasoning/visible token split is visible.
+        _log_deepseek_usage(label, response)
+        # Plumb usage into the BaseTranslator accumulator. DeepSeek's
+        # OpenAI-compatible API doesn't expose a cached-input concept;
+        # cached_input_tokens stays 0 here.
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self._emit_usage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+        if choice.finish_reason == "length":
+            # Output hit the token cap: the body is cut off mid-text. Retrying
+            # yields the same truncation, so fail loudly with a clear message
+            # rather than committing a partial chapter. TransientTranslatorError
+            # is not transient per _is_transient, so it is never retried.
+            raise TransientTranslatorError(
+                f"DeepSeek {label} pass output was cut off at the token "
+                f"limit ({max_tokens} tokens). The chapter "
+                "is unchanged. If the chapter is genuinely long, raise "
+                "DEEPSEEK_MAX_OUTPUT_TOKENS; if it is short, the model is "
+                "looping or over-reasoning, check the "
+                f"'deepseek {label} usage' log line for the "
+                "reasoning/completion token split. Then Retranslate."
+            )
+        logger.info(
+            "deepseek %s call: %.1fs", label, time.perf_counter() - t0
+        )
+        return choice.message.content or ""
 
 
 async def _probe_deepseek_model(

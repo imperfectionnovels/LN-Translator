@@ -29,7 +29,6 @@ What subclasses can override:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 
@@ -37,7 +36,7 @@ import openai
 
 from backend.services.providers import Provider, resolve_secret
 
-from ._openai_errors import is_transient_openai_error as _is_transient
+from ._openai_errors import request_with_backoff
 from .base import (
     BACKOFF_SCHEDULE,
     BaseTranslator,
@@ -178,66 +177,58 @@ class OpenAICompatibleTranslator(BaseTranslator):
             max_tokens=self.MAX_OUTPUT_TOKENS,
         )
 
+        def _exhausted(last_exc: BaseException | None) -> Exception:
+            status = getattr(last_exc, "status_code", None)
+            return TransientTranslatorError(
+                f"{self.name} temporarily unavailable "
+                f"({status or 'transient error'}). "
+                "The chapter is unchanged, try Retranslate later."
+            )
+
         t0 = time.perf_counter()
-        last_exc: BaseException | None = None
-        for attempt in range(len(BACKOFF_SCHEDULE) + 1):
-            try:
-                response = await self._client.chat.completions.create(**kwargs)
-                choices = response.choices or []
-                if not choices:
-                    raise ValueError(f"{self.name} returned no choices")
-                choice = choices[0]
-                # Plumb usage so the per-chapter token columns keep working.
-                # The OpenAI schema's `prompt_tokens_details.cached_tokens`
-                # shows up when
-                # the vendor advertises prompt caching (OpenAI itself,
-                # OpenRouter via underlying provider). Coerce missing fields
-                # to 0 — vendor schemas vary on which sub-objects are present.
-                usage = getattr(response, "usage", None)
-                if usage is not None:
-                    prompt_details = getattr(usage, "prompt_tokens_details", None)
-                    cached = (
-                        (getattr(prompt_details, "cached_tokens", None) or 0)
-                        if prompt_details else 0
-                    )
-                    self._emit_usage(
-                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                        cached_input_tokens=cached,
-                    )
-                if choice.finish_reason == "length":
-                    # Truncated output — retrying yields the same truncation.
-                    # Surface a clean error rather than committing a partial
-                    # chapter.
-                    raise TransientTranslatorError(
-                        f"{self.name} response truncated at the token limit "
-                        f"(label={label}). The chapter is unchanged. "
-                        "Retranslate later or pick a model with a larger "
-                        "context window."
-                    )
-                logger.info(
-                    "%s %s call (%s): %.1fs",
-                    self.name, label, self._provider_name, time.perf_counter() - t0,
-                )
-                return choice.message.content or ""
-            except Exception as e:
-                if not _is_transient(e):
-                    raise
-                last_exc = e
-                if attempt >= len(BACKOFF_SCHEDULE):
-                    break
-                delay = BACKOFF_SCHEDULE[attempt]
-                logger.warning(
-                    "%s transient error (attempt %d/%d): %s — retrying in %.1fs",
-                    self.name,
-                    attempt + 1,
-                    len(BACKOFF_SCHEDULE) + 1,
-                    e,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-        status = getattr(last_exc, "status_code", None)
-        raise TransientTranslatorError(
-            f"{self.name} temporarily unavailable ({status or 'transient error'}). "
-            "The chapter is unchanged — try Retranslate later."
-        ) from last_exc
+        # Shared transient-retry loop (with DeepSeek). It owns only the backoff
+        # scaffolding; the response processing below stays here. A non-transient
+        # error (the "no choices" ValueError, the truncation
+        # TransientTranslatorError) raised below was never retried inside the
+        # loop, so running it after the loop returns is behavior-equivalent.
+        response = await request_with_backoff(
+            lambda: self._client.chat.completions.create(**kwargs),
+            backoff=BACKOFF_SCHEDULE,
+            name=self.name,
+            transient_error_factory=_exhausted,
+        )
+        choices = response.choices or []
+        if not choices:
+            raise ValueError(f"{self.name} returned no choices")
+        choice = choices[0]
+        # Plumb usage so the per-chapter token columns keep working. The OpenAI
+        # schema's `prompt_tokens_details.cached_tokens` shows up when the
+        # vendor advertises prompt caching (OpenAI itself, OpenRouter via the
+        # underlying provider). Coerce missing fields to 0: vendor schemas vary
+        # on which sub-objects are present.
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            prompt_details = getattr(usage, "prompt_tokens_details", None)
+            cached = (
+                (getattr(prompt_details, "cached_tokens", None) or 0)
+                if prompt_details else 0
+            )
+            self._emit_usage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                cached_input_tokens=cached,
+            )
+        if choice.finish_reason == "length":
+            # Truncated output: retrying yields the same truncation. Surface a
+            # clean error rather than committing a partial chapter.
+            raise TransientTranslatorError(
+                f"{self.name} response truncated at the token limit "
+                f"(label={label}). The chapter is unchanged. "
+                "Retranslate later or pick a model with a larger "
+                "context window."
+            )
+        logger.info(
+            "%s %s call (%s): %.1fs",
+            self.name, label, self._provider_name, time.perf_counter() - t0,
+        )
+        return choice.message.content or ""

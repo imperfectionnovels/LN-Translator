@@ -78,8 +78,13 @@ async def get_chapter(
         free_draft_queue._spawn(
             free_draft_queue.maybe_queue_for_open_chapter(novel_id, r["id"])
         )
-    except Exception:
-        pass
+    except Exception as e:
+        # Best-effort: a failed free-draft spawn never blocks the read. Log
+        # at debug so it's diagnosable without spamming the normal log.
+        logger.debug(
+            "free-draft spawn for novel %s chapter %s failed: %s",
+            novel_id, r["id"], e,
+        )
     return Chapter(
         id=r["id"],
         novel_id=r["novel_id"],
@@ -504,11 +509,10 @@ async def _refresh_observations_for_chapter(
 
     Reads `novels.disabled_observers` so user-muted kinds aren't
     re-emitted by an edit either."""
-    import json as _json  # noqa: PLC0415
-
     from backend.services import global_glossary as global_glossary_svc  # noqa: PLC0415
     from backend.services.observations import (  # noqa: PLC0415
         normalize_observer_outputs,
+        parse_disabled_observers,
     )
     from backend.services.text_observers import (  # noqa: PLC0415
         body_correctness_observations,
@@ -530,12 +534,9 @@ async def _refresh_observations_for_chapter(
         row["original_text"], new_body, glossary,
     ))
     normalized = list(normalize_observer_outputs(raw_msgs))
-    if row["disabled_observers"]:
-        try:
-            muted = set(_json.loads(row["disabled_observers"]) or [])
-            normalized = [o for o in normalized if o.kind not in muted]
-        except Exception:
-            pass
+    muted = parse_disabled_observers(row["disabled_observers"])
+    if muted:
+        normalized = [o for o in normalized if o.kind not in muted]
     await conn.execute(
         "DELETE FROM chapter_observations WHERE chapter_id = ?",
         (chapter_id,),

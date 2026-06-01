@@ -95,7 +95,7 @@ import httpx
 import openai
 
 from backend.models import TokenUsage
-from backend.services.translators import openai_compatible
+from backend.services.translators import _openai_errors
 from backend.services.translators.base import TransientTranslatorError
 
 
@@ -173,10 +173,12 @@ def _auth_error() -> openai.AuthenticationError:
 
 @pytest.fixture
 def _no_sleep(monkeypatch):
-    """Neutralize backoff so the retry loop runs instantly."""
+    """Neutralize backoff so the retry loop runs instantly. The retry loop
+    now lives in the shared _openai_errors.request_with_backoff helper, so
+    patch the sleep there."""
     async def _instant(_delay):
         return None
-    monkeypatch.setattr(openai_compatible.asyncio, "sleep", _instant)
+    monkeypatch.setattr(_openai_errors.asyncio, "sleep", _instant)
 
 
 @pytest.mark.asyncio

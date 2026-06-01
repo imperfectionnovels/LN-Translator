@@ -142,6 +142,35 @@ def is_known_genre(key: str | None) -> bool:
     return key is not None and key in GENRES
 
 
+def normalize_and_validate_genre(genre: str | None) -> str | None:
+    """Normalize + validate a user-supplied genre key, raising HTTP 400 on an
+    unknown key.
+
+    Empty / None / whitespace-only -> None (no genre selected; the column
+    stays NULL and resolves to DEFAULT_GENRE downstream). A non-empty key is
+    lower-cased and checked against the registry. This is the single source of
+    truth for the import routes (paste/upload/bulk/scrape) and the novel-PATCH
+    genre field, so the two trust boundaries can't drift on what they accept.
+
+    Importing HTTPException here keeps both call sites a one-liner; genres.py
+    is already a backend-internal module, and the 400 surface is part of the
+    validation contract these callers share.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    if genre is None:
+        return None
+    g = genre.strip().lower()
+    if not g:
+        return None
+    if not is_known_genre(g):
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown genre {g!r}; see backend/genres.py for valid keys",
+        )
+    return g
+
+
 # Internal safety-net key used by resolve_genre when no genre is set on a
 # novel and no override is provided. Not user-facing — kept off the GENRES
 # registry so the dropdown doesn't list it. The prompts/genres/generic.md

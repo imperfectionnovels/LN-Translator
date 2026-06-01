@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from backend.db import get_conn, open_conn
-from backend.genres import is_known_genre
+from backend.genres import normalize_and_validate_genre
 from backend.models import (
     AddNovelGenreRequest,
     DeleteCounts,
@@ -228,14 +228,9 @@ async def update_novel(
         sets.append("source_language = ?")
         params.append(lang)
     if "genre" in updates:
-        genre = updates["genre"]
-        if genre is not None:
-            genre = genre.strip().lower() or None
-            if genre is not None and not is_known_genre(genre):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"unknown genre {genre!r}; see backend/genres.py for valid keys",
-                )
+        # Single source of truth (shared with the import routes) so the two
+        # trust boundaries can't drift on what genre keys they accept.
+        genre = normalize_and_validate_genre(updates["genre"])
         sets.append("genre = ?")
         params.append(genre)
     if "custom_style_brief" in updates:

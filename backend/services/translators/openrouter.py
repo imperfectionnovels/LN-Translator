@@ -11,12 +11,10 @@ from .openai_compatible import OpenAICompatibleTranslator
 
 
 class OpenRouterTranslator(OpenAICompatibleTranslator):
+    # OpenRouter accepts the standard OpenAI request shape verbatim, so this
+    # subclass only pins the name + base URL and inherits the base
+    # `_build_kwargs` / `_call` loop unchanged. (Attribution via the optional
+    # `HTTP-Referer` / `X-Title` headers is a client-level concern, not a
+    # per-request field, so it would not live in `_build_kwargs` anyway.)
     name = "openrouter"
     DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-
-    def _build_kwargs(self, **kw) -> dict:
-        # OpenRouter accepts the standard OpenAI shape; the only thing it
-        # benefits from is the `HTTP-Referer` / `X-Title` headers for
-        # attribution. The openai SDK passes those through if set on the
-        # client, but the default base behavior is fine.
-        return super()._build_kwargs(**kw)

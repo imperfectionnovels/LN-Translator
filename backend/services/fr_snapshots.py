@@ -14,11 +14,21 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import TypedDict
 
 import aiosqlite
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+
+class RestoreResult(TypedDict):
+    """Fixed shape returned by `restore_snapshot` (and serialized straight to
+    the restore route's JSON response). `target` is the snapshot's
+    'translated_text' | 'refined_text' | 'both' column value."""
+    snapshot_id: int
+    chapters_restored: int
+    target: str
 
 # Size cap on the snapshot payload (JSON-encoded chapter bodies). Set to
 # leave plenty of headroom for SQLite TEXT columns (no hard limit, but
@@ -128,7 +138,7 @@ async def list_for_novel(
 
 async def restore_snapshot(
     conn: aiosqlite.Connection, snapshot_id: int
-) -> dict:
+) -> RestoreResult:
     """Replay a snapshot back onto chapters. Reverses the substitution
     that produced the snapshot. After restore, the snapshot row is
     marked with restored_at (so the UI can show it as "Restored on

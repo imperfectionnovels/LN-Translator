@@ -16,6 +16,7 @@ single flag flip suppresses one block for an A/B arm without DB mutation.
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 import aiosqlite
 
@@ -72,9 +73,19 @@ async def fetch_style_edits(
     return result
 
 
+class NovelGenreBrief(TypedDict):
+    """Fixed 3-key shape returned by `fetch_novel_genre_brief`. The queue
+    worker subscripts these keys directly when building the translator call,
+    so naming the shape lets a typo or a dropped key surface at type-check
+    time instead of as a runtime KeyError."""
+    genre: str | None
+    custom_style_brief: str | None
+    source_language: str
+
+
 async def fetch_novel_genre_brief(
     conn: aiosqlite.Connection, novel_id: int
-) -> dict:
+) -> NovelGenreBrief:
     """Pull the novel's genre, custom_style_brief, and source_language for
     prompt building. Genre / brief may be NULL: the translator's
     build_system_instruction handles NULL to DEFAULT_GENRE fallback.

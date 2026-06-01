@@ -169,11 +169,16 @@ class BaseRecipe(ABC):
     ) -> FetchedChapter:
         """Fill phase. Fetch and parse a single chapter body.
 
-        MUST be idempotent — the runner retries on transient errors and
-        replays calls after a crash. Don't mutate `recipe_state` in a
-        way that's required for the call to succeed (it's shared across
-        all per-novel fetches; a retry must see the same state). On
-        permanent failure raise `ScrapeError`; on transient failure
-        raise `TransientScrapeError` so the runner backs off and
-        retries rather than marking the chapter dead.
+        MUST be idempotent: the runner replays calls after a crash and on
+        a user-initiated resume. Don't mutate `recipe_state` in a way that's
+        required for the call to succeed (it's shared across all per-novel
+        fetches; a replay must see the same state).
+
+        On any failure (permanent or transient) raise `ScrapeError`. The
+        import_runner's fill loop catches it, flips the novel to
+        `import_status='paused'`, and stops at that chapter. The user can
+        hit Resume to re-run the fill loop, which retries the still-pending
+        chapter. There is no separate transient-error path: a recipe that
+        wants to retry transient network blips internally should do so
+        before raising, since the runner treats every raise as "pause here."
         """

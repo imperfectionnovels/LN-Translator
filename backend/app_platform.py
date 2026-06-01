@@ -99,12 +99,14 @@ def _make_console_handler(on_close):
         if event_code in _CONSOLE_CLOSE_EVENTS:
             try:
                 on_close(event_code)
-            except Exception:
+            except Exception as e:
                 # The handler runs on a Windows-managed control-handler
                 # thread; an exception here would crash the process
                 # instead of letting the OS proceed with its own
-                # shutdown sequence. Swallow.
-                pass
+                # shutdown sequence. Swallow (but log) rather than re-raise.
+                logger.debug(
+                    "console-control on_close(%s) raised: %s", event_code, e,
+                )
             return True
         return False
     return _handler

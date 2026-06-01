@@ -22,8 +22,33 @@ storage shape.
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import Iterable
+
+logger = logging.getLogger(__name__)
+
+
+def parse_disabled_observers(raw: str | None) -> set[str]:
+    """Parse a novel's `disabled_observers` JSON blob into a set of muted
+    observation kinds.
+
+    Fails open: a NULL / empty value, or a malformed blob, yields the empty
+    set (no mutes) so a user can never accidentally suppress every observer
+    by storing bad JSON. The single shared call site means the queue worker
+    and the edit-paragraph re-run path can't drift on how they interpret the
+    column."""
+    if not raw:
+        return set()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning("malformed disabled_observers JSON, treating as no mutes: %s", e)
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {kind for kind in data if isinstance(kind, str)}
 
 
 @dataclass(frozen=True)
