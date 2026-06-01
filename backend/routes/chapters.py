@@ -7,9 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db import get_conn
 from backend.models import (
+    CandidateTerm,
     Chapter,
+    ChapterSaturation,
+    ChapterSearchMatch,
+    ChapterSearchResults,
     ChapterSummary,
     EditParagraphRequest,
+    OcrIssues,
 )
 from backend.services import queue as queue_svc
 from backend.services.pre_check import chapter_pre_check
@@ -106,11 +111,11 @@ async def search_chapters(
     novel_id: int,
     q: str,
     conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
+) -> ChapterSearchResults:
     """Full-text search across this novel's chapters via FTS5."""
     query = (q or "").strip()
     if not query:
-        return {"matches": []}
+        return ChapterSearchResults(matches=[])
     sql = """
         SELECT c.chapter_num, c.title_en, c.title_zh, c.status,
                snippet(chapter_fts, 2, '<mark>', '</mark>', '…', 18) AS snippet
@@ -131,18 +136,18 @@ async def search_chapters(
             rows = await cur.fetchall()
         except aiosqlite.OperationalError as e2:
             raise HTTPException(status_code=503, detail=f"search unavailable: {e2}")
-    return {
-        "matches": [
-            {
-                "chapter_num": r["chapter_num"],
-                "title_en": r["title_en"],
-                "title_zh": r["title_zh"],
-                "status": r["status"],
-                "snippet": r["snippet"],
-            }
+    return ChapterSearchResults(
+        matches=[
+            ChapterSearchMatch(
+                chapter_num=r["chapter_num"],
+                title_en=r["title_en"],
+                title_zh=r["title_zh"],
+                status=r["status"],
+                snippet=r["snippet"],
+            )
             for r in rows
         ],
-    }
+    )
 
 
 @router.get("/novels/{novel_id}/chapters/{chapter_num}/saturation")
@@ -150,7 +155,7 @@ async def chapter_saturation(
     novel_id: int,
     chapter_num: int,
     conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
+) -> ChapterSaturation:
     """Pre-flight checks for a single chapter: glossary-candidate CN runs and
     OCR-issue heuristics. Cheap, no LLM call."""
     from backend.services import glossary as glossary_svc
@@ -166,11 +171,11 @@ async def chapter_saturation(
     existing_zh = {e.term_zh for e in entries if e.term_zh}
     candidates = glossary_svc.detect_candidate_terms(r["original_text"], existing_zh)
     ocr_issues = detect_ocr_issues(r["original_text"])
-    return {
-        "candidates": candidates,
-        "glossary_size": len(entries),
-        "ocr_issues": ocr_issues,
-    }
+    return ChapterSaturation(
+        candidates=[CandidateTerm(**c) for c in candidates],
+        glossary_size=len(entries),
+        ocr_issues=OcrIssues(**ocr_issues),
+    )
 
 
 @router.post("/novels/{novel_id}/chapters/{chapter_num}/retranslate")

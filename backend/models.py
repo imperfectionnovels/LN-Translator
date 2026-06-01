@@ -255,6 +255,67 @@ class ChapterSummary(BaseModel):
     translate_queued: bool = False
 
 
+class CandidateTerm(BaseModel):
+    """One pre-flight glossary-saturation candidate: a CN run that recurs in
+    the chapter but isn't in the glossary yet. Produced by
+    `glossary_filters.detect_candidate_terms`."""
+
+    term: str
+    count: int
+
+
+class OcrIssues(BaseModel):
+    """OCR-corruption heuristic result for one chapter's source text.
+    Produced by `parser.detect_ocr_issues`."""
+
+    score: int
+    issues: list[str]
+    flagged: bool
+
+
+class ChapterSaturation(BaseModel):
+    """Response for GET /novels/{id}/chapters/{n}/saturation. Cheap pre-flight
+    checks (glossary candidates + OCR heuristics) with no LLM call. The reader
+    reads `candidates` to highlight not-yet-glossed terms in the preview."""
+
+    candidates: list[CandidateTerm]
+    glossary_size: int
+    ocr_issues: OcrIssues
+
+
+class ChapterSearchMatch(BaseModel):
+    """One full-text-search hit inside a novel's chapters. `snippet` carries
+    SQLite FTS5 <mark>...</mark> highlighting that the reader renders inline."""
+
+    chapter_num: int
+    title_en: str | None
+    title_zh: str | None
+    status: Status
+    snippet: str
+
+
+class ChapterSearchResults(BaseModel):
+    """Response for GET /novels/{id}/search. Wraps the match list so the
+    reader's TOC search can render result rows with jump-to-chapter links."""
+
+    matches: list[ChapterSearchMatch]
+
+
+class DeleteCounts(BaseModel):
+    """Response for GET /novels/{id}/delete-counts. Mirrors the
+    `services.soft_delete.DeleteCounts` dataclass field-for-field so the
+    quantified-confirm dialog can show exactly what archiving / purging
+    would affect before the user commits."""
+
+    novel_id: int
+    chapters: int
+    glossary_entries: int
+    bookmarks: int
+    chapter_observations: int
+    tm_segments: int
+    fr_snapshots: int
+
+
 class Observation(BaseModel):
     """One deterministic detect_* hit (or the implicit translation_degraded /
     glossary_merge_error kind) persisted from the queue worker. Reader's QA
@@ -492,6 +553,63 @@ class ProviderUpdate(BaseModel):
 class ProviderTestResult(BaseModel):
     ok: bool
     message: str
+
+
+class ProviderStats(BaseModel):
+    """Response for GET /providers/{id}/stats. 30-day rollup for the settings
+    control-room card: throughput, failure rate, and a fixed-length sparkline
+    bucket array aligned to the last N days."""
+
+    provider_id: int
+    window_days: int
+    chapters_translated_30d: int
+    chapters_translated_buckets: list[int]
+    failure_rate_30d: float
+    failure_count_30d: int
+    attempts_30d: int
+    last_tested_at: str | None = None
+
+
+class ProviderRoutedNovel(BaseModel):
+    """One novel routed through a provider. `role` is 'translator',
+    'refinement', 'both', or 'unknown'."""
+
+    id: int
+    title: str
+    role: str
+
+
+class ProviderRoutedNovels(BaseModel):
+    """Response for GET /providers/{id}/routed-novels. The settings card shows
+    the first `limit` novels as a chip-row with a "+N more" overflow."""
+
+    provider_id: int
+    novels: list[ProviderRoutedNovel]
+    total: int
+    limit: int
+
+
+class ProviderActivityEvent(BaseModel):
+    """One recent translation attempt for the provider activity feed. `status`
+    is the bucketed 'ok' / 'warn' / 'err'; `raw_status` is the underlying
+    attempt status. `duration_ms` is None when start / finish timestamps are
+    missing or unparseable."""
+
+    when_iso: str | None
+    status: str
+    raw_status: str
+    novel_title: str
+    chapter_num: int
+    duration_ms: int | None
+    msg: str
+
+
+class ProviderActivity(BaseModel):
+    """Response for GET /providers/{id}/activity. Last N translation attempts
+    on novels routed through this provider, newest first."""
+
+    provider_id: int
+    events: list[ProviderActivityEvent]
 
 
 class NovelGenresResponse(BaseModel):

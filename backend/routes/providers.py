@@ -12,7 +12,12 @@ from backend.models import (
     Provider as ProviderModel,
 )
 from backend.models import (
+    ProviderActivity,
+    ProviderActivityEvent,
     ProviderCreate,
+    ProviderRoutedNovel,
+    ProviderRoutedNovels,
+    ProviderStats,
     ProviderTestResult,
     ProviderUpdate,
 )
@@ -210,7 +215,7 @@ def _bucket_iso_dates(days: int) -> list[str]:
 
 
 @router.get("/{provider_id}/stats")
-async def provider_stats(provider_id: int) -> dict:
+async def provider_stats(provider_id: int) -> ProviderStats:
     """30-day rollup for the provider control-room card. All columns
     referenced here already exist:
       - chapters.translated_at  (Initiative 6)
@@ -291,20 +296,20 @@ async def provider_stats(provider_id: int) -> dict:
 
     chapters_buckets = [by_day.get(d, {}).get("chapters", 0) for d in days]
 
-    return {
-        "provider_id": provider_id,
-        "window_days": _STATS_WINDOW_DAYS,
-        "chapters_translated_30d": chapters_30d,
-        "chapters_translated_buckets": chapters_buckets,
-        "failure_rate_30d": round(failure_rate, 4),
-        "failure_count_30d": failures_30d,
-        "attempts_30d": attempts_30d,
-        "last_tested_at": p.last_tested_at,
-    }
+    return ProviderStats(
+        provider_id=provider_id,
+        window_days=_STATS_WINDOW_DAYS,
+        chapters_translated_30d=chapters_30d,
+        chapters_translated_buckets=chapters_buckets,
+        failure_rate_30d=round(failure_rate, 4),
+        failure_count_30d=failures_30d,
+        attempts_30d=attempts_30d,
+        last_tested_at=p.last_tested_at,
+    )
 
 
 @router.get("/{provider_id}/routed-novels")
-async def provider_routed_novels(provider_id: int, limit: int = 12) -> dict:
+async def provider_routed_novels(provider_id: int, limit: int = 12) -> ProviderRoutedNovels:
     """Which novels currently route through this provider, either as
     primary translator or as refinement. The settings card shows the
     first `limit` as a chip-row with a "+N more" overflow link.
@@ -334,7 +339,7 @@ async def provider_routed_novels(provider_id: int, limit: int = 12) -> dict:
         )
         rows = await cur.fetchall()
         novels = [
-            {"id": r["id"], "title": r["title"], "role": r["role"]}
+            ProviderRoutedNovel(id=r["id"], title=r["title"], role=r["role"])
             for r in rows
         ]
         cur = await conn.execute(
@@ -344,16 +349,16 @@ async def provider_routed_novels(provider_id: int, limit: int = 12) -> dict:
             (provider_id, provider_id),
         )
         total = int((await cur.fetchone())["n"] or 0)
-    return {
-        "provider_id": provider_id,
-        "novels": novels,
-        "total": total,
-        "limit": limit,
-    }
+    return ProviderRoutedNovels(
+        provider_id=provider_id,
+        novels=novels,
+        total=total,
+        limit=limit,
+    )
 
 
 @router.get("/{provider_id}/activity")
-async def provider_activity(provider_id: int, limit: int = 6) -> dict:
+async def provider_activity(provider_id: int, limit: int = 6) -> ProviderActivity:
     """Last N translation attempts on novels routed through this provider.
     Maps `chapter_translation_attempts.status` into the 3-state ok/warn/err
     bucket the settings card uses for icons.
@@ -396,7 +401,7 @@ async def provider_activity(provider_id: int, limit: int = 6) -> dict:
             return f"Parse retry · {novel_title} · ch. {chapter_num}"
         return f"Error · {novel_title} · ch. {chapter_num}"
 
-    events = []
+    events: list[ProviderActivityEvent] = []
     for r in rows:
         started = r["started_at"]
         finished = r["finished_at"]
@@ -408,13 +413,13 @@ async def provider_activity(provider_id: int, limit: int = 6) -> dict:
                 duration_ms = int((finished_dt - started_dt).total_seconds() * 1000)
             except ValueError:
                 duration_ms = None
-        events.append({
-            "when_iso": started,
-            "status": _bucket(r["att_status"]),
-            "raw_status": r["att_status"],
-            "novel_title": r["novel_title"],
-            "chapter_num": r["chapter_num"],
-            "duration_ms": duration_ms,
-            "msg": _msg(r["att_status"], r["novel_title"], r["chapter_num"]),
-        })
-    return {"provider_id": provider_id, "events": events}
+        events.append(ProviderActivityEvent(
+            when_iso=started,
+            status=_bucket(r["att_status"]),
+            raw_status=r["att_status"],
+            novel_title=r["novel_title"],
+            chapter_num=r["chapter_num"],
+            duration_ms=duration_ms,
+            msg=_msg(r["att_status"], r["novel_title"], r["chapter_num"]),
+        ))
+    return ProviderActivity(provider_id=provider_id, events=events)

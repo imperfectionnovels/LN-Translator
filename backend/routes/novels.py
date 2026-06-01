@@ -11,6 +11,7 @@ from backend.db import get_conn, open_conn
 from backend.genres import is_known_genre
 from backend.models import (
     AddNovelGenreRequest,
+    DeleteCounts,
     MassQueueRequest,
     Novel,
     NovelGenresResponse,
@@ -495,21 +496,21 @@ async def purge_archived_novel(
 @router.get("/{novel_id}/delete-counts")
 async def get_delete_counts(
     novel_id: int, conn: aiosqlite.Connection = Depends(get_conn)
-) -> dict:
+) -> DeleteCounts:
     """Preview the cost of archiving / purging a novel. Used by the
     quantified delete-confirm dialog: lets the UI show counts BEFORE
     the user clicks the destructive button."""
     from backend.services.soft_delete import delete_counts  # noqa: PLC0415
     counts = await delete_counts(conn, novel_id)
-    return {
-        "novel_id": counts.novel_id,
-        "chapters": counts.chapters,
-        "glossary_entries": counts.glossary_entries,
-        "bookmarks": counts.bookmarks,
-        "chapter_observations": counts.chapter_observations,
-        "tm_segments": counts.tm_segments,
-        "fr_snapshots": counts.fr_snapshots,
-    }
+    return DeleteCounts(
+        novel_id=counts.novel_id,
+        chapters=counts.chapters,
+        glossary_entries=counts.glossary_entries,
+        bookmarks=counts.bookmarks,
+        chapter_observations=counts.chapter_observations,
+        tm_segments=counts.tm_segments,
+        fr_snapshots=counts.fr_snapshots,
+    )
 
 
 @router.post("/{novel_id}/queue")
