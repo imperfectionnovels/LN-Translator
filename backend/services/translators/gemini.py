@@ -250,3 +250,63 @@ class GeminiTranslator(BaseTranslator):
             "The chapter is unchanged — try Retranslate later."
         )
         raise TransientTranslatorError(pretty) from last_exc
+
+
+async def probe_gemini(
+    provider: Provider | None = None, *, role: str = "translator"
+) -> str:
+    """Cheap startup round-trip for the Gemini backend.
+
+    Returns "ok" on success and "warn" on a transient failure (network blip,
+    rate limit, 5xx) so a flaky network does not block boot. Raises
+    RuntimeError on a permanent misconfiguration (bad key / unknown model) so
+    the user fixes it before serving. Mirrors `probe_deepseek`; the caller in
+    main.py records the returned state in LAST_PROBE_STATE.
+
+    When `provider` is set, the probe targets the provider's resolved secret
+    and model (matching what the queue worker will call), with the legacy
+    GEMINI_* globals as the last-resort fallback.
+    """
+    api_key = (resolve_secret(provider) if provider is not None else None) or GEMINI_API_KEY
+    if not api_key:
+        if provider is not None:
+            raise RuntimeError(
+                f"Default provider {provider.name!r} is type 'gemini' but its "
+                f"secret_ref {provider.secret_ref!r} is unset. Set the env var "
+                f"or update the provider's secret_ref in /api/providers."
+            )
+        raise RuntimeError(
+            "Gemini probe: GEMINI_API_KEY is unset. Configure a Gemini provider "
+            "in /settings or set GEMINI_API_KEY in .env."
+        )
+    gemini_model = (
+        provider.model_id if provider is not None else None
+    ) or GEMINI_TRANSLATOR_MODEL
+
+    client = genai.Client(api_key=api_key)
+    try:
+        await client.aio.models.generate_content(
+            model=gemini_model,
+            contents="ok",
+            config=types.GenerateContentConfig(max_output_tokens=1),
+        )
+    except genai_errors.APIError as e:
+        if _is_transient(e):
+            logger.warning(
+                "Gemini %s probe TRANSIENT failure for model %r: %s. Starting "
+                "anyway — first real call will retry.",
+                role, gemini_model, e,
+            )
+            return "warn"
+        raise RuntimeError(
+            f"Gemini {role} probe failed for model {gemini_model!r}: {e}. "
+            "Check the API key and the model name."
+        ) from e
+    except Exception as e:
+        logger.warning(
+            "Gemini %s probe network failure for model %r: %s. Starting anyway.",
+            role, gemini_model, e,
+        )
+        return "warn"
+    logger.info("Gemini %s probe ok (model=%s)", role, gemini_model)
+    return "ok"

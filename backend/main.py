@@ -13,8 +13,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from backend.config import (
     ALLOWED_HOSTS,
     FRONTEND_DIR,
-    GEMINI_API_KEY,
-    GEMINI_TRANSLATOR_MODEL,
     TRANSLATOR_BACKEND,
 )
 from backend.db import LAST_ORPHAN_RECOVERY, init_db
@@ -88,60 +86,11 @@ async def _probe_one(role: str, provider: Provider) -> None:
         return
 
     if backend == "gemini":
-        # Resolve the API key from the provider's secret_ref (keyring first,
-        # env var fallback). The legacy GEMINI_API_KEY global is the last-
-        # resort fallback when the seeded default's secret_ref points at it.
-        api_key = resolve_secret(provider) or GEMINI_API_KEY
-        if not api_key:
-            raise RuntimeError(
-                f"Default provider {provider.name!r} is type 'gemini' but its "
-                f"secret_ref {provider.secret_ref!r} is unset. Set the env var "
-                f"or update the provider's secret_ref in /api/providers."
-            )
-        gemini_model = provider.model_id or GEMINI_TRANSLATOR_MODEL
-        from google import genai
-        from google.genai import errors as genai_errors
-        from google.genai import types as genai_types
-
-        transient_codes = {408, 429, 500, 502, 503, 504}
-        transient_statuses = {
-            "UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED",
-            "INTERNAL", "UNKNOWN",
-        }
-
-        client = genai.Client(api_key=api_key)
-        try:
-            await client.aio.models.generate_content(
-                model=gemini_model,
-                contents="ok",
-                config=genai_types.GenerateContentConfig(max_output_tokens=1),
-            )
-        except genai_errors.APIError as e:
-            is_transient = (
-                e.code in transient_codes
-                or (e.status or "").upper() in transient_statuses
-            )
-            if is_transient:
-                logger.warning(
-                    "Gemini %s probe TRANSIENT failure for model %r: %s. Starting "
-                    "anyway — first real call will retry.",
-                    role, gemini_model, e,
-                )
-                LAST_PROBE_STATE[role] = "warn"
-                return
-            raise RuntimeError(
-                f"Gemini {role} probe failed for model {gemini_model!r}: {e}. "
-                "Check the API key and the model name."
-            ) from e
-        except Exception as e:
-            logger.warning(
-                "Gemini %s probe network failure for model %r: %s. Starting anyway.",
-                role, gemini_model, e,
-            )
-            LAST_PROBE_STATE[role] = "warn"
-            return
-        logger.info("Gemini %s probe ok (model=%s)", role, gemini_model)
-        LAST_PROBE_STATE[role] = "ok"
+        # Delegate to the named probe alongside the Gemini translator, the
+        # same one-helper-per-backend shape every other arm uses. It returns
+        # "ok" / "warn" and raises RuntimeError on permanent misconfiguration.
+        from backend.services.translators.gemini import probe_gemini
+        LAST_PROBE_STATE[role] = await probe_gemini(provider, role=role)
         return
 
     # ---- CLI subprocess types: probe by checking the binary exists ----
