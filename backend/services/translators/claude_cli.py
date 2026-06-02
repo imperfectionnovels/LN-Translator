@@ -6,11 +6,20 @@ client; we spawn a subprocess per chapter, write the prompt to stdin, and read
 a JSON envelope from stdout.
 
 Subprocess invocation:
-    claude -p --output-format json --max-turns 1 [--system-prompt-file <path>] [--model <name>]
+    claude -p --output-format json --max-turns 1 --tools "" --setting-sources ""
+           --strict-mcp-config [--system-prompt-file <path>] [--model <name>]
 
 - `-p`: print mode, non-interactive (with no positional prompt, reads stdin).
 - `--output-format json`: returns one JSON envelope with `result` field.
-- `--max-turns 1`: forces a single response, no tool-using loops.
+- `--max-turns 1`: caps the run at a single assistant turn.
+- `--tools ""`: disables every built-in tool. Without it the model can emit a
+  tool_use, and since --max-turns 1 leaves no turn to feed the tool result back,
+  the run hard-fails with subtype=error_max_turns / stop_reason=tool_use. The
+  literary translator never needs a tool, so we take them all away.
+- `--setting-sources ""` + `--strict-mcp-config`: load no user/project settings
+  and no MCP servers, so the user's global MCP tools (Gmail, Drive, sqlite, ...)
+  neither leak into the tool list nor get spawned for health checks. Mirrors the
+  claude_agent backend's allowed_tools=[] / setting_sources=[] isolation.
 - Prompt is piped on stdin to dodge Windows' ~32 KB command-line cap.
 
 Subprocesses run via `subprocess.Popen` + `asyncio.to_thread(proc.communicate)`
@@ -139,6 +148,15 @@ class ClaudeCliTranslator(BaseTranslator):
             "-p",
             "--output-format", "json",
             "--max-turns", "1",
+            # Pure text-in/text-out. "--tools \"\"" strips every built-in tool so
+            # the model cannot emit a tool_use (which would hard-fail under
+            # --max-turns 1 as subtype=error_max_turns / stop_reason=tool_use).
+            # The MCP/settings flags keep the user's global MCP servers and
+            # settings out of the call. Mirrors the claude_agent backend's
+            # allowed_tools=[] / setting_sources=[] / strict_mcp_config isolation.
+            "--tools", "",
+            "--setting-sources", "",
+            "--strict-mcp-config",
         ]
         # Replace the coding-assistant persona with the literary brief, passed as
         # a file (the composed brief overflows the ~8 KB Windows command-line cap

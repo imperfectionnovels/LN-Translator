@@ -93,3 +93,26 @@ async def test_no_system_prompt_file_when_instruction_empty(monkeypatch):
     await t._complete_plain("BARE PROMPT")
 
     assert "--system-prompt-file" not in captured["args"]
+
+
+async def test_tools_and_mcp_disabled(monkeypatch):
+    """Regression guard (2026-06-02): under Claude Code's default tool access the
+    model could emit a tool_use, which with --max-turns 1 leaves no turn to feed
+    the result back and hard-fails as subtype=error_max_turns / stop_reason=
+    tool_use. The translator never needs a tool, so the CLI must run with every
+    built-in tool stripped (--tools "") and no settings / MCP loaded
+    (--setting-sources "" + --strict-mcp-config), mirroring claude_agent."""
+    captured = _patch_popen(monkeypatch)
+    t = ClaudeCliTranslator()
+    t.system_instruction = _SENTINEL_BRIEF
+
+    await t._complete("第一章。")
+
+    args = captured["args"]
+    # --tools is immediately followed by "" (disable all built-in tools).
+    assert "--tools" in args, args
+    assert args[args.index("--tools") + 1] == "", args
+    # No user/project settings and no MCP servers spawned.
+    assert "--setting-sources" in args, args
+    assert args[args.index("--setting-sources") + 1] == "", args
+    assert "--strict-mcp-config" in args, args
