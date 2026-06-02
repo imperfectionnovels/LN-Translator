@@ -217,7 +217,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 - **No drop caps** — `::first-letter` styling is off-limits.
 - **No `WEB_CONCURRENCY > 1` / `uvicorn --workers > 1`** — the translator lock is process-global. Multiple workers each get their own lock and burn the subscription window in parallel.
 - **Don't reorder or remove entries in `_ADDITIVE_MIGRATIONS`** — append-only.
-- **Don't alter meaning** to chase fluent prose. Facts / event order / glossary terms are strictly literal; mechanical artifacts (name repetition, identical tics, runaway exclamations) are the only thing that gets smoothed.
+- **Don't invent, but recompose freely.** Facts, event order, named entities, and glossary terms (with their predicates) stay strictly literal, and no event, object, person, place, number, or image the source lacks may be added. Within that spine the translator recomposes by default (merge/split sentences, reorder within a paragraph, choose the resonant word) and may render an implication the source carries explicit or match its full intensity — never manufacture force the source does not exert. The two-tier rule lives in `backend/prompts/base.md`; amplification is not addition.
 - **Don't hardcode model versions** in routing logic. Provider rows carry their own `model_id`; treat provider type + model as data, not as enum values.
 - **Don't commit `.env` or `data/novels.db`**.
 - **Don't add auth** — this is a local single-user app (packaged EXE).

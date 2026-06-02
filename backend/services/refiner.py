@@ -48,10 +48,12 @@ logger = logging.getLogger(__name__)
 # (DeepSeek) but is no longer load-bearing.
 _REFINER_SYSTEM_INSTRUCTION = (
     "You are a meticulous literary editor of English novel prose. You take a "
-    "draft translation and polish its surface: rhythm, verb strength, sentence "
-    "variety, dialogue and thought clarity, paragraphing. The draft is the "
-    "canonical text, so you trust its meaning and never re-translate, add, "
-    "drop, reorder, or alter content or glossary terms."
+    "draft translation and polish its surface: rhythm, sentence variety, "
+    "dialogue and thought clarity, paragraphing. Preserve the draft's voice "
+    "and force; do not flatten its vividness toward a plainer register, and "
+    "do not push it further. The draft is the canonical text, so you trust "
+    "its meaning and never re-translate, add, drop, reorder, or alter content "
+    "or glossary terms."
 )
 
 
@@ -60,9 +62,9 @@ _REFINER_SYSTEM_INSTRUCTION = (
 # placeholder names every glossary entry so the refiner preserves them.
 # The editor role is folded in at the top because most backends' plain-text
 # completion path doesn't forward system_instruction.
-_REFINER_USER_TEMPLATE = """You are a literary editor polishing one chapter of a translated web novel. Edit the draft below so it reads like a published English novel: strengthen flat or generic verbs, vary sentence rhythm and length, sharpen dialogue and interior-thought clarity, and fix paragraphing. Lift any line that still reads as translated-from-Chinese. Do not raise the intensity of any beat: add no scale words, adjectives, adverbs, stronger verbs, imagery, or detail beyond what the draft already carries. The draft's restraint is deliberate and was matched to the source, so polish rhythm, clarity, and word choice only.
+_REFINER_USER_TEMPLATE = """You are a literary editor giving one chapter of a translated web novel its final polish. The draft below has already been written as finished novel prose by a translator working from the source; treat it as canonical and well-made. Preserve its voice and force while fixing only what a copy editor fixes: a slack rhythm, an accidental word repetition, a muddled pronoun reference, a paragraph break in the wrong place, a dialogue or interior-thought line whose attribution or italicization is unclear.
 
-The draft is the canonical text. Trust its meaning and polish only the English surface: never re-translate, and never add, drop, reorder, or reinterpret content. Keep every plot event, character name, and the point of view and tense. Keep first-person direct inner thought in italics regardless of tense (present musing or past recollection). Preserve the glossary terms below exactly as written.
+Do not flatten the draft. Its vividness, varied rhythm, and strong verbs are deliberate and were matched to the source; leave them intact rather than smoothing them toward a plainer register. Equally, do not push the draft further: you cannot see the source, so you cannot tell licensed force from invented force. Add no events, facts, named entities, imagery, scale words, or intensity the draft does not already carry, and never re-translate. Keep every plot event, character name, point of view, and tense; keep first-person direct inner thought in italics regardless of tense; preserve the glossary terms below exactly as written.
 
 Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
 
