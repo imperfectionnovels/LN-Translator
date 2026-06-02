@@ -431,15 +431,39 @@ def _next_nonspace_is_upper(text: str, end: int) -> bool:
     return j < len(text) and text[j].isupper()
 
 
+# Capitalized words that may precede a generic without forming a proper-noun
+# compound, so "His Avatar" still down-cases while "Innate Divine Ability" and
+# "Ghost Mountain" do not.
+_FUNCTION_WORDS = frozenset({
+    "a", "an", "the", "this", "that", "these", "those", "his", "her", "hers",
+    "its", "their", "theirs", "my", "mine", "your", "yours", "our", "ours",
+    "one", "no", "each", "every", "some", "any", "all", "both", "another",
+    "such", "he", "she", "it", "they", "we", "you", "i", "of", "and", "or",
+    "but", "nor", "with", "without", "from", "into", "to", "in", "on", "at",
+    "by", "as",
+})
+
+
+def _preceding_word(text: str, start: int) -> str:
+    """The alphabetic word immediately before `start` (one space tolerated)."""
+    j = start - 1
+    while j >= 0 and text[j] == " ":
+        j -= 1
+    end = j + 1
+    while j >= 0 and (text[j].isalpha() or text[j] in "'’"):
+        j -= 1
+    return text[j + 1 : end]
+
+
 def _build_lowercase_targets(
     glossary: list[GlossaryEntry] | None,
 ) -> list[str]:
-    """Lowercase canonical forms to force down. A locked row qualifies when its
-    notes say `lowercase`, it is not a slash / parenthetical metadata row, and
-    it carries no conditional-capitalize caveat (`capitalize` / `proper` in the
-    notes — e.g. 虚空 "lowercase as concept; capitalize when proper place").
-    The canonical is `term_en.lower()`, so a data row left Title-Case still
-    down-cases correctly."""
+    """Lowercase canonical forms to force down. A locked row qualifies only when
+    its `term_en` is ALREADY all-lowercase (an explicit opt-in, so a named term
+    like 虛瞑之地 -> "the Void" is never touched), its notes say `lowercase`, it
+    is not a slash / parenthetical metadata row, and it carries no `proper`
+    caveat (e.g. 虚空 "capitalize when proper place"). Named-compound uses are
+    handled by the per-occurrence guards, not by excluding the term here."""
     if not glossary:
         return []
     targets: set[str] = set()
@@ -449,12 +473,14 @@ def _build_lowercase_targets(
         en = (g.term_en or "").strip()
         if not en or "/" in en or "(" in en:
             continue
+        if en != en.lower():
+            continue
         notes = (g.notes or "").lower()
         if "lowercase" not in notes:
             continue
-        if "capitalize" in notes or "proper" in notes:
+        if "proper" in notes:
             continue
-        targets.add(en.lower())
+        targets.add(en)
     return sorted(targets, key=lambda t: -len(t))
 
 
@@ -494,6 +520,9 @@ def enforce_lowercase_locked_terms(
             if _is_sentence_initial(out, start):
                 continue
             if _next_nonspace_is_upper(out, end):
+                continue
+            prev = _preceding_word(out, start)
+            if prev and prev[0].isupper() and prev.lower() not in _FUNCTION_WORDS:
                 continue
             out = out[:start] + canonical + out[end:]
             count += 1

@@ -48,18 +48,20 @@ def test_lowercase_downcases_mid_sentence() -> None:
     assert n == 1
 
 
-def test_lowercase_uses_lower_of_titlecase_canonical() -> None:
-    # Data bug: term_en is Title-Case but the note says lowercase. The canonical
-    # down-case target is term_en.lower(), so it still fixes the casing without
-    # requiring the glossary row to be pre-corrected.
+def test_lowercase_skips_mixed_case_term_en() -> None:
+    # Safety: only rows whose term_en is already all-lowercase are down-cased.
+    # A named-realm row like 虛瞑之地 -> "the Void" must never be lowercased even
+    # if its notes mention lowercase; fix-glossary lowercases a row first to
+    # opt it in.
     g = [_lc_entry("Mortal", term_zh="凡人", category="character")]
     out, n = enforce_lowercase_locked_terms("the Mortal world below", g)
-    assert out == "the mortal world below"
-    assert n == 1
+    assert out == "the Mortal world below"
+    assert n == 0
 
 
 def test_lowercase_multiword_term() -> None:
-    g = [_lc_entry("Sea of Consciousness", term_zh="识海")]
+    # The glossary row has been opted in (term_en lowercased by fix-glossary).
+    g = [_lc_entry("sea of consciousness", term_zh="识海")]
     out, n = enforce_lowercase_locked_terms(
         "his spiritual platform and Sea of Consciousness", g
     )
@@ -91,7 +93,7 @@ def test_lowercase_downcases_when_followed_by_lowercase() -> None:
     assert n == 1
 
 
-def test_lowercase_skips_conditional_capitalize_entries() -> None:
+def test_lowercase_skips_proper_caveat_entries() -> None:
     # 虚空 -> "the void" lowercase as a concept, but "capitalize when proper
     # place" — the caveat means it is context-dependent; never auto-down-case.
     g = [_lc_entry(
@@ -101,6 +103,28 @@ def test_lowercase_skips_conditional_capitalize_entries() -> None:
     out, n = enforce_lowercase_locked_terms("He vanished into the Void.", g)
     assert out == "He vanished into the Void."
     assert n == 0
+
+
+def test_lowercase_backward_proper_noun_compound_protected() -> None:
+    # "divine ability" is a substring of the named slot "Innate Divine
+    # Ability"; the down-caser must not lowercase the embedded words there,
+    # while a bare "his Divine Ability" still down-cases.
+    g = [_lc_entry("divine ability", term_zh="神通", category="technique")]
+    out, n = enforce_lowercase_locked_terms(
+        "his Innate Divine Ability flared as his Divine Ability surged", g
+    )
+    assert "Innate Divine Ability" in out
+    assert "his divine ability surged" in out
+    assert n == 1
+
+
+def test_lowercase_allows_capitalized_function_word_before() -> None:
+    # A capitalized function word ("His") is not a proper-noun compound, so the
+    # generic after it still down-cases.
+    g = [_lc_entry("avatar")]
+    out, n = enforce_lowercase_locked_terms("His Avatar drifted away.", g)
+    assert out == "His avatar drifted away."
+    assert n == 1
 
 
 def test_lowercase_ignores_non_lowercase_noted_entries() -> None:
