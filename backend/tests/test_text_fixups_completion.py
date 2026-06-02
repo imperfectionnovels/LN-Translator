@@ -49,13 +49,13 @@ def test_lowercase_downcases_mid_sentence() -> None:
 
 
 def test_lowercase_skips_mixed_case_term_en() -> None:
-    # Safety: only rows whose term_en is already all-lowercase are down-cased.
-    # A named-realm row like 虛瞑之地 -> "the Void" must never be lowercased even
-    # if its notes mention lowercase; fix-glossary lowercases a row first to
-    # opt it in.
-    g = [_lc_entry("Mortal", term_zh="凡人", category="character")]
-    out, n = enforce_lowercase_locked_terms("the Mortal world below", g)
-    assert out == "the Mortal world below"
+    # Safety: a per-novel row is only down-cased when its term_en is already
+    # all-lowercase (opt-in). A mixed-case, non-lexicon term is left alone even
+    # if its notes mention lowercase. (Uses a non-lexicon term so the shared
+    # generic lexicon does not independently fire.)
+    g = [_lc_entry("Crimson Pavilion", term_zh="朱阁", category="place")]
+    out, n = enforce_lowercase_locked_terms("the Crimson Pavilion stood there", g)
+    assert out == "the Crimson Pavilion stood there"
     assert n == 0
 
 
@@ -128,18 +128,35 @@ def test_lowercase_allows_capitalized_function_word_before() -> None:
 
 
 def test_lowercase_ignores_non_lowercase_noted_entries() -> None:
-    # Entries without a `lowercase` note belong to the up-caser; the down-caser
-    # leaves them entirely alone.
-    g = [_lc_entry("Sea of Consciousness", notes=None)]
-    out, n = enforce_lowercase_locked_terms("the Sea of Consciousness churned", g)
-    assert out == "the Sea of Consciousness churned"
+    # A non-lexicon row without a `lowercase` note belongs to the up-caser; the
+    # down-caser leaves it alone.
+    g = [_lc_entry("Azure Tower", notes=None, category="place")]
+    out, n = enforce_lowercase_locked_terms("the Azure Tower churned", g)
+    assert out == "the Azure Tower churned"
     assert n == 0
 
 
 def test_lowercase_skips_unlocked_entries() -> None:
-    g = [_lc_entry("avatar", locked=False)]
-    out, n = enforce_lowercase_locked_terms("his Avatar moved", g)
-    assert out == "his Avatar moved"
+    g = [_lc_entry("Jade Sigil", locked=False, category="item")]
+    out, n = enforce_lowercase_locked_terms("his Jade Sigil moved", g)
+    assert out == "his Jade Sigil moved"
+    assert n == 0
+
+
+def test_lowercase_lexicon_term_without_glossary_row() -> None:
+    # The shared generic lexicon down-cases universally-generic vocabulary even
+    # with NO per-novel row, so the over-cap cannot recur for a new novel/term.
+    out, n = enforce_lowercase_locked_terms("His Divine Sense swept the room.", [])
+    assert out == "His divine sense swept the room."
+    assert n == 1
+
+
+def test_lowercase_lexicon_protects_proper_compound() -> None:
+    # A lexicon term embedded in a Title-Case proper compound is left alone.
+    out, n = enforce_lowercase_locked_terms(
+        "He entered the Sea of Consciousness Pavilion.", []
+    )
+    assert "Sea of Consciousness Pavilion" in out
     assert n == 0
 
 

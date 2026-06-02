@@ -14,6 +14,25 @@ import re
 
 from backend.models import GlossaryEntry
 
+# Universally-generic cultivation/common nouns that must NEVER be force-Title-
+# Cased, regardless of which glossary category they landed in or what casing the
+# extractor stored. This is the casing-root backstop: the 301-316 audit found
+# generics force-capitalized because they sat in trusted categories (鬼/妖/怪 as
+# `character`, 识海/神魂 as Title-Case `other`). Per-novel concept terms that a
+# given novel wants lowercase (e.g. 果位) stay on the per-row `lowercase` note;
+# this set is only the vocabulary that is generic in EVERY xianxia novel, kept
+# deliberately conservative so it never swallows a named concept the project
+# treats as proper (Fruition Attainment). xianxia.md already states these render
+# sentence-case. ASCII, all-lowercase.
+GENERIC_LOWERCASE = frozenset({
+    "qi", "karma",
+    "spiritual power", "spiritual energy",
+    "sea of consciousness",
+    "divine sense", "divine soul", "divine ability",
+    "ghost", "demon", "monster", "fiend",
+    "mortal", "avatar",
+})
+
 # A freshly extracted English term that is *entirely* a rank/grade/tier
 # descriptor ("Second-Rank", "late stage") is a generic common noun, not a
 # proper noun. The translator tends to title-case it at extraction time, and
@@ -70,6 +89,11 @@ def is_atomic_case_locked_term(g: GlossaryEntry) -> bool:
         return False
     en = (g.term_en or "").strip()
     if not en:
+        return False
+    if en.lower() in GENERIC_LOWERCASE:
+        # Universally-generic common noun (qi, divine sense, ghost): never
+        # force-cased, whatever its category or stored casing. Casing-root
+        # backstop so generics cannot be pinned Title-Case for any novel.
         return False
     # Slash alternatives are soft by convention (Karma / Karmic Threads).
     if "/" in en or "∕" in en or "／" in en:
@@ -163,6 +187,10 @@ def _normalize_extracted_casing(en: str, category: str) -> str:
 
     Idioms (`idiom` category) are extracted in lowercase per the translator
     prompt; `other` is left to the emitted casing — nothing here re-cases them."""
+    if en.lower() in GENERIC_LOWERCASE:
+        # Universally-generic noun: store lowercase from the start, so it is
+        # never locked Title-Case and then pinned into prose.
+        return en.lower()
     if _GENERIC_RANK_RE.match(en):
         return en.lower()
     if (

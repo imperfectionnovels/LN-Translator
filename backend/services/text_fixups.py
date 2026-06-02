@@ -20,6 +20,7 @@ import re
 
 from backend.models import GlossaryEntry
 from backend.services.glossary import is_atomic_case_locked_term
+from backend.services.glossary_casing import GENERIC_LOWERCASE
 
 # ---------------------------------------------------------------------------
 # Em-dash enforcement
@@ -463,11 +464,11 @@ def _build_lowercase_targets(
     like 虛瞑之地 -> "the Void" is never touched), its notes say `lowercase`, it
     is not a slash / parenthetical metadata row, and it carries no `proper`
     caveat (e.g. 虚空 "capitalize when proper place"). Named-compound uses are
-    handled by the per-occurrence guards, not by excluding the term here."""
-    if not glossary:
-        return []
-    targets: set[str] = set()
-    for g in glossary:
+    handled by the per-occurrence guards, not by excluding the term here. The
+    shared `GENERIC_LOWERCASE` lexicon is always included, so universally-generic
+    vocabulary is down-cased even when the novel has no row for it."""
+    targets: set[str] = set(GENERIC_LOWERCASE)
+    for g in glossary or []:
         if not g.locked:
             continue
         en = (g.term_en or "").strip()

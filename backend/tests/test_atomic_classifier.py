@@ -16,6 +16,10 @@ from backend.services.glossary import (
     is_atomic_case_locked_term,
     missing_translator_terms,
 )
+from backend.services.glossary_casing import (
+    GENERIC_LOWERCASE,
+    _normalize_extracted_casing,
+)
 
 
 def _entry(
@@ -121,6 +125,50 @@ def test_classifier_generic_rank_false() -> None:
 
 def test_classifier_empty_term_en_false() -> None:
     assert is_atomic_case_locked_term(_entry("")) is False
+
+
+# ---------------------------------------------------------------------------
+# Shared generic-lowercase lexicon (the casing-root fix)
+# ---------------------------------------------------------------------------
+
+
+def test_classifier_generic_lexicon_overrides_category() -> None:
+    # A universally-generic noun is never force-cased, even when it landed in a
+    # trusted category (鬼 as character, 识海 as other). This is the root fix so
+    # the over-capitalization cannot recur for new terms / novels.
+    for term, cat in [
+        ("Ghost", "character"), ("Demon", "character"), ("Monster", "character"),
+        ("Sea of Consciousness", "other"), ("Divine Sense", "other"),
+        ("Divine Soul", "other"), ("Divine Ability", "technique"),
+        ("Avatar", "other"), ("Qi", "other"), ("Karma", "other"),
+    ]:
+        assert is_atomic_case_locked_term(_entry(term, category=cat)) is False, term
+
+
+def test_classifier_proper_concept_still_atomic_despite_lexicon() -> None:
+    # Named concepts the project deliberately treats as proper stay atomic; the
+    # lexicon is conservative and does not swallow them.
+    assert is_atomic_case_locked_term(_entry("Fruition Attainment")) is True
+    assert is_atomic_case_locked_term(
+        _entry("Eternal Radiance", category="character")
+    ) is True
+
+
+def test_lexicon_is_all_lowercase() -> None:
+    assert all(t == t.lower() for t in GENERIC_LOWERCASE)
+
+
+def test_normalize_lowercases_generic_lexicon_term() -> None:
+    assert _normalize_extracted_casing("Divine Sense", "other") == "divine sense"
+    assert _normalize_extracted_casing("Ghost", "character") == "ghost"
+    # An all-lowercase generic in a named category is NOT proper-cased up.
+    assert _normalize_extracted_casing("ghost", "character") == "ghost"
+
+
+def test_normalize_leaves_proper_named_terms() -> None:
+    assert _normalize_extracted_casing("Foundation Establishment", "other") == "Foundation Establishment"
+    # An all-lowercase proper name in a named category is still proper-cased.
+    assert _normalize_extracted_casing("eternal radiance", "place") == "Eternal Radiance"
 
 
 def test_classifier_apostrophe_name_atomic() -> None:
