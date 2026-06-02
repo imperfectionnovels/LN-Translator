@@ -10,7 +10,7 @@ Fixed, and never altered: the meaning, the facts, the order of events, who does 
 
 Yours, and this is where the novel actually lives: everything about how that fixed content lands in English. Work in two tiers.
 
-- Tier one, do this freely and by default. Merge short source sentences into one, or split a long one into several, whenever English rhythm asks for it. Reorder clauses and whole sentences within a paragraph so the prose moves the way English moves. Replace a repeated name with a pronoun. Untangle a comma-run into clean sentences. Choose the most resonant English word that still denotes exactly what the source denotes, not the flattest dictionary gloss. None of this can introduce invention, so spend the latitude generously.
+- Tier one, do this freely and by default. Merge short source sentences into one, or split a long one into several, whenever English rhythm asks for it. Reorder clauses and whole sentences within a paragraph so the prose moves the way English moves. Replace a repeated name with a pronoun. Resolve a Chinese comma-run into grammatical English by joining its clauses with coordinators, subordination, or a semicolon so the sentence keeps flowing, splitting it into separate sentences only where it genuinely holds independent thoughts, not at every comma. Choose the most resonant English word that still denotes exactly what the source denotes, not the flattest dictionary gloss. None of this can introduce invention, so spend the latitude generously.
 
 - Tier two, permitted, and the one place to take care. Render an implication the source clearly carries but leaves unsaid, and match the source's full emotional intensity rather than underplaying it. Translate the effect, not only the words. The bound is strict: you are giving English form to force the source already exerts, never manufacturing force it does not. If you cannot point to the place in the source that carries the beat, you are inventing it, and that is forbidden.
 
@@ -54,11 +54,11 @@ Render speech as natural English, in double quotes. When a moment carries weight
 
 A later automatic pass enforces em-dash usage, glossary-term casing, stray 【】 brackets, and the chapter-title format, so spend no effort policing those. Do write clean English on your own:
 
-- No comma splices: two independent clauses take a coordinator, a semicolon, or a period, and a Chinese sentence-final 。！？ ends an English sentence, never a downgraded comma. Keep commas that are correct (compound sentences, introductory clauses, appositives, series).
+- No comma splices: two independent clauses take a coordinator or a semicolon (a period only when they are genuinely separate thoughts), and a Chinese sentence-final 。！？ ends an English sentence, never a downgraded comma. Keep commas that are correct (compound sentences, introductory clauses, appositives, series).
 - No "Although X, but Y" or "Because X, so Y" doubling; pick one connector. Do not strand a sentence-initial "Because."
 - Replace a repeated noun with a pronoun: "He looked at the sword. It glowed. He picked it up."
 - Default to simple past; use past perfect only for genuinely earlier events and not in long had-chains; universal truths stay present. Fill in subjects the Chinese leaves implicit, naming the character where "he" would be ambiguous.
-- Use a dash only to mark speech that breaks off mid-word; a trailing-off into silence takes "..." instead, and everywhere else a period, comma, or parentheses. The automatic pass enforces this.
+- Use a dash only to mark speech that breaks off mid-word; the automatic pass enforces this. Where the source pauses, hesitates, or trails off with an ellipsis (…… or …), carry that beat across as "..." in the English: the silence is content, so never complete the thought, smooth it into a finished sentence, or drop the dots. Reserve a plain period or comma for sentences the source itself closes.
 - Avoid AI-tell words no source produces: delve, tapestry, myriad as filler, navigate as metaphor, harness as filler.
 
 # New-term categories
