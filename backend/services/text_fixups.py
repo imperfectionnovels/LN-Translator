@@ -382,6 +382,234 @@ def enforce_locked_term_casing(
     return out, count
 
 
+# ---------------------------------------------------------------------------
+# Locked-term DOWN-casing enforcement (the missing other direction)
+# ---------------------------------------------------------------------------
+
+# `enforce_locked_term_casing` above only ever pushes casing UP toward a
+# Title-Case canonical, and `_build_atomic_targets` deliberately DROPS every
+# entry whose notes say `lowercase`. That left generic cultivation nouns the
+# model capitalized on its own (`Avatar`, `Divine Sense`, `Sea of
+# Consciousness`) with no deterministic way back down. This transform is that
+# missing direction: it force-lowercases occurrences of locked rows explicitly
+# marked `lowercase`, with guards so it never clobbers a sentence-initial word
+# or a forward proper-noun compound (`Ghost Mountain`).
+
+# Chars that may sit between a sentence boundary and the first word: leading
+# whitespace plus opening quote / emphasis / bracket glyphs.
+_SENTENCE_OPENERS = set(" \t\"'“”‘’*([{")
+
+
+def _is_sentence_initial(text: str, idx: int) -> bool:
+    """True iff the word starting at `idx` sits at a sentence/line head.
+
+    Walks left over opener glyphs (quotes, `*`, brackets) and spaces. A head is
+    text-start, a newline, or a `.!?` run that is NOT an ellipsis (`..`)."""
+    j = idx - 1
+    while j >= 0 and text[j] in _SENTENCE_OPENERS:
+        j -= 1
+    if j < 0:
+        return True
+    c = text[j]
+    if c == "\n":
+        return True
+    if c in ".!?":
+        k = j
+        while k >= 0 and text[k] in ".!?":
+            k -= 1
+        run = text[k + 1 : j + 1]
+        return ".." not in run
+    return False
+
+
+def _next_nonspace_is_upper(text: str, end: int) -> bool:
+    """True iff the next non-space char after `end` is an uppercase letter —
+    the forward signal of a Title-Case proper-noun compound (`Ghost Mountain`)."""
+    j = end
+    while j < len(text) and text[j] == " ":
+        j += 1
+    return j < len(text) and text[j].isupper()
+
+
+def _build_lowercase_targets(
+    glossary: list[GlossaryEntry] | None,
+) -> list[str]:
+    """Lowercase canonical forms to force down. A locked row qualifies when its
+    notes say `lowercase`, it is not a slash / parenthetical metadata row, and
+    it carries no conditional-capitalize caveat (`capitalize` / `proper` in the
+    notes — e.g. 虚空 "lowercase as concept; capitalize when proper place").
+    The canonical is `term_en.lower()`, so a data row left Title-Case still
+    down-cases correctly."""
+    if not glossary:
+        return []
+    targets: set[str] = set()
+    for g in glossary:
+        if not g.locked:
+            continue
+        en = (g.term_en or "").strip()
+        if not en or "/" in en or "(" in en:
+            continue
+        notes = (g.notes or "").lower()
+        if "lowercase" not in notes:
+            continue
+        if "capitalize" in notes or "proper" in notes:
+            continue
+        targets.add(en.lower())
+    return sorted(targets, key=lambda t: -len(t))
+
+
+def enforce_lowercase_locked_terms(
+    text: str, glossary: list[GlossaryEntry] | None
+) -> tuple[str, int]:
+    """Force locked `lowercase`-noted glossary terms down to lowercase.
+
+    Whole-word case-insensitive matches are rewritten to the lowercase
+    canonical, EXCEPT when the occurrence is sentence-initial (correctly
+    capitalized there), is inside a protected span, or is immediately followed
+    by another capitalized word (a forward proper-noun compound). Idempotent.
+    Returns (text, count)."""
+    if not text:
+        return text, 0
+    targets = _build_lowercase_targets(glossary)
+    if not targets:
+        return text, 0
+
+    protected = _collect_protected_spans(text)
+    count = 0
+    out = text
+
+    for canonical in targets:
+        pat = re.compile(
+            r"(?<![A-Za-z0-9_'’])"
+            + re.escape(canonical)
+            + r"(?![A-Za-z0-9_'’])",
+            re.IGNORECASE,
+        )
+        for m in reversed(list(pat.finditer(out))):
+            start, end = m.start(), m.end()
+            if m.group(0) == canonical:
+                continue
+            if _in_protected_span(start, protected):
+                continue
+            if _is_sentence_initial(out, start):
+                continue
+            if _next_nonspace_is_upper(out, end):
+                continue
+            out = out[:start] + canonical + out[end:]
+            count += 1
+
+    return out, count
+
+
+# ---------------------------------------------------------------------------
+# Trailing chapter-end marker strip
+# ---------------------------------------------------------------------------
+
+# Web-source chapters end with a CMS sentinel (`(本章完)`) that the model
+# sometimes translates (`(End of Chapter)`) and leaves in the body instead of
+# dropping. Anchored to end-of-text so only a genuinely trailing marker is
+# removed; mid-body occurrences are left untouched.
+_CHAPTER_END_MARKER_RE = re.compile(
+    r"\s*[(（]?\s*(?:本章完|end\s+of\s+chapter)\s*[)）]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_chapter_end_marker(text: str) -> tuple[str, int]:
+    """Strip a leaked trailing `(本章完)` / `(End of Chapter)` sentinel.
+
+    Only removes the marker when real body text precedes it. Returns
+    (text, count) with count 0 or 1. Idempotent."""
+    if not text:
+        return text, 0
+    m = _CHAPTER_END_MARKER_RE.search(text)
+    if not m:
+        return text, 0
+    head = text[: m.start()]
+    if not head.strip():
+        return text, 0
+    return head.rstrip(), 1
+
+
+# ---------------------------------------------------------------------------
+# Sentence-initial re-capitalization
+# ---------------------------------------------------------------------------
+
+
+# Trailing glyphs skipped when checking whether a paragraph ended a sentence:
+# spaces plus closing quote / emphasis / bracket glyphs (`said."`).
+_SENTENCE_CLOSERS = set(" \t\"'“”‘’*)]}")
+
+
+def _preceding_ends_sentence(chars: list[str], idx: int) -> bool:
+    """True iff the char before `idx` (skipping trailing spaces and closing
+    quote / bracket glyphs) is a sentence terminator. Used to gate paragraph
+    starts so a mid-sentence paragraph break (prev line ends in a comma or a
+    bare word) is NOT cosmetically dressed up as a new sentence."""
+    j = idx - 1
+    while j >= 0 and chars[j] in _SENTENCE_CLOSERS:
+        j -= 1
+    return j >= 0 and chars[j] in ".!?"
+
+
+def enforce_sentence_initial_capitalization(text: str) -> tuple[str, int]:
+    """Capitalize the first letter of each sentence.
+
+    Fixes inserted proper nouns left lowercase at a sentence head ("the Heaven
+    of Non-Being..."). Boundaries: text start; the first content char of a
+    paragraph ONLY when the previous paragraph ended a sentence (so a logged
+    mid-sentence paragraph break is left untouched); and after a non-ellipsis
+    `.!?` run immediately followed by whitespace (so a `."` dialogue-tag period
+    is left alone). Opener glyphs (quotes, `*`, brackets) are skipped to reach
+    the first letter. Protected spans are untouched. Idempotent. Returns
+    (text, count)."""
+    if not text:
+        return text, 0
+
+    protected = _collect_protected_spans(text)
+    chars = list(text)
+    n = len(chars)
+
+    boundaries: list[int] = [0]
+    j = 0
+    while j < n:
+        c = chars[j]
+        if c == "\n":
+            k = j
+            while k < n and chars[k] in "\n \t":
+                k += 1
+            if _preceding_ends_sentence(chars, j):
+                boundaries.append(k)
+            j = k
+            continue
+        if c in ".!?":
+            k = j
+            while k < n and chars[k] in ".!?":
+                k += 1
+            run = "".join(chars[j:k])
+            if ".." not in run and k < n and chars[k] in " \t":
+                boundaries.append(k)
+            j = k
+            continue
+        j += 1
+
+    count = 0
+    seen: set[int] = set()
+    for b in boundaries:
+        p = b
+        while p < n and chars[p] in _SENTENCE_OPENERS:
+            p += 1
+        if p >= n or p in seen:
+            continue
+        seen.add(p)
+        ch = chars[p]
+        if "a" <= ch <= "z" and not _in_protected_span(p, protected):
+            chars[p] = ch.upper()
+            count += 1
+
+    return "".join(chars), count
+
+
 # Note: deterministic enforce_double_possessive_carriers /
 # enforce_mid_sentence_paragraph_break helpers were removed during the
 # 2026-05-25 audit cleanup. The single-pass thesis is that noticing has

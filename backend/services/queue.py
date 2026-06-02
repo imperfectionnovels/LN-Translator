@@ -59,7 +59,10 @@ from backend.services.text_fixups import (
     enforce_brackets,
     enforce_em_dash,
     enforce_locked_term_casing,
+    enforce_lowercase_locked_terms,
+    enforce_sentence_initial_capitalization,
     enforce_stem_branch_casing,
+    strip_chapter_end_marker,
 )
 from backend.services.text_observers import (
     body_correctness_observations,
@@ -565,25 +568,30 @@ async def _translate_chapter_in_db(
             result.translated_text, result.title_en
         )
         text, lt_n = enforce_locked_term_casing(text, glossary)
+        text, lc_n = enforce_lowercase_locked_terms(text, glossary)
         text, sb_n = enforce_stem_branch_casing(text)
+        text, cm_n = strip_chapter_end_marker(text)
         result.translated_text = text
-        if ts_n + lt_n + sb_n:
+        if ts_n + lt_n + lc_n + sb_n + cm_n:
             logger.info(
-                "queue: chapter %d post-fixes: %d (title-strip) + %d (locked-case) + %d (stem-branch)",
-                r["chapter_num"], ts_n, lt_n, sb_n,
+                "queue: chapter %d post-fixes: %d (title-strip) + %d (locked-case) "
+                "+ %d (lowercase) + %d (stem-branch) + %d (end-marker)",
+                r["chapter_num"], ts_n, lt_n, lc_n, sb_n, cm_n,
             )
 
-        # Em-dash + bracket fixups land BEFORE the observers so detectors see
-        # the same body that gets committed — the QA dashboard's invariant
-        # ("observers run on the final committed body") only holds when the
-        # input matches what the reader sees.
+        # Em-dash + bracket + sentence-initial fixups land BEFORE the observers
+        # so detectors see the same body that gets committed — the QA
+        # dashboard's invariant ("observers run on the final committed body")
+        # only holds when the input matches what the reader sees.
         title_en = normalize_title_en(result.title_en, r["chapter_num"])
         cleaned_text, em_count = enforce_em_dash(result.translated_text)
         cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
-        if em_count or brk_count:
+        cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
+        if em_count or brk_count or si_count:
             logger.info(
-                "queue: chapter %d translate guardrails: %d em-dash, %d bracket fix(es)",
-                r["chapter_num"], em_count, brk_count,
+                "queue: chapter %d translate guardrails: %d em-dash, %d bracket, "
+                "%d sentence-initial fix(es)",
+                r["chapter_num"], em_count, brk_count, si_count,
             )
 
         # Observations only — no retry, no degraded mark. The single-pass
@@ -1024,14 +1032,18 @@ async def _refine_chapter_in_db(
     # mutate locked terms, or break bracket formatting, but LLMs slip;
     # without these the refined body can regress after a clean draft.
     refined, lt_n = enforce_locked_term_casing(refined, glossary)
+    refined, lc_n = enforce_lowercase_locked_terms(refined, glossary)
     refined, sb_n = enforce_stem_branch_casing(refined)
+    refined, cm_n = strip_chapter_end_marker(refined)
     refined, em_n = enforce_em_dash(refined)
     refined, brk_n = enforce_brackets(refined, glossary=glossary)
-    if lt_n + sb_n + em_n + brk_n:
+    refined, si_n = enforce_sentence_initial_capitalization(refined)
+    if lt_n + lc_n + sb_n + cm_n + em_n + brk_n + si_n:
         logger.info(
-            "refine ch %d post-fixes on refined text: "
-            "%d locked-case, %d stem-branch, %d em-dash, %d bracket",
-            r["chapter_num"], lt_n, sb_n, em_n, brk_n,
+            "refine ch %d post-fixes on refined text: %d locked-case, "
+            "%d lowercase, %d stem-branch, %d end-marker, %d em-dash, "
+            "%d bracket, %d sentence-initial",
+            r["chapter_num"], lt_n, lc_n, sb_n, cm_n, em_n, brk_n, si_n,
         )
     logger.info(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",
