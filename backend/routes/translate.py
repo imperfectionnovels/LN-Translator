@@ -321,6 +321,13 @@ async def translate_scrape(
     the text through the same pipeline as /paste (when novel_id is omitted)
     or /append/{novel_id}/paste (when supplied).
 
+    Every response carries a stable `"mode"` discriminator so a client can
+    switch on one field instead of re-deriving recipe-vs-generic and
+    create-vs-append from its own request:
+      * `"job"`      — recipe URL, background import job (poll /scrape/jobs).
+      * `"appended"` — generic URL appended to an existing novel.
+      * `"created"`  — generic URL created a fresh novel.
+
     Two flow shapes:
 
     1. **Recipe URLs** (69shuba, syosetu, uukanshu, piaotian). The crawl
@@ -375,6 +382,7 @@ async def translate_scrape(
         # skeleton + per-chapter fill), not the route.
         scrape_jobs.spawn(job_id, payload.url, payload.cookies)
         return {
+            "mode": "job",
             "job_id": job_id,
             "status": "pending",
             "recipe": True,
@@ -406,6 +414,7 @@ async def translate_scrape(
             conn, payload.novel_id, result.text,
         )
         return {
+            "mode": "appended",
             "novel_id": payload.novel_id,
             "added_chapters": added,
             "first_new_chapter": first,
@@ -444,6 +453,7 @@ async def translate_scrape(
                 "cover write failed for scraped novel %d (continuing)", novel_id,
             )
     return {
+        "mode": "created",
         "novel_id": novel_id,
         "first_chapter": first_chapter,
         "scraped_url": result.source_url,
