@@ -935,10 +935,10 @@ async function _copyDiagnostics() {
     showToast("Diagnostics not loaded yet.");
     return;
   }
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(_lastDiagnostics, null, 2));
+  const ok = await copyText(JSON.stringify(_lastDiagnostics, null, 2));
+  if (ok) {
     showToast("Diagnostics copied to clipboard.");
-  } catch {
+  } else {
     showToast("Clipboard blocked. Open browser console to copy manually.");
     console.log("LN-Translator diagnostics:", _lastDiagnostics);
   }

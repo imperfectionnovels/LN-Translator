@@ -1,4 +1,4 @@
-// Shared frontend utilities — deliberate single home for generic helpers that
+// Shared frontend utilities: deliberate single home for generic helpers that
 // otherwise drift across page-specific JS files. Add new utilities here when
 // the second page needs them; do NOT inline-copy a helper into a page script.
 //
@@ -11,6 +11,79 @@ function escapeHtml(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[c]);
 }
+
+// Clipboard copy that survives non-secure origins. navigator.clipboard is only
+// exposed in a SECURE CONTEXT (https, localhost, file://). On the desktop the
+// app is localhost (or the pywebview WebView2 host), so it works there. But
+// when the reader is opened from a phone over the LAN the origin is plain
+// http://<pc-ip>:<port>, which is NOT secure, so navigator.clipboard is
+// undefined and writeText is a no-op. Every copy button relied on it, with
+// `?.` swallowing the absence and a success toast firing anyway, so on the
+// phone the button looked like it worked but copied nothing.
+//
+// Strategy: use the async Clipboard API when it is genuinely available, else
+// fall back to a temporary <textarea> + document.execCommand("copy"), which
+// still works on http and on mobile (iOS needs the contentEditable+range
+// dance below). Returns true only on a real success so callers can show an
+// honest toast.
+function _legacyCopyText(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  // Keep it on-screen-but-invisible: position:fixed + tiny size avoids the
+  // page scrolling to it, and 16px font stops iOS from zooming on focus.
+  ta.style.cssText =
+    "position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;" +
+    "outline:0;box-shadow:none;background:transparent;font-size:16px;opacity:0;";
+  document.body.appendChild(ta);
+
+  // Preserve whatever the user had selected (the selection-popover copy path
+  // operates on a live selection) so we can restore it afterwards.
+  const sel = document.getSelection();
+  const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+
+  const isIOS = /ipad|iphone|ipod/i.test(navigator.userAgent);
+  if (isIOS) {
+    // iOS Safari ignores textarea.select(); it needs an editable element with
+    // a real Range selection plus setSelectionRange.
+    ta.contentEditable = "true";
+    ta.readOnly = false;
+    const range = document.createRange();
+    range.selectNodeContents(ta);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    ta.setSelectionRange(0, text.length);
+  } else {
+    ta.select();
+  }
+
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+
+  document.body.removeChild(ta);
+  if (savedRange && sel) {
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+  return ok;
+}
+
+async function copyText(text) {
+  text = String(text ?? "");
+  if (!text) return false;
+  // Only trust the async API in a secure context; outside one, writeText
+  // either is missing or rejects, so go straight to the legacy path.
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      // Permission denied / lost focus: fall through to the legacy path.
+    }
+  }
+  return _legacyCopyText(text);
+}
+window.copyText = copyText;
 
 // C7: single canonical confirm dialog. Replaces six local copies that had
 // drifted into three different signatures (named-args with/without meta, a

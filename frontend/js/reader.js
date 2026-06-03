@@ -1230,12 +1230,12 @@ function showPopoverForSelection() {
   popoverEl.style.top = `${Math.min(Math.max(window.scrollY + 8, desiredTop), maxTop)}px`;
   popoverEl.style.left = `${Math.min(Math.max(8, desiredLeft), maxLeft)}px`;
 
-  popoverEl.addEventListener("click", (e) => {
+  popoverEl.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
     if (btn.dataset.act === "copy") {
-      navigator.clipboard?.writeText(text);
-      showFloatToast("Copied", rect);
+      const ok = await copyText(text);
+      showFloatToast(ok ? "Copied" : "Copy failed", rect);
       clearPopover();
       return;
     }
@@ -3104,8 +3104,8 @@ copyChapterBtn.addEventListener("click", async () => {
   const body = _displayedEnglish(ch);
   const text = `${enTitle}\n\n${body}`.trim();
   if (!text) return;
-  await navigator.clipboard?.writeText(text);
-  showFloatToast("Chapter copied", copyChapterBtn.getBoundingClientRect());
+  const ok = await copyText(text);
+  showFloatToast(ok ? "Chapter copied" : "Copy failed", copyChapterBtn.getBoundingClientRect());
 });
 
 /* ---- Per-paragraph edit mode (style learning) ----
@@ -4091,13 +4091,9 @@ document.getElementById("view-last-prompt")?.addEventListener("click", async () 
 });
 
 lastPromptCopy?.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(lastPromptBody?.textContent || "");
-    lastPromptCopy.textContent = "Copied";
-    setTimeout(() => { lastPromptCopy.textContent = "Copy"; }, 1500);
-  } catch {
-    // Permission / API not available — best-effort.
-  }
+  const ok = await copyText(lastPromptBody?.textContent || "");
+  lastPromptCopy.textContent = ok ? "Copied" : "Copy failed";
+  setTimeout(() => { lastPromptCopy.textContent = "Copy"; }, 1500);
 });
 
 lastPromptDlg?.querySelector("[data-act='cancel']")
