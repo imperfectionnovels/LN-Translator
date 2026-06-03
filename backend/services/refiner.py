@@ -30,7 +30,10 @@ from backend.models import GlossaryEntry
 from backend.services import llm_cache
 from backend.services.glossary import dedupe_against_locked
 from backend.services.providers import Provider
-from backend.services.translators.base import format_glossary
+from backend.services.translators.base import (
+    TransientTranslatorError,
+    format_glossary,
+)
 from backend.services.translators.factory import get_translator
 
 logger = logging.getLogger(__name__)
@@ -137,7 +140,10 @@ async def refine_chapter(
         prompt, system_instruction=_REFINER_SYSTEM_INSTRUCTION,
     )).strip()
     if not refined:
-        raise RuntimeError(
+        # Empty refiner output is a service-side failure the user can retry,
+        # not a programming bug — use the domain exception the translator
+        # backends and base.py terminal paths already raise.
+        raise TransientTranslatorError(
             f"refiner ({provider.name}) returned empty output for a "
             f"{len(draft)}-char draft"
         )

@@ -3,16 +3,16 @@
 // Layout: sticky left TOC rail + section stack.
 // Sections (top to bottom): providers, defaults, themes, keyboard, about.
 //
-// Providers section is the heaviest — for each row we fetch /stats,
+// Providers section is the heaviest · for each row we fetch /stats,
 // /routed-novels, and /activity in parallel and render into slots that
-// show "—" or "Awaiting first translation" on a fresh DB.
+// show "·" or "Awaiting first translation" on a fresh DB.
 //
 // Defaults section replaces the two-dropdown form with an inline-editable
 // sentence ("Every novel imported translates with X, and runs the Y
 // pass…"). Optimistic save + undo toast.
 //
 // Per-novel state (genre, source language, translator override) lives on
-// each novel's own page — never mixed into App Settings.
+// each novel's own page · never mixed into App Settings.
 
 // ============================================================
 // DOM cache
@@ -40,7 +40,7 @@ const els = {
   fAuthCalloutTitle: document.getElementById("provider-auth-title"),
   fAuthCalloutText: document.getElementById("provider-auth-text"),
   fAuthCalloutCmd: document.getElementById("provider-auth-cmd"),
-  // fDefault dropped — the per-card "Set default" button is the single
+  // fDefault dropped · the per-card "Set default" button is the single
   // surface for that operation now (S3).
   // confirm-dialog handles are managed by utils.js::confirmDialog (C7).
   secretDialog: document.getElementById("secret-dialog"),
@@ -75,7 +75,7 @@ async function loadCatalog() {
 
 function populateTypeSelect() {
   if (!els.fType) return;
-  // Group entries by .group field — "Subscription", "API key", "Local".
+  // Group entries by .group field · "Subscription", "API key", "Local".
   const groups = new Map();
   for (const entry of _catalogCache) {
     const arr = groups.get(entry.group) || [];
@@ -104,7 +104,7 @@ function populateModelSelect(typeKey, preselectedModelId) {
   for (const m of entry.models || []) {
     html += `<option value="${escapeHtml(m.id)}">${escapeHtml(m.display)}</option>`;
   }
-  // Always offer the custom escape hatch — a new model release should never
+  // Always offer the custom escape hatch · a new model release should never
   // block the user.
   html += `<option value="${escapeHtml(sentinel)}">Other (custom ID)…</option>`;
   els.fModelSelect.innerHTML = html;
@@ -138,7 +138,7 @@ function populateModelSelect(typeKey, preselectedModelId) {
 function applyTypeDefaults(typeKey, { keepUserValues = false } = {}) {
   // Auto-fill base_url, secret_ref hint, and show/hide rows based on the
   // catalog entry's auth shape. When `keepUserValues` is true (edit mode)
-  // we don't clobber what the user already had in the form — we only fill
+  // we don't clobber what the user already had in the form · we only fill
   // empty fields.
   const entry = _catalogByType.get(typeKey);
   if (!entry) return;
@@ -148,7 +148,7 @@ function applyTypeDefaults(typeKey, { keepUserValues = false } = {}) {
   const isLocalNoAuth = entry.auth === "none";
 
   // The inline install hint under the Type dropdown is only useful for
-  // api_key types — for subscription / local types we display the same
+  // api_key types · for subscription / local types we display the same
   // information (plus the login command) in the auth callout below.
   if (els.fTypeHint) {
     if (isApiKey && entry.install_hint) {
@@ -160,7 +160,7 @@ function applyTypeDefaults(typeKey, { keepUserValues = false } = {}) {
     }
   }
 
-  // Auth callout — only for subscription / local types. Makes the
+  // Auth callout · only for subscription / local types. Makes the
   // alternative auth path explicit instead of relying on absent fields.
   if (els.fAuthCallout) {
     if (isSubscription || isLocalNoAuth) {
@@ -188,7 +188,7 @@ function applyTypeDefaults(typeKey, { keepUserValues = false } = {}) {
 
   // Base URL: shown for API-key types (so the user can override the
   // catalog default) and for local types like ollama (where the endpoint
-  // is the auth). Hidden for subscription types — they don't talk HTTP
+  // is the auth). Hidden for subscription types · they don't talk HTTP
   // from this side.
   const showBaseUrl = !isSubscription;
   els.fBaseUrlRow.hidden = !showBaseUrl;
@@ -278,16 +278,6 @@ function showToast(message, undoAction) {
       }
     }, { once: true });
   }
-}
-
-// ============================================================
-// Provider dialog secrets — replaced by catalog-driven applyTypeDefaults
-// above. The legacy _toggleSecretValueField shim stays as a thin alias so
-// any caller that wasn't migrated still works.
-// ============================================================
-function _toggleSecretValueField() {
-  if (!els.fType.value) return;
-  applyTypeDefaults(els.fType.value, { keepUserValues: true });
 }
 
 async function openSecretDialog(providerId, secretRef) {
@@ -380,7 +370,7 @@ function providerStatus(p) {
   // Catalog-driven: only `api_key` types need a secret_ref. Subscription
   // types (claude_*, codex_cli, gemini_cli, opencode) and local (ollama)
   // authenticate out-of-band. Falls back to the legacy {gemini, deepseek}
-  // set if the catalog hasn't loaded yet — defensive against a /providers
+  // set if the catalog hasn't loaded yet · defensive against a /providers
   // render that races the catalog fetch on cold boot.
   const entry = _catalogByType.get(p.provider_type);
   const needsSecret = entry
@@ -473,7 +463,7 @@ function _renderStatsSlot(card, stats) {
   if (!slot) return;
   if (!stats || stats.chapters_translated_30d === 0) {
     // S2: empty-state copy. A fresh DB has no usage data, and showing the
-    // 4-cell grid with "Awaiting first translation / $0.00 / — / never"
+    // 4-cell grid with "Awaiting first translation / $0.00 / · / never"
     // ate 200px of vertical for no real information. Collapse to a single
     // line that names the actionable next step.
     const lastTested = stats?.last_tested_at ? fmtRel(stats.last_tested_at) : null;
@@ -602,7 +592,7 @@ async function openCreateDialog() {
   els.fId.value = "";
   await loadCatalog();
   // Default to the first option in the Type dropdown (claude_agent if the
-  // catalog is intact — the most accessible option for a fresh user).
+  // catalog is intact · the most accessible option for a fresh user).
   if (!els.fType.value && els.fType.options.length > 0) {
     els.fType.selectedIndex = 0;
   }
@@ -619,7 +609,7 @@ async function openEditDialog(provider) {
   els.fType.value = provider.provider_type;
   els.fBaseUrl.value = provider.base_url || "";
   els.fSecret.value = provider.secret_ref || "";
-  // is_default toggled per-card via "Set default" — no form field for it (S3).
+  // is_default toggled per-card via "Set default" · no form field for it (S3).
   // keepUserValues: preserve the existing base_url / secret_ref that came
   // from the row, even if the catalog has a different default.
   applyTypeDefaults(provider.provider_type, { keepUserValues: true });
@@ -628,7 +618,7 @@ async function openEditDialog(provider) {
 }
 
 // confirmDialog lives in frontend/js/utils.js (C7). settings.js used to
-// expose a positional shim — the one remaining caller below now uses the
+// expose a positional shim · the one remaining caller below now uses the
 // canonical named-arg form.
 
 async function handleListClick(e) {
