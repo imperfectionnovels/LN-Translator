@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TypedDict
 
 CHUNK_SIZE = 4000
 MIN_CHAPTER_CHARS = 200
@@ -451,7 +452,17 @@ def _chunk_fallback(text: str) -> list[ParsedChapter]:
     return chunks
 
 
-def detect_ocr_issues(text: str) -> dict:
+class OcrIssueReport(TypedDict):
+    """Fixed shape returned by `detect_ocr_issues`, mirrored by the
+    `OcrIssues` Pydantic model the saturation route serializes. Capturing it
+    here makes the producer's contract type-checkable at the source rather
+    than only at the distant response model."""
+    score: int
+    issues: list[str]
+    flagged: bool
+
+
+def detect_ocr_issues(text: str) -> OcrIssueReport:
     """Score a CN chapter for OCR-corruption indicators.
 
     Returns `{score: int 0..100, issues: list[str], flagged: bool}`. Score is
