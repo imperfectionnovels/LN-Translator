@@ -43,7 +43,7 @@ from backend.scripts.ab_style_edits import _clip
 from backend.services import global_glossary as global_glossary_svc
 from backend.services.glossary import is_half_applied_lowercase_hatch
 from backend.services.text_fixups import (
-    _build_glossary_term_set,
+    build_glossary_term_set,
     enforce_brackets,
     enforce_em_dash,
     enforce_lowercase_locked_terms,
@@ -215,7 +215,7 @@ async def run(novel_id, chapter_num, edited_text, source, apply, write_report):
         {(g.term_en or "").strip() for g in glossary if (g.term_en or "").strip()},
         key=len, reverse=True,
     )
-    term_lower = {t.lower() for t in _build_glossary_term_set(glossary)}
+    term_lower = {t.lower() for t in build_glossary_term_set(glossary)}
     by_en = {(g.term_en or "").strip().lower(): g for g in glossary}
 
     draft_paras = _split_paras(draft_text)

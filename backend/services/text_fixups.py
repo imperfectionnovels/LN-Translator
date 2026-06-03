@@ -161,7 +161,7 @@ _NARRATIVE_TRIGGER_CHARS = set('。！？!?"“”「『」』')
 _SYSTEM_INNER_MAX = 80
 
 
-def _build_glossary_term_set(
+def build_glossary_term_set(
     glossary: list[GlossaryEntry] | None,
 ) -> frozenset[str]:
     """Both term_en and term_zh, stripped. Used to identify bracketed spans
@@ -266,7 +266,7 @@ def enforce_brackets(
     for a system block no longer applies.
 
     Returns (rewritten_text, count)."""
-    glossary_terms = _build_glossary_term_set(glossary)
+    glossary_terms = build_glossary_term_set(glossary)
     count = 0
     matches = list(_BRACKET_SPAN_RE.finditer(text))
     out = text
