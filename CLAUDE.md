@@ -83,8 +83,12 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── base.md                # genre-agnostic literary translator core
 │   │   ├── genres/<key>.md        # 10 overlays: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl (+ generic as legacy fallback)
 │   │   └── examples/<key>.md      # per-genre worked examples
-│   ├── scripts/
-│   │   └── load_glossary_md.py    # active: load data/glossary.md preset
+│   ├── scripts/                   # maintenance + learn-from-edits tooling
+│   │   ├── load_glossary_md.py        # load data/glossary.md preset
+│   │   ├── ingest_edited_chapter.py   # learn-from-edits: diff a hand-edited chapter, route deltas
+│   │   ├── diff_against_edit.py        # ground-truth diff: a translation vs a hand edit
+│   │   ├── ab_style_edits.py           # A/B the captured style-edit prompt arm
+│   │   └── retranslate_chapter.py      # re-run one chapter through the live pipeline
 │   └── tests/                     # 80+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
@@ -97,7 +101,13 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │       ├── reader.js          # the big one (~2k lines) — TOC, polling, terms, dialogs
 │       ├── home.js, library.js, glossary.js, glossary-global.js
 │       ├── settings.js, queue.js, stats.js, find-replace.js, onboarding.js
-└── data/                      # dev USER_DATA_ROOT — gitignored
+├── scripts/                   # dev/CI scripts (not packaged)
+│   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
+│   ├── dash_hook.py, check_em_dashes.py                 # em-dash PostToolUse guard + lint
+│   └── clear_stuck_glossary_errors.py                   # one-off maintenance
+├── tools/                     # dev tooling (not packaged)
+│   └── sqlite_ro_mcp.py       # read-only SQLite MCP server (wired in .mcp.json)
+└── data/                      # dev USER_DATA_ROOT (gitignored)
     ├── novels.db              # SQLite, WAL mode
     ├── glossary.md            # optional preset for load_glossary_md
     ├── llm_cache/             # content-addressed translation cache

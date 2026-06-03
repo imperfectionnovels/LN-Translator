@@ -21,6 +21,11 @@ dependencies = [
     "ebooklib>=0.18",
     "httpx>=0.27",
     "trafilatura>=1.12",
+    # lxml is pulled in transitively by trafilatura / ebooklib, but
+    # services/uploads.py imports `from lxml import html` directly for EPUB
+    # body extraction, so declare it explicitly rather than rely on the
+    # transitive pin.
+    "lxml>=5.0",
     "keyring>=25.0",
     "pywebview>=5.0",
     # cloudscraper: legacy CF v1/v2 JS challenge solver. Lighter than the
