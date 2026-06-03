@@ -1,4 +1,4 @@
-/* Glossary page — Han-led entry plates, top category rail, list view.
+/* Glossary page · Han-led entry plates, top category rail, list view.
  * Loaded by glossary.html alongside base.css. The legacy .gloss-card block
  * at the bottom is preserved because glossary-global.html still uses it.
  */
@@ -19,7 +19,7 @@
 }
 
 /* ============================================================
-   §2 · Health ribbon — surfaces glossaryHealth() output near the top
+   §2 · Health ribbon · surfaces glossaryHealth() output near the top
    so duplicates / unused never need a buried "Health" button.
    Hidden when the glossary is clean.
    ============================================================ */
@@ -70,7 +70,7 @@
 .health-ribbon .btn-tiny:hover { color: var(--fg); }
 
 /* ============================================================
-   §3 · Category rail — top tab strip replacing the old left sidebar
+   §3 · Category rail · top tab strip replacing the old left sidebar
    ============================================================ */
 .cat-rail {
   display: flex; gap: 0;
@@ -129,7 +129,7 @@
 }
 
 /* ============================================================
-   §4 · Control bar — search · source filter · sort · view toggle
+   §4 · Control bar · search · source filter · sort · view toggle
    ============================================================ */
 .control-bar {
   display: flex; align-items: center; gap: 10px;
@@ -237,7 +237,7 @@
 .view-toggle button.on .han { color: var(--bg); }
 
 /* ============================================================
-   §5 · Bulk-bar — selection actions. Inline above the grid
+   §5 · Bulk-bar · selection actions. Inline above the grid
    instead of a floating pill so the position is predictable in
    long lists.
    ============================================================ */
@@ -279,7 +279,7 @@
 .gloss-bulk-bar button .han { font-family: var(--font-family-han); font-weight: 700; }
 
 /* ============================================================
-   §6 · Plate — Han-led entry card
+   §6 · Plate · Han-led entry card
    ============================================================ */
 .gloss-grid {
   display: grid;
@@ -539,7 +539,7 @@
 }
 .plate.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* Inline add card — same plate shape, dashed border. */
+/* Inline add card · same plate shape, dashed border. */
 .plate.add-card {
   background: var(--bg);
   border: 1.5px dashed var(--border);
@@ -610,7 +610,7 @@
 .plate.skeleton-plate .skeleton-line { margin: 4px 0; }
 
 /* ============================================================
-   §7 · List view — same data, denser
+   §7 · List view · same data, denser
    ============================================================ */
 .list-table {
   background: var(--pane-hi);
@@ -757,7 +757,7 @@
 }
 .list-row .act-cell:hover { color: var(--fg); }
 
-/* Editing state — break out the textarea into a full-width expansion. */
+/* Editing state · break out the textarea into a full-width expansion. */
 .list-row.editing {
   background: var(--pane-bg);
   outline: 2px solid var(--accent);
@@ -955,21 +955,9 @@
 .dialog .health-body .ok { color: var(--accent, var(--fg)); font-style: italic; }
 
 /* ============================================================
-   §11 · Legacy .gloss-card / .gloss-side block.
-   Still consumed by glossary-global.html — leave as-is.
+   §11 · Legacy .gloss-card block. Still consumed by
+   glossary-global.html (which loads this sheet); leave as-is.
    ============================================================ */
-.gloss-side {
-  font-family: var(--font-family-sans);
-  font-size: 13px;
-}
-.gloss-side .group-title {
-  font-size: 10.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 600;
-  margin: 18px 0 6px;
-}
 .gloss-cat {
   display: flex; align-items: center; gap: 10px;
   padding: 7px 10px 7px 11px;
@@ -1100,14 +1088,6 @@
   .add-entry-form { grid-template-columns: 1fr; }
   .add-entry-form input, .add-entry-form select { min-width: 0; max-width: 100%; }
 }
-
-/* Legacy gloss-layout (sidebar). Kept for any older bookmark/page. */
-.gloss-layout {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 28px;
-}
-@media (max-width: 900px) { .gloss-layout { grid-template-columns: 1fr; } }
 
 /* Narrow phones: keep the control bar inside the viewport. The search field's
    240px min-width plus the source-seg segmented control together pushed a few
