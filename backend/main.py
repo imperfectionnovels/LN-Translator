@@ -432,8 +432,14 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Cancel in-flight queue workers so subprocess cleanup runs before
-        # the event loop is torn down.
+        # Only the LLM queue is cancelled on shutdown, even though three lanes
+        # drain on startup. The asymmetry is deliberate: queue workers hold a
+        # CLI/Agent subprocess whose child must be killed before the event loop
+        # tears down, so they need an explicit cancel-and-await. The free-draft
+        # and import lanes hold no subprocess and are idempotent/resumable, so
+        # dropping their in-flight tasks at exit loses nothing: the next
+        # startup's drain_on_startup re-fires free-draft 'in_progress' rows and
+        # the import runner resumes from persisted skeleton URLs.
         await queue_svc.shutdown()
 
 
