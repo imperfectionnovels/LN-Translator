@@ -43,6 +43,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    han_digits_to_int,
 )
 
 logger = logging.getLogger(__name__)
@@ -353,14 +354,13 @@ def _extract_printed_num(title: str) -> int | None:
     m = re.search(r"第\s*(\d+)\s*[話章節]", title_normalized)
     if m:
         return int(m.group(1))
-    # Han numerals (一二三...). Reuse the parser used by 69shuba —
-    # syosetu chapter titles also use 第十一話 / 第一話 forms.
+    # Han numerals (一二三...). syosetu chapter titles also use
+    # 第十一話 / 第一話 forms, so the shared base parser applies.
     m = re.search(r"第\s*([一二三四五六七八九十百千万零]+)\s*[話章節]", title)
     if m:
         try:
-            from backend.services.scrapers.sixnineshu import _han_digits_to_int
-            return _han_digits_to_int(m.group(1))
-        except (ValueError, ImportError):
+            return han_digits_to_int(m.group(1))
+        except ValueError:
             return None
     return None
 

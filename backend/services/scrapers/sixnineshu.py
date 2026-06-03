@@ -43,6 +43,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    han_digits_to_int,
 )
 
 logger = logging.getLogger(__name__)
@@ -536,41 +537,10 @@ def _extract_printed_num(title: str) -> int | None:
     m = re.search(r"第\s*([一二三四五六七八九十百千万零]+)\s*[章回節]", title)
     if m:
         try:
-            return _han_digits_to_int(m.group(1))
+            return han_digits_to_int(m.group(1))
         except ValueError:
             return None
     return None
-
-
-_HAN_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-               "六": 6, "七": 7, "八": 8, "九": 9}
-_HAN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000}
-
-
-def _han_digits_to_int(s: str) -> int:
-    """Small Han-numeral parser sufficient for chapter numbers (up to
-    ~99999). Doesn't handle every edge case in classical Chinese
-    numerals; that's fine for chapter labels."""
-    total = 0
-    section = 0
-    last_digit = 0
-    for ch in s:
-        if ch in _HAN_DIGITS:
-            last_digit = _HAN_DIGITS[ch]
-        elif ch in _HAN_UNITS:
-            unit = _HAN_UNITS[ch]
-            if last_digit == 0:
-                last_digit = 1
-            if unit >= 10000:
-                section += last_digit * unit
-                total += section
-                section = 0
-            else:
-                section += last_digit * unit
-            last_digit = 0
-        else:
-            raise ValueError(f"unknown han digit {ch!r}")
-    return total + section + last_digit
 
 
 # Register the recipe with the dispatcher at import time.

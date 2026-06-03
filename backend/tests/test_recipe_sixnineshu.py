@@ -17,14 +17,13 @@ import pytest
 
 from backend.db import init_db, open_conn
 from backend.services.parser import ParsedChapter  # noqa: F401  (kept for type clarity)
-from backend.services.scrapers.base import RecipeResult
+from backend.services.scrapers.base import RecipeResult, han_digits_to_int
 from backend.services.scrapers.sixnineshu import (
     _extract_chapter_body,
     _extract_chapter_links,
     _extract_cover_url,
     _extract_printed_num,
     _extract_title,
-    _han_digits_to_int,
     _normalize_to_chapter_list,
     _to_overview_url,
 )
@@ -165,7 +164,7 @@ def test_extract_printed_num_recognizes_chinese_chapter_numbers(title, expected)
     ("一万", 10000),
 ])
 def test_han_digits_to_int_basic_cases(han, expected):
-    assert _han_digits_to_int(han) == expected
+    assert han_digits_to_int(han) == expected
 
 
 # ---- End-to-end recipe run via mocked fetcher ------------------------------

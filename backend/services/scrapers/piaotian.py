@@ -50,6 +50,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    han_digits_to_int,
 )
 
 logger = logging.getLogger(__name__)
@@ -369,9 +370,8 @@ def _extract_printed_num(title: str) -> int | None:
     m = re.search(r"第\s*([一二三四五六七八九十百千万零]+)\s*[章回節]", title)
     if m:
         try:
-            from backend.services.scrapers.sixnineshu import _han_digits_to_int
-            return _han_digits_to_int(m.group(1))
-        except (ValueError, ImportError):
+            return han_digits_to_int(m.group(1))
+        except ValueError:
             return None
     return None
 

@@ -182,3 +182,41 @@ class BaseRecipe(ABC):
         wants to retry transient network blips internally should do so
         before raising, since the runner treats every raise as "pause here."
         """
+
+
+# ---------------------------------------------------------------------------
+# Shared parsing helpers
+# ---------------------------------------------------------------------------
+# Primitives that more than one site recipe needs. They live here (not in any
+# one recipe) so recipes depend on the shared base, never on a sibling recipe.
+
+_HAN_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+               "六": 6, "七": 7, "八": 8, "九": 9}
+_HAN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+
+
+def han_digits_to_int(s: str) -> int:
+    """Small Han-numeral parser sufficient for chapter numbers (up to
+    ~99999). Doesn't handle every edge case in classical Chinese
+    numerals; that's fine for chapter labels. Raises ValueError on an
+    unrecognized character so callers can fall back to a placeholder."""
+    total = 0
+    section = 0
+    last_digit = 0
+    for ch in s:
+        if ch in _HAN_DIGITS:
+            last_digit = _HAN_DIGITS[ch]
+        elif ch in _HAN_UNITS:
+            unit = _HAN_UNITS[ch]
+            if last_digit == 0:
+                last_digit = 1
+            if unit >= 10000:
+                section += last_digit * unit
+                total += section
+                section = 0
+            else:
+                section += last_digit * unit
+            last_digit = 0
+        else:
+            raise ValueError(f"unknown han digit {ch!r}")
+    return total + section + last_digit
