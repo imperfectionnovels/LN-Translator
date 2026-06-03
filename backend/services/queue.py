@@ -478,6 +478,111 @@ async def _emit_tm_inconsistency_observations(
         )
 
 
+async def _record_commit_provenance(
+    conn: aiosqlite.Connection,
+    *,
+    novel_id: int,
+    chapter_id: int,
+    chapter_num: int,
+    provider: Provider | None,
+    novel_meta: dict,
+    result,
+    translation_degraded: bool,
+    original_text: str,
+    cleaned_text: str,
+    free_draft: str | None,
+    previous_context: str | None,
+    style_note: str | None,
+    style_edits: list[tuple[str, str]] | None,
+) -> None:
+    """Post-commit diagnostics for a successful chapter translate: the
+    translation-attempts log row, the prompt_config_snapshot provenance blob,
+    and the TM-segment refresh (+ any TM-inconsistency observations).
+
+    All three ride in the SAME transaction as the chapter UPDATE (the caller
+    commits afterward) but are best-effort observability that must NEVER fail
+    the commit — each guards its own body and only logs on error. Extracted
+    from `_translate_chapter_in_db` to keep the worker's
+    claim/translate/commit spine readable; it carries no surrounding
+    translate-stage state beyond the explicit arguments.
+    """
+    # F22 (2026-05-25): translation attempts log. One row per
+    # _translate_chapter_in_db call — same transaction so a partial
+    # attempt can't appear as a phantom row. Backends populate
+    # result.prompt_snapshot / result.parse_error when available;
+    # NULL on backends that haven't been updated to expose them.
+    try:
+        from backend.services.translation_attempts import (  # noqa: PLC0415
+            record_attempt,
+        )
+        await record_attempt(
+            conn,
+            chapter_id=chapter_id,
+            provider_id=provider.id if provider else None,
+            model_id=provider.model_id if provider else None,
+            status=("fallback_plaintext" if translation_degraded else "ok"),
+            parse_error=getattr(result, "parse_error", None),
+            prompt_snapshot=getattr(result, "prompt_snapshot", None),
+            retry_count=0,
+        )
+    except Exception:
+        # Diagnostics MUST NOT fail the commit. Log and move on.
+        logger.exception(
+            "queue: failed to record translation attempt for ch %d",
+            chapter_num,
+        )
+    # Prompt-assembly provenance. Same transaction as the chapter
+    # commit so an A/B run can recover "what config produced this
+    # row" later via SQL. The blob distinguishes flag-state from
+    # block-emitted-state, so a flag-on-but-data-empty translation
+    # is queryable separately from a flag-off translation.
+    snapshot_json = _build_prompt_config_snapshot(
+        provider=provider,
+        novel_meta=novel_meta,
+        free_draft_included=bool(free_draft and free_draft.strip()),
+        previous_context_included=bool(
+            previous_context and previous_context.strip()
+        ),
+        style_note_included=bool(style_note and style_note.strip()),
+        style_edits_included=bool(style_edits),
+    )
+    await conn.execute(
+        "UPDATE chapters SET prompt_config_snapshot = ? "
+        "WHERE id = ? AND novel_id = ?",
+        (snapshot_json, chapter_id, novel_id),
+    )
+    # Initiative 5: refresh the TM rows for this chapter in the
+    # same transaction. Failed alignment skips the chapter
+    # silently — better than persisting wrong-paragraph pairs.
+    try:
+        n_segments = await tm_svc.replace_chapter_segments(
+            conn, novel_id, chapter_id,
+            original_text, cleaned_text,
+        )
+        if n_segments:
+            logger.info(
+                "tm: chapter %d populated %d segments",
+                chapter_num, n_segments,
+            )
+            # Surface inconsistencies created by THIS chapter into the
+            # QA panel as additional observation rows. We only check
+            # source_hashes this chapter introduced (joining against
+            # the rows that share them across the novel), so
+            # unchanged chapters don't fire fresh observations.
+            await _emit_tm_inconsistency_observations(
+                conn, novel_id, chapter_id
+            )
+    except Exception:
+        # TM write is best-effort observability — never fail the
+        # chapter commit because of it. The translation itself is
+        # what the user needs; the concordance index can recover
+        # on the next retranslate.
+        logger.exception(
+            "tm: chapter %d populate failed; chapter commit "
+            "proceeding without TM rows", chapter_num,
+        )
+
+
 async def _translate_chapter_in_db(
     conn: aiosqlite.Connection, novel_id: int, chapter_id: int
 ) -> None:
@@ -736,81 +841,26 @@ async def _translate_chapter_in_db(
                         for obs in normalized_observations
                     ],
                 )
-            # F22 (2026-05-25): translation attempts log. One row per
-            # _translate_chapter_in_db call — same transaction so a partial
-            # attempt can't appear as a phantom row. Backends populate
-            # result.prompt_snapshot / result.parse_error when available;
-            # NULL on backends that haven't been updated to expose them.
-            try:
-                from backend.services.translation_attempts import (  # noqa: PLC0415
-                    record_attempt,
-                )
-                await record_attempt(
-                    conn,
-                    chapter_id=chapter_id,
-                    provider_id=provider.id if provider else None,
-                    model_id=provider.model_id if provider else None,
-                    status=("fallback_plaintext" if translation_degraded else "ok"),
-                    parse_error=getattr(result, "parse_error", None),
-                    prompt_snapshot=getattr(result, "prompt_snapshot", None),
-                    retry_count=0,
-                )
-            except Exception:
-                # Diagnostics MUST NOT fail the commit. Log and move on.
-                logger.exception(
-                    "queue: failed to record translation attempt for ch %d",
-                    r["chapter_num"],
-                )
-            # Prompt-assembly provenance. Same transaction as the chapter
-            # commit so an A/B run can recover "what config produced this
-            # row" later via SQL. The blob distinguishes flag-state from
-            # block-emitted-state, so a flag-on-but-data-empty translation
-            # is queryable separately from a flag-off translation.
-            snapshot_json = _build_prompt_config_snapshot(
+            # Best-effort post-commit diagnostics (attempt log +
+            # prompt_config_snapshot provenance + TM-segment refresh), all in
+            # this same transaction. Extracted so the claim/translate/commit
+            # spine stays readable; the helper never fails the commit.
+            await _record_commit_provenance(
+                conn,
+                novel_id=novel_id,
+                chapter_id=chapter_id,
+                chapter_num=r["chapter_num"],
                 provider=provider,
                 novel_meta=novel_meta,
-                free_draft_included=bool(free_draft and free_draft.strip()),
-                previous_context_included=bool(
-                    previous_context and previous_context.strip()
-                ),
-                style_note_included=bool(style_note and style_note.strip()),
-                style_edits_included=bool(style_edits),
+                result=result,
+                translation_degraded=translation_degraded,
+                original_text=r["original_text"],
+                cleaned_text=cleaned_text,
+                free_draft=free_draft,
+                previous_context=previous_context,
+                style_note=style_note,
+                style_edits=style_edits,
             )
-            await conn.execute(
-                "UPDATE chapters SET prompt_config_snapshot = ? "
-                "WHERE id = ? AND novel_id = ?",
-                (snapshot_json, chapter_id, novel_id),
-            )
-            # Initiative 5: refresh the TM rows for this chapter in the
-            # same transaction. Failed alignment skips the chapter
-            # silently — better than persisting wrong-paragraph pairs.
-            try:
-                n_segments = await tm_svc.replace_chapter_segments(
-                    conn, novel_id, chapter_id,
-                    r["original_text"], cleaned_text,
-                )
-                if n_segments:
-                    logger.info(
-                        "tm: chapter %d populated %d segments",
-                        r["chapter_num"], n_segments,
-                    )
-                    # Surface inconsistencies created by THIS chapter into the
-                    # QA panel as additional observation rows. We only check
-                    # source_hashes this chapter introduced (joining against
-                    # the rows that share them across the novel), so
-                    # unchanged chapters don't fire fresh observations.
-                    await _emit_tm_inconsistency_observations(
-                        conn, novel_id, chapter_id
-                    )
-            except Exception:
-                # TM write is best-effort observability — never fail the
-                # chapter commit because of it. The translation itself is
-                # what the user needs; the concordance index can recover
-                # on the next retranslate.
-                logger.exception(
-                    "tm: chapter %d populate failed; chapter commit "
-                    "proceeding without TM rows", r["chapter_num"],
-                )
         await conn.commit()
         if (upd.rowcount or 0) == 0:
             logger.info(
