@@ -160,6 +160,28 @@ def test_lowercase_lexicon_protects_proper_compound() -> None:
     assert n == 0
 
 
+def test_lowercase_lexicon_317_batch_bare_generics() -> None:
+    # The 317-323 generics down-case as bare nouns with no per-novel row.
+    out, n = enforce_lowercase_locked_terms(
+        "He kept the Treasure and a fifth-grade Talisman after his Reincarnation.",
+        [],
+    )
+    assert out == (
+        "He kept the treasure and a fifth-grade talisman after his reincarnation."
+    )
+    assert n == 3
+
+
+def test_lowercase_lexicon_317_batch_protects_named_compounds() -> None:
+    # Named compounds containing the same generics stay capitalized: backward
+    # guard protects "Five Thunders Talisman" / "True Dragon Bloodline", forward
+    # guard protects "Treasure Pavilion".
+    text = "The Five Thunders Talisman, the True Dragon Bloodline, the Treasure Pavilion."
+    out, n = enforce_lowercase_locked_terms(text, [])
+    assert out == text
+    assert n == 0
+
+
 def test_lowercase_skips_code_fence() -> None:
     g = [_lc_entry("avatar")]
     text = "```\nAvatar = 1\n```\nhis Avatar moved"

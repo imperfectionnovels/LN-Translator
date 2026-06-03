@@ -31,6 +31,14 @@ GENERIC_LOWERCASE = frozenset({
     "divine sense", "divine soul", "divine ability",
     "ghost", "demon", "monster", "fiend",
     "mortal", "avatar",
+    # Second batch (317-323 audit): bare common nouns the extractor kept minting
+    # Title-Cased, then the model copied into prose. Each is generic in every
+    # xianxia novel; the per-occurrence compound guards in the down-caser protect
+    # the named forms (Spirit Treasure, Five Thunders Talisman, True Dragon
+    # Bloodline, Six Paths of Reincarnation, Heart Demon Fruit) because the
+    # membership test is on the FULL term_en string, never a substring.
+    "treasure", "talisman", "reincarnation", "bloodline",
+    "heart demon", "heart demons",
 })
 
 # A freshly extracted English term that is *entirely* a rank/grade/tier
@@ -132,6 +140,35 @@ def is_atomic_case_locked_term(g: GlossaryEntry) -> bool:
         if bare[0].isupper():
             return True
     return False
+
+
+def is_half_applied_lowercase_hatch(g: GlossaryEntry) -> bool:
+    """True when a locked row carries a clean `lowercase` directive in its notes
+    but its `term_en` still contains an uppercase letter.
+
+    This is the half-applied escape hatch and the recurrence root behind the
+    317-323 casing defect. The casing fix needs BOTH the note AND a lowercased
+    `term_en`: by deliberate design (see `_build_lowercase_targets` and
+    `test_lowercase_skips_mixed_case_term_en`) the down-caser opts in on
+    `term_en` casing, so a stray `lowercase` note never blanket-down-cases a
+    proper name. When only the note is set, `enforce_lowercase_locked_terms`
+    silently no-ops and the Title-Cased form leaks into prose through the
+    glossary block the model copies. Glossary tooling (the audit + the
+    learn-from-edits ingest) uses this to flag the inconsistency for repair
+    instead of letting it ship. Dual-use rows (a `capitalize` / `proper` caveat,
+    or a slash / parenthetical alternative) are intentionally context-cased and
+    are NOT hatches, so they return False."""
+    if not g.locked:
+        return False
+    en = (g.term_en or "").strip()
+    if not en or "/" in en or "(" in en:
+        return False
+    notes = (g.notes or "").lower()
+    if "lowercase" not in notes:
+        return False
+    if "proper" in notes or "capitalize" in notes:
+        return False
+    return en != en.lower()
 
 
 # Categories that are unambiguously proper-noun-shaped in xianxia prose (the

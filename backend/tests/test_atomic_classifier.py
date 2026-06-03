@@ -14,6 +14,7 @@ from backend.models import GlossaryEntry
 from backend.services.glossary import (
     _check_variants,
     is_atomic_case_locked_term,
+    is_half_applied_lowercase_hatch,
     missing_translator_terms,
 )
 from backend.services.glossary_casing import (
@@ -141,8 +142,18 @@ def test_classifier_generic_lexicon_overrides_category() -> None:
         ("Sea of Consciousness", "other"), ("Divine Sense", "other"),
         ("Divine Soul", "other"), ("Divine Ability", "technique"),
         ("Avatar", "other"), ("Qi", "other"), ("Karma", "other"),
+        # Second batch (317-323 audit): bare common nouns.
+        ("Treasure", "item"), ("Talisman", "item"), ("Reincarnation", "other"),
+        ("Bloodline", "item"), ("Heart Demons", "other"),
     ]:
         assert is_atomic_case_locked_term(_entry(term, category=cat)) is False, term
+
+
+def test_classifier_named_compound_of_generic_still_atomic() -> None:
+    # The lexicon matches the FULL term_en, so a named compound that merely
+    # contains a generic word is still a proper term (force-cased / not lexicon).
+    for term in ("Spirit Treasure", "Five Thunders Talisman", "True Dragon Bloodline"):
+        assert is_atomic_case_locked_term(_entry(term, category="item")) is True, term
 
 
 def test_classifier_proper_concept_still_atomic_despite_lexicon() -> None:
@@ -169,6 +180,52 @@ def test_normalize_leaves_proper_named_terms() -> None:
     assert _normalize_extracted_casing("Foundation Establishment", "other") == "Foundation Establishment"
     # An all-lowercase proper name in a named category is still proper-cased.
     assert _normalize_extracted_casing("eternal radiance", "place") == "Eternal Radiance"
+
+
+# ---------------------------------------------------------------------------
+# is_half_applied_lowercase_hatch — the recurrence detector
+# ---------------------------------------------------------------------------
+
+
+def test_half_applied_hatch_detected() -> None:
+    # The exact 317-323 defect: note says lowercase, term_en never lowered.
+    assert is_half_applied_lowercase_hatch(
+        _entry("Backlash", notes="lowercase")
+    ) is True
+    assert is_half_applied_lowercase_hatch(
+        _entry("Reincarnation", notes="lowercase in narration")
+    ) is True
+
+
+def test_half_applied_hatch_fully_applied_is_clean() -> None:
+    # term_en already lowercased + note set = the hatch is complete, not half.
+    assert is_half_applied_lowercase_hatch(
+        _entry("backlash", notes="lowercase")
+    ) is False
+
+
+def test_half_applied_hatch_no_note_is_not_a_hatch() -> None:
+    # A Title-Cased term with no lowercase note is a normal proper term.
+    assert is_half_applied_lowercase_hatch(
+        _entry("Spirit Treasure", notes=None, category="item")
+    ) is False
+
+
+def test_half_applied_hatch_dualuse_excluded() -> None:
+    # Context-cased rows (capitalize/proper caveat, slash alternatives) are
+    # intentional, not hatches.
+    assert is_half_applied_lowercase_hatch(
+        _entry("Void", notes="lowercase as concept; capitalize when proper")
+    ) is False
+    assert is_half_applied_lowercase_hatch(
+        _entry("Soul / soul", notes="lowercase soul in narration")
+    ) is False
+
+
+def test_half_applied_hatch_unlocked_excluded() -> None:
+    assert is_half_applied_lowercase_hatch(
+        _entry("Backlash", notes="lowercase", locked=False)
+    ) is False
 
 
 def test_classifier_apostrophe_name_atomic() -> None:

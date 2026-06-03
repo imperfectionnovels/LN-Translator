@@ -33,6 +33,7 @@ from backend.services.glossary_casing import (
     _GENERIC_RANK_RE,
     _normalize_extracted_casing,
     is_atomic_case_locked_term,
+    is_half_applied_lowercase_hatch,
 )
 from backend.services.glossary_filters import (
     _ALIAS_SEP_RE,
@@ -49,6 +50,7 @@ __all__ = [
     "_GENERIC_RANK_RE",
     "_normalize_extracted_casing",
     "is_atomic_case_locked_term",
+    "is_half_applied_lowercase_hatch",
     # Re-exported from glossary_filters
     "canonical_zh",
     "dedupe_against_locked",
