@@ -483,6 +483,25 @@ def _next_nonspace_is_upper(text: str, end: int) -> bool:
     return j < len(text) and text[j].isupper()
 
 
+def _hyphen_joined_to_capital(text: str, start: int, end: int) -> bool:
+    """True iff the match is hyphen-joined to a capitalized word on either side,
+    marking a Title-Case proper-noun compound ("Demon-Purging", "Soul-Demon").
+    `_next_nonspace_is_upper` covers the space joiner but walks past spaces only,
+    so the hyphen joiner is invisible to it and is checked here. A common-noun
+    compound joined to a lowercase neighbor ("demon-spawn") still down-cases."""
+    # forward: "<match>-Upper"
+    if text[end:end + 1] == "-" and text[end + 1:end + 2].isupper():
+        return True
+    # backward: "Upper...-<match>" (preceding hyphenated token is capitalized)
+    if start >= 1 and text[start - 1] == "-":
+        k = start - 2
+        while k >= 0 and (text[k].isalpha() or text[k] in "'’"):
+            k -= 1
+        if text[k + 1:start - 1][:1].isupper():
+            return True
+    return False
+
+
 # Capitalized words that may precede a generic without forming a proper-noun
 # compound, so "His Avatar" still down-cases while "Innate Divine Ability" and
 # "Ghost Mountain" do not.
@@ -572,6 +591,8 @@ def enforce_lowercase_locked_terms(
             if _is_sentence_initial(out, start):
                 continue
             if _next_nonspace_is_upper(out, end):
+                continue
+            if _hyphen_joined_to_capital(out, start, end):
                 continue
             prev = _preceding_word(out, start)
             if prev and prev[0].isupper() and prev.lower() not in _FUNCTION_WORDS:

@@ -86,6 +86,36 @@ def test_lowercase_protects_forward_proper_noun_compound() -> None:
     assert n == 0
 
 
+def test_lowercase_protects_hyphenated_proper_compound_forward() -> None:
+    # "demon" is lowercase-locked, but it must NOT down-case the "Demon" inside
+    # the hyphen-joined proper name "Demon-Purging True Person". The space-joiner
+    # guard skips spaces only, so the hyphen joiner needs its own protection.
+    g = [_lc_entry("demon", term_zh="妖", category="character")]
+    out, n = enforce_lowercase_locked_terms(
+        "He bowed to the Demon-Purging True Person there.", g
+    )
+    assert out == "He bowed to the Demon-Purging True Person there."
+    assert n == 0
+
+
+def test_lowercase_protects_hyphenated_proper_compound_backward() -> None:
+    # The lowercase term as the trailing half of a hyphenated proper compound
+    # ("Soul-Demon") is also part of a name; leave it capitalized.
+    g = [_lc_entry("demon", term_zh="妖", category="character")]
+    out, n = enforce_lowercase_locked_terms("the Soul-Demon stirred", g)
+    assert out == "the Soul-Demon stirred"
+    assert n == 0
+
+
+def test_lowercase_downcases_hyphen_lowercase_neighbor() -> None:
+    # A hyphen joined to a LOWERCASE neighbor is an ordinary common-noun
+    # compound, not a proper name, so the down-caser still fires.
+    g = [_lc_entry("demon", term_zh="妖", category="character")]
+    out, n = enforce_lowercase_locked_terms("a Demon-spawn crawled out", g)
+    assert out == "a demon-spawn crawled out"
+    assert n == 1
+
+
 def test_lowercase_downcases_when_followed_by_lowercase() -> None:
     g = [_lc_entry("ghost", term_zh="鬼", category="character")]
     out, n = enforce_lowercase_locked_terms("He could roam like a Ghost back then.", g)
