@@ -155,7 +155,7 @@ async def delete_entry(
     deleted = await glossary_svc.delete_entry(conn, entry_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="entry not found")
-    return {"deleted": entry_id}
+    return {"ok": True}
 
 
 # ----- Initiative 4: in-place term substitution -----

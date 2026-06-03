@@ -132,7 +132,7 @@ async def delete_provider(provider_id: int) -> dict:
     if not ok:
         raise HTTPException(status_code=404, detail="provider not found")
     invalidate_provider_cache(provider_id)
-    return {"deleted": provider_id}
+    return {"ok": True}
 
 
 @router.post("/{provider_id}/set-default")
@@ -194,7 +194,7 @@ async def delete_secret(provider_id: int) -> dict:
     if p.secret_ref:
         providers_svc.delete_secret(p.secret_ref)
     invalidate_provider_cache(provider_id)
-    return {"provider_id": provider_id, "secret_cleared": True}
+    return {"ok": True}
 
 
 # ============================================================
