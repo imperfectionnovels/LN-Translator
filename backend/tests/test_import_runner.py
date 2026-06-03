@@ -56,7 +56,7 @@ async def _drain_runner_tasks() -> None:
     and prevents cross-test contamination of novels / chapters / scrape_jobs.
     """
     for _ in range(50):
-        pending = [t for t in import_runner._RUNNER_TASKS if not t.done()]
+        pending = [t for t in import_runner._registry.tasks if not t.done()]
         if not pending:
             return
         try:

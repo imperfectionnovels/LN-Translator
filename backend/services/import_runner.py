@@ -42,6 +42,7 @@ import urllib.parse
 
 from backend.db import open_conn
 from backend.services import scrape_jobs
+from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services.parser import (
     ParsedChapter,
     reconcile_chapter_numbers,
@@ -78,15 +79,13 @@ def _novel_lock(novel_id: int) -> asyncio.Lock:
 
 
 # Strong refs to running runner tasks so Python's GC can't reclaim them
-# mid-loop. asyncio.create_task only weakly references its tasks.
-_RUNNER_TASKS: set[asyncio.Task] = set()
+# mid-loop. Same registry the translate queue and free-draft lane use; this
+# lane keeps its own instance.
+_registry = BackgroundTaskRegistry()
 
 
 def _spawn(coro) -> asyncio.Task:
-    task = asyncio.create_task(coro)
-    _RUNNER_TASKS.add(task)
-    task.add_done_callback(_RUNNER_TASKS.discard)
-    return task
+    return _registry.spawn(coro)
 
 
 # ============================================================

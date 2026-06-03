@@ -27,6 +27,7 @@ import time
 import aiosqlite
 
 from backend.db import open_conn
+from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services.providers import Provider, load_provider
 from backend.services.translators.google_translate_free import (
     GoogleTranslateFreeTranslator,
@@ -38,14 +39,13 @@ logger = logging.getLogger(__name__)
 # work and LLM translation can run concurrently for different chapters.
 FREE_DRAFT_LOCK = asyncio.Lock()
 
-# Strong refs for fire-and-forget worker tasks. Same pattern as queue.py.
-_background_tasks: set[asyncio.Task] = set()
+# Strong refs for fire-and-forget worker tasks. Same registry the translate
+# queue and import runner use; this lane keeps its own instance.
+_registry = BackgroundTaskRegistry()
 
 
 def _spawn(coro) -> None:
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _registry.spawn(coro)
 
 
 # ---------------------------------------------------------------------------

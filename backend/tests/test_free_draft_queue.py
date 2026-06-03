@@ -39,7 +39,7 @@ async def fresh_db():
     await init_db()
     await _reset_db()
     # Ensure the module's in-flight task set is empty across tests.
-    free_draft_queue._background_tasks.clear()
+    free_draft_queue._registry.tasks.clear()
     yield
     await _reset_db()
 

@@ -31,6 +31,7 @@ from backend.config import (
     PROMPT_INCLUDE_STYLE_NOTE,
 )
 from backend.db import open_conn
+from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services import global_glossary as global_glossary_svc
 from backend.services import glossary as glossary_svc
 from backend.services import tm as tm_svc
@@ -144,13 +145,11 @@ _translator_lock = asyncio.Lock()
 # loop keeps only a WEAK reference to a task, so an unreferenced task can be
 # garbage-collected mid-run — silently dropping a queued chapter. Holding the
 # task here until its done-callback fires prevents that.
-_background_tasks: set[asyncio.Task] = set()
+_registry = BackgroundTaskRegistry()
 
 
 def _spawn(coro) -> None:
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _registry.spawn(coro)
 
 
 # Maps chapter_id -> the in-flight _run_translate task, so an explicit cancel
@@ -162,19 +161,17 @@ _translate_tasks: dict[int, asyncio.Task] = {}
 
 def _spawn_translate(novel_id: int, chapter_id: int) -> None:
     """Spawn a translate worker and register it under its chapter id so it can
-    be cancelled mid-flight. Mirrors _spawn's strong-ref bookkeeping."""
-    task = asyncio.create_task(_run_translate(novel_id, chapter_id))
-    _background_tasks.add(task)
-    _translate_tasks[chapter_id] = task
+    be cancelled mid-flight. Uses the shared registry for the strong-ref
+    bookkeeping, plus a per-chapter cancellation slot."""
 
     def _done(t: asyncio.Task) -> None:
-        _background_tasks.discard(t)
-        # Only clear the registry slot if it still points at THIS task — a
-        # rapid retranslate could have already registered a newer one.
+        # Only clear the slot if it still points at THIS task — a rapid
+        # retranslate could have already registered a newer one.
         if _translate_tasks.get(chapter_id) is t:
             _translate_tasks.pop(chapter_id, None)
 
-    task.add_done_callback(_done)
+    task = _registry.spawn(_run_translate(novel_id, chapter_id), on_done=_done)
+    _translate_tasks[chapter_id] = task
 
 
 async def cancel_translate(chapter_id: int) -> bool:
@@ -297,9 +294,9 @@ async def shutdown() -> None:
     lifespan finally-block so subprocess cleanup paths run before the event
     loop is torn down (Claude CLI / Agent kill their child process on
     CancelledError)."""
-    if not _background_tasks:
+    if not _registry.tasks:
         return
-    tasks = list(_background_tasks)
+    tasks = list(_registry.tasks)
     for t in tasks:
         t.cancel()
     try:
