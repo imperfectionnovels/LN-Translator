@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TypedDict
 
 import aiosqlite
 
@@ -40,13 +41,115 @@ def _chinese_char_count(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Return shapes
+# ---------------------------------------------------------------------------
+# The dashboard route and frontend depend on the exact nested key shape of
+# these rollups. Capturing them as TypedDicts (the same precedent as
+# NovelGenreBrief / RestoreResult elsewhere in services) makes a dropped or
+# renamed key a type-check failure instead of a runtime surprise in the UI.
+# They remain plain dicts at runtime, so the route still passes them through
+# without a Pydantic round-trip.
+
+
+class ThroughputPoint(TypedDict):
+    day: str
+    count: int
+
+
+class WordStats(TypedDict):
+    source_chars: int
+    english_words: int
+    refined_words: int
+    # target / source ratio; None when the source is empty.
+    english_words_per_source_char: float | None
+
+
+class NovelCoverage(TypedDict):
+    total_chapters: int
+    done_chapters: int
+    refined_chapters: int
+    style_edit_chapters: int
+    observation_chapters: int
+
+
+class TokenStats(TypedDict):
+    input_tokens_total: int
+    output_tokens_total: int
+    cached_input_tokens_total: int
+
+
+class ObservationKindCount(TypedDict):
+    kind: str
+    count: int
+
+
+class ObservationStats(TypedDict):
+    by_kind: list[ObservationKindCount]
+    total_undismissed: int
+
+
+class NovelGlossaryStats(TypedDict):
+    locked: int
+    auto: int
+    global_total: int
+
+
+class NovelTmStats(TypedDict):
+    total_segments: int
+    distinct_source_hashes: int
+    duplication_ratio: float | None
+    avg_source_chars: float
+    avg_target_chars: float
+
+
+class NovelStats(TypedDict):
+    novel_id: int
+    novel_title: str
+    words: WordStats
+    throughput: list[ThroughputPoint]
+    coverage: NovelCoverage
+    tokens: TokenStats
+    observations: ObservationStats
+    glossary: NovelGlossaryStats
+    tm: NovelTmStats
+
+
+class GlobalCoverage(TypedDict):
+    total_chapters: int
+    done_chapters: int
+    refined_chapters: int
+
+
+class ProviderMixEntry(TypedDict):
+    provider_name: str
+    chapter_count: int
+
+
+class GlobalGlossaryStats(TypedDict):
+    global_total: int
+
+
+class GlobalTmStats(TypedDict):
+    total_segments: int
+
+
+class GlobalStats(TypedDict):
+    novel_count: int
+    coverage: GlobalCoverage
+    throughput: list[ThroughputPoint]
+    provider_mix: list[ProviderMixEntry]
+    glossary: GlobalGlossaryStats
+    tm: GlobalTmStats
+
+
+# ---------------------------------------------------------------------------
 # Per-novel
 # ---------------------------------------------------------------------------
 
 
 async def novel_stats(
     conn: aiosqlite.Connection, novel_id: int
-) -> dict | None:
+) -> NovelStats | None:
     """Full per-novel rollup. Returns None when the novel doesn't exist
     (the route turns that into a 404)."""
     cur = await conn.execute(
@@ -228,7 +331,7 @@ async def novel_stats(
 # ---------------------------------------------------------------------------
 
 
-async def global_stats(conn: aiosqlite.Connection) -> dict:
+async def global_stats(conn: aiosqlite.Connection) -> GlobalStats:
     """Library-wide aggregate."""
     cur = await conn.execute("SELECT COUNT(*) AS n FROM novels")
     novel_count = (await cur.fetchone())["n"]
