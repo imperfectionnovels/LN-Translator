@@ -102,6 +102,19 @@ async def maybe_queue_for_open_chapter(novel_id: int, chapter_id: int) -> bool:
     return await queue_free_draft(novel_id, chapter_id)
 
 
+def trigger_open_chapter_draft(novel_id: int, chapter_id: int) -> None:
+    """Fire-and-forget the reader's open-chapter free-draft trigger.
+
+    Synchronous wrapper for the ``GET /api/chapters/{id}`` hot path: the
+    reader must return immediately, so even the cheap status read inside
+    ``maybe_queue_for_open_chapter`` runs in a background task. The task
+    spawn (and the strong ref that keeps it from being GC'd before it runs)
+    is owned here so the route layer never reaches into this module's
+    private ``_spawn`` helper.
+    """
+    _spawn(maybe_queue_for_open_chapter(novel_id, chapter_id))
+
+
 async def drain_on_startup() -> None:
     """Reset any chapters wedged in 'in_progress' back to 'pending' and
     re-spawn workers for everything still 'pending'. Mirrors

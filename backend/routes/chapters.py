@@ -72,12 +72,10 @@ async def get_chapter(
     # translation.
     try:
         from backend.services import free_draft_queue
-        # _spawn (not bare asyncio.create_task) keeps a strong reference
-        # in free_draft_queue._background_tasks so the loop can't GC the
-        # task before it starts — silently dropping the user's free draft.
-        free_draft_queue._spawn(
-            free_draft_queue.maybe_queue_for_open_chapter(novel_id, r["id"])
-        )
+        # Public fire-and-forget entry point: the service owns the task
+        # spawn (and the strong ref that keeps the loop from GC'ing it
+        # before it starts), so the route never touches private internals.
+        free_draft_queue.trigger_open_chapter_draft(novel_id, r["id"])
     except Exception as e:
         # Best-effort: a failed free-draft spawn never blocks the read. Log
         # at debug so it's diagnosable without spamming the normal log.
