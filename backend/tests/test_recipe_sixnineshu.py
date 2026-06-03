@@ -17,12 +17,15 @@ import pytest
 
 from backend.db import init_db, open_conn
 from backend.services.parser import ParsedChapter  # noqa: F401  (kept for type clarity)
-from backend.services.scrapers.base import RecipeResult, han_digits_to_int
+from backend.services.scrapers.base import (
+    RecipeResult,
+    extract_printed_num_cn,
+    han_digits_to_int,
+)
 from backend.services.scrapers.sixnineshu import (
     _extract_chapter_body,
     _extract_chapter_links,
     _extract_cover_url,
-    _extract_printed_num,
     _extract_title,
     _normalize_to_chapter_list,
     _to_overview_url,
@@ -151,7 +154,7 @@ def test_to_overview_url_only_matches_book_form():
     ("无章节号", None),
 ])
 def test_extract_printed_num_recognizes_chinese_chapter_numbers(title, expected):
-    assert _extract_printed_num(title) == expected
+    assert extract_printed_num_cn(title) == expected
 
 
 @pytest.mark.parametrize("han, expected", [

@@ -13,13 +13,12 @@ from urllib.parse import urlparse
 import pytest
 
 from backend.db import init_db, open_conn
-from backend.services.scrapers.base import RecipeResult
+from backend.services.scrapers.base import RecipeResult, extract_printed_num_cn
 from backend.services.scrapers.piaotian import (
     PiaotianRecipe,
     _construct_cover_url,
     _extract_chapter_body,
     _extract_chapter_links,
-    _extract_printed_num,
     _extract_title,
     _normalize_to_catalog,
 )
@@ -153,7 +152,7 @@ def test_extract_chapter_body_returns_empty_when_marker_missing():
     ("番外", None),
 ])
 def test_extract_printed_num(title, expected):
-    assert _extract_printed_num(title) == expected
+    assert extract_printed_num_cn(title) == expected
 
 
 def test_recipe_declares_xianxia_default_genre():

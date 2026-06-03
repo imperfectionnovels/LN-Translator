@@ -42,7 +42,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
-    han_digits_to_int,
+    extract_printed_num_cn,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class UukanshuRecipe(BaseRecipe):
                 chapter_num=i,
                 title_zh=ch_title,
                 source_url=ch_url,
-                printed_num=_extract_printed_num(ch_title),
+                printed_num=extract_printed_num_cn(ch_title),
             )
             for i, (ch_title, ch_url) in enumerate(chapter_links, start=1)
         )
@@ -290,23 +290,6 @@ def _extract_chapter_body(soup: BeautifulSoup) -> str:
     if buf:
         paragraphs.append(" ".join(buf))
     return "\n\n".join(paragraphs).strip()
-
-
-def _extract_printed_num(title: str) -> int | None:
-    """Same patterns as the 69shuba recipe: 第N章 with arabic or Han
-    digits."""
-    if not title:
-        return None
-    m = re.search(r"第\s*(\d+)\s*[章回節]", title)
-    if m:
-        return int(m.group(1))
-    m = re.search(r"第\s*([一二三四五六七八九十百千万零]+)\s*[章回節]", title)
-    if m:
-        try:
-            return han_digits_to_int(m.group(1))
-        except ValueError:
-            return None
-    return None
 
 
 # Register the recipe with the dispatcher at import time.

@@ -30,6 +30,7 @@ client.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
@@ -220,3 +221,29 @@ def han_digits_to_int(s: str) -> int:
         else:
             raise ValueError(f"unknown han digit {ch!r}")
     return total + section + last_digit
+
+
+# Chinese chapter-number pattern: 第N章 / 第N回 / 第N節, with N in either
+# Arabic or Han digits. Shared by the Chinese-site recipes (69shuba,
+# piaotian, uukanshu); syosetu has its own 第N話 variant and keeps it.
+_CN_ARABIC_CHAPTER_RE = re.compile(r"第\s*(\d+)\s*[章回節]")
+_CN_HAN_CHAPTER_RE = re.compile(r"第\s*([一二三四五六七八九十百千万零]+)\s*[章回節]")
+
+
+def extract_printed_num_cn(title: str) -> int | None:
+    """Pull the printed chapter number from a Chinese chapter title (第N章 in
+    Arabic or Han digits). Returns None when no such pattern matches or the
+    Han numeral is unparseable, so callers fall back to the placeholder
+    index."""
+    if not title:
+        return None
+    m = _CN_ARABIC_CHAPTER_RE.search(title)
+    if m:
+        return int(m.group(1))
+    m = _CN_HAN_CHAPTER_RE.search(title)
+    if m:
+        try:
+            return han_digits_to_int(m.group(1))
+        except ValueError:
+            return None
+    return None
