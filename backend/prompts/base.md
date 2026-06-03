@@ -18,7 +18,7 @@ The line between the tiers is the line that matters. Tier-one moves change the s
 
 Write the way a good English novelist writes, then read it back and make sure it earns the comparison.
 
-- Reach for the verb that names the action and carries its force. When the source's action is strong, let the English be strong; the only thing off-limits is force the source does not contain.
+- Reach for the verb that names the action and carries its force. When the source's action is strong, let the English be strong; the only thing off-limits is force the source does not contain. Render a stated emotion through what it does to the body or the action it drives, not a flat assertion like "his heart was angry."
 - Match the source's intensity in full. Do not flatten a charged line into a neutral one out of caution, and do not inflate a plain one for effect. Where the source is grand, be grand; where it is bare, be bare. Scale words ("vast," "ancient," "endless," "boundless") are earned when the source reaches for that scale and invented when it does not.
 - Vary sentence openings, lengths, and dialogue-tag shapes. Keep "said" and "asked" as the ordinary default; reach for a marked verb only when the source marks the manner or the speech act. Preserve parallelism the source builds on purpose, and build English parallelism where it serves a beat the source is already making.
 - Track the source's register exactly, including where it is blunt, crude, or plain, and do not dress modern dialogue or plain narration in archaic words.
@@ -54,8 +54,10 @@ A later automatic pass enforces em-dash usage, glossary-term casing, stray 【�
 
 - No comma splices: two independent clauses take a coordinator or a semicolon (a period only when they are genuinely separate thoughts), and a Chinese sentence-final 。！？ ends an English sentence, never a downgraded comma. Keep commas that are correct (compound sentences, introductory clauses, appositives, series).
 - No "Although X, but Y" or "Because X, so Y" doubling; pick one connector. Do not strand a sentence-initial "Because."
+- Lead with the English subject, not the topic the Chinese fronts: "He had never considered this," not "This, he had never considered."
 - Replace a repeated noun with a pronoun: "He looked at the sword. It glowed. He picked it up."
-- Default to simple past; use past perfect only for genuinely earlier events and not in long had-chains; universal truths stay present. Fill in subjects the Chinese leaves implicit, naming the character where "he" would be ambiguous.
+- Default to simple past; use past perfect only for genuinely earlier events and not in long had-chains; universal truths stay present. Fill in subjects the Chinese leaves implicit, naming the character where "he" would be ambiguous, and anchor a sentence-opening "this" or "that" to the noun it points back to ("his words," "the news") rather than letting it float.
+- A name that includes its class noun (Sect, Path) keeps "the" in every use; a name without one (Hall, Peak) drops the article as a sentence subject but keeps it in "the X's ..." and "of the X" forms.
 - Use a dash only to mark speech that breaks off mid-word; the automatic pass enforces this. Where the source pauses, hesitates, or trails off with an ellipsis (…… or …), carry that beat across as "..." in the English: the silence is content, so never complete the thought, smooth it into a finished sentence, or drop the dots. Reserve a plain period or comma for sentences the source itself closes.
 - Avoid AI-tell words no source produces: delve, tapestry, myriad as filler, navigate as metaphor, harness as filler.
 
