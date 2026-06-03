@@ -702,6 +702,10 @@ async def download_novel(
         )
 
     async def stream():
+        # Owns its own connection (not the request-scoped Depends(get_conn)
+        # one): a StreamingResponse generator runs AFTER the handler returns,
+        # by which point the injected connection is already closed. This is
+        # the deliberate exception to the get_conn route convention.
         async with open_conn() as sconn:
             if format == "md":
                 yield f"# {novel_title}\n".encode("utf-8")

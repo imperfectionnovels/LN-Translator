@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException
+import aiosqlite
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.db import open_conn
+from backend.db import get_conn
 from backend.models import (
     Provider as ProviderModel,
 )
@@ -215,7 +216,10 @@ def _bucket_iso_dates(days: int) -> list[str]:
 
 
 @router.get("/{provider_id}/stats")
-async def provider_stats(provider_id: int) -> ProviderStats:
+async def provider_stats(
+    provider_id: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> ProviderStats:
     """30-day rollup for the provider control-room card. All columns
     referenced here already exist:
       - chapters.translated_at  (Initiative 6)
@@ -240,59 +244,58 @@ async def provider_stats(provider_id: int) -> ProviderStats:
         datetime.now(timezone.utc) - timedelta(days=_STATS_WINDOW_DAYS)
     ).isoformat(timespec="seconds").replace("+00:00", "")
 
-    async with open_conn() as conn:
-        # Throughput per day for the sparkline window.
-        cur = await conn.execute(
-            """
-            SELECT substr(c.translated_at, 1, 10) AS day,
-                   COUNT(*) AS chapters
-            FROM chapters c
-            JOIN novels n ON n.id = c.novel_id
-            WHERE n.translator_provider_id = ?
-              AND c.translated_at IS NOT NULL
-              AND c.translated_at >= ?
-            GROUP BY day
-            """,
-            (provider_id, first_bucket_iso),
-        )
-        by_day: dict[str, dict] = {
-            r["day"]: {"chapters": r["chapters"]}
-            for r in await cur.fetchall()
-        }
+    # Throughput per day for the sparkline window.
+    cur = await conn.execute(
+        """
+        SELECT substr(c.translated_at, 1, 10) AS day,
+               COUNT(*) AS chapters
+        FROM chapters c
+        JOIN novels n ON n.id = c.novel_id
+        WHERE n.translator_provider_id = ?
+          AND c.translated_at IS NOT NULL
+          AND c.translated_at >= ?
+        GROUP BY day
+        """,
+        (provider_id, first_bucket_iso),
+    )
+    by_day: dict[str, dict] = {
+        r["day"]: {"chapters": r["chapters"]}
+        for r in await cur.fetchall()
+    }
 
-        # 30-day totals (chapters).
-        cur = await conn.execute(
-            """
-            SELECT COUNT(*) AS chapters
-            FROM chapters c
-            JOIN novels n ON n.id = c.novel_id
-            WHERE n.translator_provider_id = ?
-              AND c.translated_at IS NOT NULL
-              AND c.translated_at >= ?
-            """,
-            (provider_id, window_cutoff),
-        )
-        row = await cur.fetchone()
-        chapters_30d = int(row["chapters"] or 0)
+    # 30-day totals (chapters).
+    cur = await conn.execute(
+        """
+        SELECT COUNT(*) AS chapters
+        FROM chapters c
+        JOIN novels n ON n.id = c.novel_id
+        WHERE n.translator_provider_id = ?
+          AND c.translated_at IS NOT NULL
+          AND c.translated_at >= ?
+        """,
+        (provider_id, window_cutoff),
+    )
+    row = await cur.fetchone()
+    chapters_30d = int(row["chapters"] or 0)
 
-        # Failure rate from the attempts log over the same window.
-        cur = await conn.execute(
-            """
-            SELECT
-              SUM(CASE WHEN a.status = 'error' THEN 1 ELSE 0 END) AS failures,
-              COUNT(*) AS attempts
-            FROM chapter_translation_attempts a
-            JOIN chapters c ON c.id = a.chapter_id
-            JOIN novels n ON n.id = c.novel_id
-            WHERE n.translator_provider_id = ?
-              AND a.started_at >= ?
-            """,
-            (provider_id, window_cutoff),
-        )
-        row = await cur.fetchone()
-        attempts_30d = int(row["attempts"] or 0)
-        failures_30d = int(row["failures"] or 0)
-        failure_rate = (failures_30d / attempts_30d) if attempts_30d else 0.0
+    # Failure rate from the attempts log over the same window.
+    cur = await conn.execute(
+        """
+        SELECT
+          SUM(CASE WHEN a.status = 'error' THEN 1 ELSE 0 END) AS failures,
+          COUNT(*) AS attempts
+        FROM chapter_translation_attempts a
+        JOIN chapters c ON c.id = a.chapter_id
+        JOIN novels n ON n.id = c.novel_id
+        WHERE n.translator_provider_id = ?
+          AND a.started_at >= ?
+        """,
+        (provider_id, window_cutoff),
+    )
+    row = await cur.fetchone()
+    attempts_30d = int(row["attempts"] or 0)
+    failures_30d = int(row["failures"] or 0)
+    failure_rate = (failures_30d / attempts_30d) if attempts_30d else 0.0
 
     chapters_buckets = [by_day.get(d, {}).get("chapters", 0) for d in days]
 
@@ -309,7 +312,11 @@ async def provider_stats(provider_id: int) -> ProviderStats:
 
 
 @router.get("/{provider_id}/routed-novels")
-async def provider_routed_novels(provider_id: int, limit: int = 12) -> ProviderRoutedNovels:
+async def provider_routed_novels(
+    provider_id: int,
+    limit: int = 12,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> ProviderRoutedNovels:
     """Which novels currently route through this provider, either as
     primary translator or as refinement. The settings card shows the
     first `limit` as a chip-row with a "+N more" overflow link.
@@ -318,37 +325,36 @@ async def provider_routed_novels(provider_id: int, limit: int = 12) -> ProviderR
     if p is None:
         raise HTTPException(status_code=404, detail="provider not found")
     limit = max(1, min(limit, 100))
-    async with open_conn() as conn:
-        cur = await conn.execute(
-            """
-            SELECT id, title,
-                   CASE
-                     WHEN translator_provider_id = ? AND refinement_provider_id = ? THEN 'both'
-                     WHEN translator_provider_id = ? THEN 'translator'
-                     WHEN refinement_provider_id = ? THEN 'refinement'
-                     ELSE 'unknown'
-                   END AS role
-            FROM novels
-            WHERE (translator_provider_id = ? OR refinement_provider_id = ?)
-              AND deleted_at IS NULL
-            ORDER BY id ASC
-            LIMIT ?
-            """,
-            (provider_id, provider_id, provider_id, provider_id,
-             provider_id, provider_id, limit),
-        )
-        rows = await cur.fetchall()
-        novels = [
-            ProviderRoutedNovel(id=r["id"], title=r["title"], role=r["role"])
-            for r in rows
-        ]
-        cur = await conn.execute(
-            "SELECT COUNT(*) AS n FROM novels "
-            "WHERE (translator_provider_id = ? OR refinement_provider_id = ?) "
-            "AND deleted_at IS NULL",
-            (provider_id, provider_id),
-        )
-        total = int((await cur.fetchone())["n"] or 0)
+    cur = await conn.execute(
+        """
+        SELECT id, title,
+               CASE
+                 WHEN translator_provider_id = ? AND refinement_provider_id = ? THEN 'both'
+                 WHEN translator_provider_id = ? THEN 'translator'
+                 WHEN refinement_provider_id = ? THEN 'refinement'
+                 ELSE 'unknown'
+               END AS role
+        FROM novels
+        WHERE (translator_provider_id = ? OR refinement_provider_id = ?)
+          AND deleted_at IS NULL
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (provider_id, provider_id, provider_id, provider_id,
+         provider_id, provider_id, limit),
+    )
+    rows = await cur.fetchall()
+    novels = [
+        ProviderRoutedNovel(id=r["id"], title=r["title"], role=r["role"])
+        for r in rows
+    ]
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS n FROM novels "
+        "WHERE (translator_provider_id = ? OR refinement_provider_id = ?) "
+        "AND deleted_at IS NULL",
+        (provider_id, provider_id),
+    )
+    total = int((await cur.fetchone())["n"] or 0)
     return ProviderRoutedNovels(
         provider_id=provider_id,
         novels=novels,
@@ -358,7 +364,11 @@ async def provider_routed_novels(provider_id: int, limit: int = 12) -> ProviderR
 
 
 @router.get("/{provider_id}/activity")
-async def provider_activity(provider_id: int, limit: int = 6) -> ProviderActivity:
+async def provider_activity(
+    provider_id: int,
+    limit: int = 6,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> ProviderActivity:
     """Last N translation attempts on novels routed through this provider.
     Maps `chapter_translation_attempts.status` into the 3-state ok/warn/err
     bucket the settings card uses for icons.
@@ -367,23 +377,22 @@ async def provider_activity(provider_id: int, limit: int = 6) -> ProviderActivit
     if p is None:
         raise HTTPException(status_code=404, detail="provider not found")
     limit = max(1, min(limit, 50))
-    async with open_conn() as conn:
-        cur = await conn.execute(
-            """
-            SELECT a.started_at, a.finished_at, a.status AS att_status,
-                   a.parse_error,
-                   c.chapter_num, c.title_en,
-                   n.title AS novel_title
-            FROM chapter_translation_attempts a
-            JOIN chapters c ON c.id = a.chapter_id
-            JOIN novels n ON n.id = c.novel_id
-            WHERE n.translator_provider_id = ?
-            ORDER BY a.started_at DESC
-            LIMIT ?
-            """,
-            (provider_id, limit),
-        )
-        rows = await cur.fetchall()
+    cur = await conn.execute(
+        """
+        SELECT a.started_at, a.finished_at, a.status AS att_status,
+               a.parse_error,
+               c.chapter_num, c.title_en,
+               n.title AS novel_title
+        FROM chapter_translation_attempts a
+        JOIN chapters c ON c.id = a.chapter_id
+        JOIN novels n ON n.id = c.novel_id
+        WHERE n.translator_provider_id = ?
+        ORDER BY a.started_at DESC
+        LIMIT ?
+        """,
+        (provider_id, limit),
+    )
+    rows = await cur.fetchall()
 
     def _bucket(status: str) -> str:
         if status in ("ok", "fallback_plaintext"):

@@ -17,7 +17,7 @@ from __future__ import annotations
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.db import get_conn, open_conn
+from backend.db import get_conn
 from backend.services import import_runner
 
 router = APIRouter()
@@ -73,7 +73,10 @@ async def get_import_status(
 
 
 @router.post("/{novel_id}/cancel")
-async def cancel_import(novel_id: int) -> dict:
+async def cancel_import(
+    novel_id: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
     """Cancel an in-progress import. The runner's fill loop checks
     `import_status` between chapter fetches and exits cleanly when it
     sees 'paused'. Partial novel stays in the library — the user can
@@ -84,18 +87,20 @@ async def cancel_import(novel_id: int) -> dict:
         'in_progress' to 'paused'. False when the novel wasn't
         in_progress (already paused / done / cancelled).
     """
-    async with open_conn() as conn:
-        cur = await conn.execute(
-            "SELECT id FROM novels WHERE id = ?", (novel_id,),
-        )
-        if not await cur.fetchone():
-            raise HTTPException(status_code=404, detail="novel not found")
+    cur = await conn.execute(
+        "SELECT id FROM novels WHERE id = ?", (novel_id,),
+    )
+    if not await cur.fetchone():
+        raise HTTPException(status_code=404, detail="novel not found")
     flipped = await import_runner.cancel_import(novel_id)
     return {"novel_id": novel_id, "flipped": flipped, "status": "paused"}
 
 
 @router.post("/{novel_id}/resume")
-async def resume_import(novel_id: int) -> dict:
+async def resume_import(
+    novel_id: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
     """Resume a paused recipe-scrape import. Spawns the runner as a
     background task; returns immediately. Library card polls the
     status endpoint to track progress.
@@ -104,44 +109,43 @@ async def resume_import(novel_id: int) -> dict:
     paused state, or it's a bulk/EPUB import whose source bytes are
     gone (no chapters with import_source_url set).
     """
-    async with open_conn() as conn:
-        cur = await conn.execute(
-            "SELECT import_status FROM novels WHERE id = ?", (novel_id,),
+    cur = await conn.execute(
+        "SELECT import_status FROM novels WHERE id = ?", (novel_id,),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+    if row["import_status"] not in ("paused", None):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"novel import_status={row['import_status']!r} — only "
+                "paused (or NULL) imports can be resumed."
+            ),
         )
-        row = await cur.fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="novel not found")
-        if row["import_status"] not in ("paused", None):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"novel import_status={row['import_status']!r} — only "
-                    "paused (or NULL) imports can be resumed."
-                ),
-            )
-        cur = await conn.execute(
-            "SELECT COUNT(*) AS n FROM chapters "
-            "WHERE novel_id = ? AND import_source_url IS NOT NULL "
-            "AND import_fetched_at IS NULL",
-            (novel_id,),
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS n FROM chapters "
+        "WHERE novel_id = ? AND import_source_url IS NOT NULL "
+        "AND import_fetched_at IS NULL",
+        (novel_id,),
+    )
+    pending = int((await cur.fetchone())["n"] or 0)
+    if pending == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Nothing to resume. This novel has no recipe-scrape "
+                "chapters awaiting fetch — bulk / EPUB imports can't be "
+                "resumed (the source bytes lived in the upload and are "
+                "gone). Use the Append flow to add more chapters."
+            ),
         )
-        pending = int((await cur.fetchone())["n"] or 0)
-        if pending == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Nothing to resume. This novel has no recipe-scrape "
-                    "chapters awaiting fetch — bulk / EPUB imports can't be "
-                    "resumed (the source bytes lived in the upload and are "
-                    "gone). Use the Append flow to add more chapters."
-                ),
-            )
-        # Flip back to in_progress so the fill loop's status check passes.
-        await conn.execute(
-            "UPDATE novels SET import_status = 'in_progress' WHERE id = ?",
-            (novel_id,),
-        )
-        await conn.commit()
+    # Flip back to in_progress so the fill loop's status check passes.
+    await conn.execute(
+        "UPDATE novels SET import_status = 'in_progress' WHERE id = ?",
+        (novel_id,),
+    )
+    await conn.commit()
     import_runner.spawn_resume(novel_id)
     return {
         "novel_id": novel_id,
