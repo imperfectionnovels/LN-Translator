@@ -17,76 +17,27 @@ bite.
 
 from __future__ import annotations
 
-import asyncio
-import logging
-
-from backend.services.providers import Provider
-
+from ._cli_base import SubprocessCliTranslator
 from ._subprocess_utils import build_argv, resolve_binary, run_subprocess
-from .base import (
-    BACKOFF_SCHEDULE,
-    BaseTranslator,
-    TransientTranslatorError,
-)
-
-logger = logging.getLogger(__name__)
+from .base import TransientTranslatorError
 
 _BINARY = "opencode"
 _CALL_TIMEOUT = 600.0
 
 
 class OpenCodeError(Exception):
-    """Hard failure from OpenCode — auth missing, unknown model alias, etc."""
+    """Hard failure from OpenCode: auth missing, unknown model alias, etc."""
 
 
-class OpenCodeTranslator(BaseTranslator):
+class OpenCodeTranslator(SubprocessCliTranslator):
     name = "opencode"
     model_id = "anthropic/claude-opus-4-7"
     max_parallel = 1
-
-    def __init__(self, provider: Provider | None = None) -> None:
-        if provider is not None and provider.model_id:
-            self.model_id = provider.model_id
-        self._semaphore = asyncio.Semaphore(1)
-
-    async def _complete(self, prompt: str) -> str:
-        full = (
-            f"SYSTEM INSTRUCTIONS:\n{self.system_instruction}\n\n"
-            f"USER REQUEST:\n{prompt}"
-        )
-        return await self._call(full)
-
-    async def _complete_plain(self, prompt: str) -> str:
-        return await self._call(prompt)
-
-    async def _call(self, prompt: str) -> str:
-        async with self._semaphore:
-            return await self._call_with_retry(prompt)
-
-    async def _call_with_retry(self, prompt: str) -> str:
-        last_exc: BaseException | None = None
-        for attempt in range(len(BACKOFF_SCHEDULE) + 1):
-            try:
-                return await self._run(prompt)
-            except OpenCodeError:
-                raise
-            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
-                last_exc = e
-                if attempt >= len(BACKOFF_SCHEDULE):
-                    break
-                delay = BACKOFF_SCHEDULE[attempt]
-                logger.warning(
-                    "OpenCode transient error (attempt %d/%d): %s — retrying in %.1fs",
-                    attempt + 1,
-                    len(BACKOFF_SCHEDULE) + 1,
-                    e,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-        raise TransientTranslatorError(
-            "OpenCode temporarily unavailable. The chapter is unchanged — "
-            "try Retranslate later."
-        ) from last_exc
+    permanent_error = OpenCodeError
+    unavailable_message = (
+        "OpenCode temporarily unavailable. The chapter is unchanged. "
+        "Try Retranslate later."
+    )
 
     async def _run(self, prompt: str) -> str:
         path = resolve_binary(_BINARY)

@@ -6,10 +6,15 @@ Mirrors test_translator_codex_cli: stubs the subprocess seam so no real
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from backend.services.translators import gemini_cli as mod
-from backend.services.translators.base import TransientTranslatorError
+from backend.services.translators.base import (
+    BACKOFF_SCHEDULE,
+    TransientTranslatorError,
+)
 from backend.services.translators.gemini_cli import (
     GeminiCliError,
     GeminiCliTranslator,
@@ -78,7 +83,7 @@ async def test_transient_oserror_retries_then_gives_up(monkeypatch):
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr(mod.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     with pytest.raises(TransientTranslatorError, match="temporarily unavailable"):
         await GeminiCliTranslator()._call("p")
-    assert calls["n"] == len(mod.BACKOFF_SCHEDULE) + 1
+    assert calls["n"] == len(BACKOFF_SCHEDULE) + 1

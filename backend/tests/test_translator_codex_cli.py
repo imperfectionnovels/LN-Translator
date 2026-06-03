@@ -23,7 +23,10 @@ import asyncio
 import pytest
 
 from backend.services.translators import codex_cli as mod
-from backend.services.translators.base import TransientTranslatorError
+from backend.services.translators.base import (
+    BACKOFF_SCHEDULE,
+    TransientTranslatorError,
+)
 from backend.services.translators.codex_cli import CodexCliError, CodexCliTranslator
 
 pytestmark = pytest.mark.asyncio
@@ -116,12 +119,12 @@ async def test_transient_oserror_retries_then_gives_up(monkeypatch):
     async def _no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(mod.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     t = CodexCliTranslator()
     with pytest.raises(TransientTranslatorError, match="temporarily unavailable"):
         await t._call("p")
     # len(BACKOFF_SCHEDULE) + 1 attempts were made before giving up.
-    assert calls["n"] == len(mod.BACKOFF_SCHEDULE) + 1
+    assert calls["n"] == len(BACKOFF_SCHEDULE) + 1
 
 
 async def test_transient_then_success(monkeypatch):
@@ -132,7 +135,7 @@ async def test_transient_then_success(monkeypatch):
     async def _no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(mod.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     t = CodexCliTranslator()
     out = await t._call("p")
     assert out == "recovered"
