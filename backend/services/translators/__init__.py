@@ -12,12 +12,13 @@ from __future__ import annotations
 from backend.models import GlossaryEntry, TranslationResult
 from backend.services.providers import Provider
 
-from .base import TransientTranslatorError
+from .base import PromptAssetError, TransientTranslatorError
 from .factory import get_translator, translator_factory
 
 __all__ = [
     "translate_chapter",
     "TransientTranslatorError",
+    "PromptAssetError",
     "translator_factory",
     "get_translator",
 ]

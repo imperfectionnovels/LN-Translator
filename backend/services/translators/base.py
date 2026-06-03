@@ -86,9 +86,18 @@ _GENRES_DIR = _PROMPTS_ROOT / "genres"
 _EXAMPLES_DIR = _PROMPTS_ROOT / "examples"
 
 
+class PromptAssetError(RuntimeError):
+    """A bundled prompt file (base.md / a genre overlay / an examples file)
+    is missing from the install. A packaging/deployment invariant violation,
+    not a translator-runtime failure: retrying won't help, the file has to be
+    restored. Subclasses RuntimeError so the existing startup-probe handlers
+    still catch it while the type stays greppable and distinct from an
+    unrelated programming RuntimeError."""
+
+
 def _read_required(path) -> str:
     if not path.is_file():
-        raise RuntimeError(
+        raise PromptAssetError(
             f"Prompt file not found at {path}. Restore it from version "
             "control before starting the server."
         )
@@ -602,7 +611,7 @@ class BaseTranslator(ABC):
         own transient-retry loop.
         """
         if self._llm_call_count >= MAX_LLM_CALLS_PER_CHAPTER:
-            raise RuntimeError(
+            raise TransientTranslatorError(
                 f"{self.name} translator exceeded the "
                 f"{MAX_LLM_CALLS_PER_CHAPTER}-call per-chapter budget — "
                 f"refusing further LLM calls. Raise MAX_LLM_CALLS_PER_CHAPTER "
@@ -683,7 +692,13 @@ class BaseTranslator(ABC):
                 # `new_terms` and would poison the next proper call.
                 fallback = await self._plain_text_fallback(chapter_zh, title_zh)
                 return self._attach_usage(fallback)
-        raise RuntimeError("translate_chapter exited the retry loop unexpectedly")
+        # Defensive: the loop always returns (success, or plain-text fallback
+        # on the second attempt). If we somehow fall through, surface it as a
+        # transient translator failure so the worker marks the chapter retryable
+        # rather than letting a bare RuntimeError look like an unrelated bug.
+        raise TransientTranslatorError(
+            "translate_chapter exited the retry loop unexpectedly"
+        )
 
     def _attach_usage(self, result: TranslationResult) -> TranslationResult:
         """Return a copy of `result` with the accumulated TokenUsage attached.

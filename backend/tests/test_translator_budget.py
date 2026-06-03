@@ -13,6 +13,7 @@ import pytest
 from backend.services.translators.base import (
     MAX_LLM_CALLS_PER_CHAPTER,
     BaseTranslator,
+    TransientTranslatorError,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -75,7 +76,9 @@ async def test_call_budget_caps_runaway_retry_loop(monkeypatch):
     t._llm_call_count = 0
     for _ in range(MAX_LLM_CALLS_PER_CHAPTER):
         t._check_call_budget()
-    with pytest.raises(RuntimeError, match="exceeded"):
+    # Over-budget surfaces as the domain TransientTranslatorError (a
+    # service-side cap the user can retry), not a bare RuntimeError.
+    with pytest.raises(TransientTranslatorError, match="exceeded"):
         t._check_call_budget()
 
 
