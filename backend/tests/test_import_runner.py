@@ -248,7 +248,7 @@ async def test_cancel_during_fill_exits_cleanly(monkeypatch):
     Deterministic by construction: the cancel is fired from inside the
     recipe's fetch_chapter the moment chapter 3 is reached, after looking
     the novel_id up directly from the DB. The skeleton (the novel row
-    carrying title 'Test Novel') is committed by _create_novel_skeleton
+    carrying title 'Test Novel') is committed by create_novel_skeleton
     BEFORE the fill loop calls fetch_chapter for chapter 1, so the
     novel_id is always resolvable here, with no cross-task polling race.
     """

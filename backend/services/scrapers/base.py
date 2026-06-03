@@ -93,7 +93,7 @@ class RecipePlan:
 @dataclass(frozen=True)
 class FetchedChapter:
     """The fill-phase output for a single chapter. Plumbed back into
-    `_fill_skeleton_chapter` by the runner."""
+    `fill_skeleton_chapter` by the runner."""
     title_zh: str | None
     original_text: str
 

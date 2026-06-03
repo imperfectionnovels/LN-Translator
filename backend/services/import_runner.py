@@ -18,7 +18,7 @@ midway lost the entire crawl. This module replaces that pattern with
 
 3. *Fill.* Loop over the pending chapters, calling
    `recipe.fetch_chapter` (scrape) or pulling from the in-memory list
-   (bulk/EPUB) and `_fill_skeleton_chapter` to commit each one. A
+   (bulk/EPUB) and `fill_skeleton_chapter` to commit each one. A
    crash leaves partial state intact — any chapter with
    `import_fetched_at IS NULL` is still pending.
 
@@ -54,10 +54,10 @@ from backend.services.scrapers.base import (
 )
 from backend.services.uploads import (
     PlannedChapter,
-    _count_pending_skeletons,
-    _create_novel_skeleton,
-    _fill_skeleton_chapter,
-    _set_novel_import_status,
+    count_pending_skeletons,
+    create_novel_skeleton,
+    fill_skeleton_chapter,
+    set_novel_import_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ async def start_from_recipe(
         # callers fill it via a separate path. Source language is just a
         # hint; the translator works without it.
         async with open_conn() as conn:
-            novel_id = await _create_novel_skeleton(
+            novel_id = await create_novel_skeleton(
                 conn,
                 title=plan.title,
                 planned=[
@@ -258,7 +258,7 @@ async def resume_recipe_import(novel_id: int) -> None:
                 "can't determine recipe; marking paused", novel_id,
             )
             async with open_conn() as conn:
-                await _set_novel_import_status(conn, novel_id, "paused")
+                await set_novel_import_status(conn, novel_id, "paused")
             return
 
         parsed = urllib.parse.urlparse(source_url)
@@ -272,7 +272,7 @@ async def resume_recipe_import(novel_id: int) -> None:
                 hostname,
             )
             async with open_conn() as conn:
-                await _set_novel_import_status(conn, novel_id, "paused")
+                await set_novel_import_status(conn, novel_id, "paused")
             return
 
         # Reconstruct recipe_state. Every current recipe stuffs the
@@ -286,13 +286,13 @@ async def resume_recipe_import(novel_id: int) -> None:
             novel_id, row["title"], recipe.name,
         )
         async with open_conn() as conn:
-            pending = await _count_pending_skeletons(conn, novel_id)
+            pending = await count_pending_skeletons(conn, novel_id)
         if pending == 0:
             # All chapters filled but novel still flagged in_progress —
             # likely a crash AFTER the last fill commit but BEFORE the
             # status flip. Just clean up.
             async with open_conn() as conn:
-                await _set_novel_import_status(conn, novel_id, "done")
+                await set_novel_import_status(conn, novel_id, "done")
             logger.info(
                 "import_runner: novel %d had 0 pending; marked done",
                 novel_id,
@@ -323,7 +323,7 @@ async def _drive_fill(
     """Inner fill loop shared by fresh imports and resume.
 
     Reads pending skeleton rows in chapter_num order, calls
-    `recipe.fetch_chapter` for each, commits via `_fill_skeleton_chapter`.
+    `recipe.fetch_chapter` for each, commits via `fill_skeleton_chapter`.
     Checks `novels.import_status` between iterations — if the user
     cancelled (status flipped to 'paused'), the loop exits cleanly with
     partial state intact.
@@ -361,7 +361,7 @@ async def _drive_fill(
         if not batch:
             # Nothing left to fetch — mark done.
             async with open_conn() as conn:
-                await _set_novel_import_status(conn, novel_id, "done")
+                await set_novel_import_status(conn, novel_id, "done")
             if cover_url:
                 await _fetch_and_store_cover(novel_id, cover_url, cookies)
             return
@@ -389,7 +389,7 @@ async def _drive_fill(
                     novel_id, ch_row["chapter_num"], e,
                 )
                 async with open_conn() as conn:
-                    await _set_novel_import_status(conn, novel_id, "paused")
+                    await set_novel_import_status(conn, novel_id, "paused")
                 if job_id is not None:
                     await scrape_jobs.mark_error(
                         job_id, str(e),
@@ -397,7 +397,7 @@ async def _drive_fill(
                     )
                 return
             async with open_conn() as conn:
-                filled = await _fill_skeleton_chapter(
+                filled = await fill_skeleton_chapter(
                     conn, ch_row["id"],
                     title_zh=fetched.title_zh,
                     original_text=fetched.original_text,
@@ -487,7 +487,7 @@ async def drain_imports_on_startup() -> None:
     for row in in_progress:
         novel_id = row["id"]
         async with open_conn() as conn:
-            pending = await _count_pending_skeletons(conn, novel_id)
+            pending = await count_pending_skeletons(conn, novel_id)
         if pending == 0:
             # Either finished but status not flipped, or non-recipe import
             # whose chapters were INSERTed directly (no skeleton). For the
@@ -506,7 +506,7 @@ async def drain_imports_on_startup() -> None:
                 has_recipe_chapters = await cur.fetchone() is not None
             new_status = "done" if has_recipe_chapters else "paused"
             async with open_conn() as conn:
-                await _set_novel_import_status(conn, novel_id, new_status)
+                await set_novel_import_status(conn, novel_id, new_status)
             logger.info(
                 "import_runner: novel %d had no pending chapters; "
                 "marked %s", novel_id, new_status,
@@ -604,5 +604,5 @@ async def insert_chapters_incrementally(
                 batch,
             )
             await conn.commit()
-        await _set_novel_import_status(conn, novel_id, "done")
+        await set_novel_import_status(conn, novel_id, "done")
     return novel_id

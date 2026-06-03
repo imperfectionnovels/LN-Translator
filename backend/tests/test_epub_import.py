@@ -270,7 +270,7 @@ def test_epub_spine_extractor_threshold_falls_back_under_three():
     None so the upload route uses the legacy text-blob path."""
     from io import BytesIO
 
-    from backend.services.uploads import _decode_epub
+    from backend.services.uploads import decode_epub
 
     pad = "Padding prose to clear MIN_CHAPTER_CHARS. " * 8
     epub_bytes = _build_epub_bytes(
@@ -280,7 +280,7 @@ def test_epub_spine_extractor_threshold_falls_back_under_three():
     )
 
     class _DummyFile:
-        # Match enough of UploadFile's surface for _decode_epub to read it.
+        # Match enough of UploadFile's surface for decode_epub to read it.
         size = len(epub_bytes)
         filename = "single.epub"
         _stream = BytesIO(epub_bytes)
@@ -288,6 +288,6 @@ def test_epub_spine_extractor_threshold_falls_back_under_three():
             return self._stream.read(n)
 
     import asyncio
-    decoded = asyncio.run(_decode_epub(_DummyFile()))
+    decoded = asyncio.run(decode_epub(_DummyFile()))
     assert decoded.pre_parsed_chapters is None
     assert decoded.text  # text-blob is still populated for the fallback path

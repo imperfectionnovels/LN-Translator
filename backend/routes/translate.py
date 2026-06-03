@@ -50,16 +50,16 @@ from backend.services.uploads import (
     MAX_BULK_FILES,
     MAX_BULK_TOTAL_BYTES,
     DecodedDoc,
-    _append_parsed_chapters,
-    _append_with_offset,
-    _create_novel_and_chapters,
-    _decode_docx,
-    _decode_epub,
-    _decode_html,
-    _ensure_novel_exists,
-    _ext_from_filename,
-    _read_bulk_file,
-    _read_text_file,
+    append_parsed_chapters,
+    append_with_offset,
+    create_novel_and_chapters,
+    decode_docx,
+    decode_epub,
+    decode_html,
+    ensure_novel_exists,
+    ext_from_filename,
+    read_bulk_file,
+    read_text_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def _validate_upload_filename(filename: str | None) -> str:
     the legacy paste-as-file behavior holds."""
     if not filename:
         return "txt"
-    ext = _ext_from_filename(filename)
+    ext = ext_from_filename(filename)
     if ext == "htm":
         ext = "html"
     if ext not in _ALLOWED_UPLOAD_EXTS:
@@ -143,23 +143,23 @@ async def _decode_upload(file: UploadFile) -> tuple[DecodedDoc, str]:
     persists source_type with the novel and inspects DecodedDoc.cover_bytes
     to decide whether to also call write_cover_for_novel.
 
-    .txt uploads flow through _read_text_file for byte-level encoding
+    .txt uploads flow through read_text_file for byte-level encoding
     detection (the existing CJK-density scoring) so the multi-format
     dispatcher doesn't regress raw-text imports.
     """
     ext = _validate_upload_filename(file.filename)
     if ext == "txt":
-        text, encoding = await _read_text_file(file)
-        # _read_text_file enforces MAX_UPLOAD_BYTES and 400s on empty, but
+        text, encoding = await read_text_file(file)
+        # read_text_file enforces MAX_UPLOAD_BYTES and 400s on empty, but
         # doesn't expose the raw byte count — DecodedDoc.raw_size is None-
         # safe for TXT callers because they don't use it.
         return DecodedDoc(text=text, encoding=encoding, raw_size=0), "txt"
     if ext == "epub":
-        return await _decode_epub(file), "epub"
+        return await decode_epub(file), "epub"
     if ext == "docx":
-        return await _decode_docx(file), "docx"
+        return await decode_docx(file), "docx"
     if ext == "html":
-        return await _decode_html(file), "html"
+        return await decode_html(file), "html"
     # _validate_upload_filename already filtered; defensive:
     raise HTTPException(status_code=400, detail=f"unsupported file type '{file.filename}'")
 
@@ -247,7 +247,7 @@ async def translate_paste(
 ) -> dict:
     title = normalize_title(payload.title)
     genre = _validate_genre(payload.genre)
-    novel_id, first_chapter = await _create_novel_and_chapters(
+    novel_id, first_chapter = await create_novel_and_chapters(
         conn, title=title, text=payload.text, source_type="paste", genre=genre,
     )
     return {"novel_id": novel_id, "first_chapter": first_chapter}
@@ -284,7 +284,7 @@ async def translate_upload(
         )
         first_chapter = chapters[0].chapter_num
     else:
-        novel_id, first_chapter = await _create_novel_and_chapters(
+        novel_id, first_chapter = await create_novel_and_chapters(
             conn, title=title, text=decoded.text, source_type=source_type,
             genre=genre_norm,
         )
@@ -401,8 +401,8 @@ async def translate_scrape(
 
     if payload.novel_id is not None:
         # Append flow. The novel must already exist.
-        await _ensure_novel_exists(conn, payload.novel_id)
-        added, first, collision = await _append_parsed_chapters(
+        await ensure_novel_exists(conn, payload.novel_id)
+        added, first, collision = await append_parsed_chapters(
             conn, payload.novel_id, result.text,
         )
         return {
@@ -421,7 +421,7 @@ async def translate_scrape(
     title_source = payload.title if payload.title else result.title
     title = normalize_title(title_source)
     genre = _validate_genre(payload.genre)
-    novel_id, first_chapter = await _create_novel_and_chapters(
+    novel_id, first_chapter = await create_novel_and_chapters(
         conn, title=title, text=result.text, source_type="url",
         source_url=result.source_url, genre=genre,
     )
@@ -480,8 +480,8 @@ async def append_paste(
     payload: AppendPasteRequest,
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> dict:
-    await _ensure_novel_exists(conn, novel_id)
-    added, first, collision = await _append_parsed_chapters(conn, novel_id, payload.text)
+    await ensure_novel_exists(conn, novel_id)
+    added, first, collision = await append_parsed_chapters(conn, novel_id, payload.text)
     return {
         "novel_id": novel_id,
         "added_chapters": added,
@@ -497,9 +497,9 @@ async def append_upload(
     file: UploadFile = File(...),
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> dict:
-    await _ensure_novel_exists(conn, novel_id)
+    await ensure_novel_exists(conn, novel_id)
     decoded, source_type = await _decode_upload(file)
-    added, first, collision = await _append_parsed_chapters(conn, novel_id, decoded.text)
+    added, first, collision = await append_parsed_chapters(conn, novel_id, decoded.text)
     return {
         "novel_id": novel_id,
         "added_chapters": added,
@@ -526,7 +526,7 @@ async def translate_bulk(
     )
     if not parsed:
         raise HTTPException(status_code=400, detail="all files were empty")
-    # Bulk path bypasses _create_novel_and_chapters (no big-text parse),
+    # Bulk path bypasses create_novel_and_chapters (no big-text parse),
     # so detect source_language here from the first file's chapter text
     # before INSERTing the novel row.
     from backend.services.import_runner import insert_chapters_incrementally  # noqa: PLC0415
@@ -562,7 +562,7 @@ async def append_bulk(
 ) -> dict:
     """Append N raw files as chapters to an existing novel. Same rules as /bulk."""
     _, files, _ = await _parse_bulk_form(request, require_title=False)
-    await _ensure_novel_exists(conn, novel_id)
+    await ensure_novel_exists(conn, novel_id)
     # Decode files OUTSIDE the write transaction so a many-thousand-file batch
     # doesn't hold the SQLite write lock for the duration of file I/O.
     parsed, skipped, skipped_nonchapter, encodings = await _files_to_chapters(
@@ -570,7 +570,7 @@ async def append_bulk(
     )
     if not parsed:
         raise HTTPException(status_code=400, detail="all files were empty")
-    first_new, collision = await _append_with_offset(conn, novel_id, parsed)
+    first_new, collision = await append_with_offset(conn, novel_id, parsed)
     return {
         "novel_id": novel_id,
         "added_chapters": len(parsed),
@@ -658,7 +658,7 @@ async def _files_to_chapters(
     total_bytes = 0
     for f in files:
         _assert_txt_filename(f.filename)
-        result = await _read_bulk_file(f)
+        result = await read_bulk_file(f)
         if result is None:
             skipped += 1
             continue

@@ -5,19 +5,24 @@ Pure machinery — no FastAPI routing, no multipart parsing. The route layer
 calls into here for the byte-level encoding detection and the transactional
 novel / chapter inserts.
 
+Names without a leading underscore (`read_text_file`, `decode_docx`,
+`create_novel_and_chapters`, `create_novel_skeleton`, …) are the public
+surface consumed by `routes/translate.py` and `services/import_runner.py`.
+Leading-underscore names are module-internal and not imported elsewhere.
+
 Three groups live here:
 
 - **Encoding detection** (`_score_decode`, `_decode_with_fallback`,
-  `_strip_bom`, `_read_text_file`, `_read_bulk_file`) — scored CJK-density
+  `_strip_bom`, `read_text_file`, `read_bulk_file`) — scored CJK-density
   decoding that closes the chardet-misdetects-windows-1252 trap.
 
 - **Atomic create** (`_insert_novel_row`, `_insert_parsed_chapters`,
-  `atomic_create_novel`, `_create_novel_and_chapters`) — novel + chapter
+  `atomic_create_novel`, `create_novel_and_chapters`) — novel + chapter
   rows committed in a single BEGIN IMMEDIATE transaction so a crash can't
   leave an orphan novel.
 
-- **Atomic append** (`_ensure_novel_exists`, `_max_chapter_num`,
-  `_append_parsed_chapters`, `_append_with_offset`) — appends parsed
+- **Atomic append** (`ensure_novel_exists`, `_max_chapter_num`,
+  `append_parsed_chapters`, `append_with_offset`) — appends parsed
   chapters either at their printed numbers (when they fit above the existing
   max) or shifted by MAX(chapter_num), inside one write transaction.
 """
@@ -178,7 +183,7 @@ def _strip_bom(text: str) -> str:
     return text
 
 
-async def _read_text_file(file: UploadFile) -> tuple[str, str]:
+async def read_text_file(file: UploadFile) -> tuple[str, str]:
     """Read an UploadFile, enforce MAX_UPLOAD_BYTES, detect encoding via chardet
     (with confidence-aware fallback), and return (decoded_text, encoding).
     Raises 413 on oversize, 400 on empty."""
@@ -229,7 +234,7 @@ class DecodedDoc:
     pre_parsed_chapters: list[ParsedChapter] | None = None
 
 
-def _ext_from_filename(filename: str | None) -> str:
+def ext_from_filename(filename: str | None) -> str:
     """Lowercase extension without dot, or '' if missing. Used by the upload
     dispatcher; lives here so the test path can call it directly."""
     if not filename:
@@ -247,7 +252,7 @@ def _enforce_upload_size(raw_len: int, filename: str | None) -> None:
         )
 
 
-async def _decode_html(file: UploadFile) -> DecodedDoc:
+async def decode_html(file: UploadFile) -> DecodedDoc:
     """Run trafilatura over a raw .html upload to recover narrative body text.
     Mirrors the post-fetch step of `services.scraper.scrape_url`, just sourced
     from upload bytes instead of an HTTP response. Lazy-imports trafilatura to
@@ -319,7 +324,7 @@ def _docx_is_heading_1(style_name: str) -> bool:
     return s in _DOCX_HEADING_1_STYLES
 
 
-async def _decode_docx(file: UploadFile) -> DecodedDoc:
+async def decode_docx(file: UploadFile) -> DecodedDoc:
     """Extract paragraph text from a .docx.
 
     2026-05-25 (F07): if the document has ≥_DOCX_HEADING_MIN_CHAPTERS
@@ -729,7 +734,7 @@ def _epub_extract_spine_chapters(book) -> list[ParsedChapter] | None:
     return chapters
 
 
-async def _decode_epub(file: UploadFile) -> DecodedDoc:
+async def decode_epub(file: UploadFile) -> DecodedDoc:
     """Parse an EPUB upload via ebooklib. Returns paragraph-joined text and,
     when the EPUB ships a cover image, the cover bytes + extension so the
     upload route can write it via the cover-storage helper.
@@ -779,8 +784,8 @@ async def _decode_epub(file: UploadFile) -> DecodedDoc:
     )
 
 
-async def _read_bulk_file(file: UploadFile) -> tuple[str, str, int] | None:
-    """Variant of _read_text_file for bulk upload: oversize raises (whole batch
+async def read_bulk_file(file: UploadFile) -> tuple[str, str, int] | None:
+    """Variant of read_text_file for bulk upload: oversize raises (whole batch
     fails), but empty files are skipped (returns None) instead of erroring.
     Returns (decoded_text, encoding, raw_byte_size) so the caller can both
     aggregate detected encodings AND enforce the aggregate-bytes cap. The
@@ -961,7 +966,7 @@ async def atomic_create_novel(
     except Exception:
         # Exception (not BaseException) so signal-driven shutdown propagates
         # immediately without a cooperative rollback round-trip — see the
-        # matching comment in _append_with_offset.
+        # matching comment in append_with_offset.
         await conn.rollback()
         raise
     return novel_id
@@ -992,7 +997,7 @@ class PlannedChapter:
     source_url: str
 
 
-async def _create_novel_skeleton(
+async def create_novel_skeleton(
     conn: aiosqlite.Connection,
     title: str,
     planned: list[PlannedChapter],
@@ -1011,7 +1016,7 @@ async def _create_novel_skeleton(
     - `status = 'pending'` (same as a normal pre-translation chapter).
     - `import_source_url = planned.source_url` — what the runner re-fetches.
     - `import_fetched_at = NULL` — flipped to datetime('now') by
-      _fill_skeleton_chapter on a successful commit.
+      fill_skeleton_chapter on a successful commit.
 
     The partial index `idx_chapters_import_pending` makes the runner's
     resume query O(pending) regardless of novel size."""
@@ -1055,7 +1060,7 @@ async def _create_novel_skeleton(
     return novel_id
 
 
-async def _fill_skeleton_chapter(
+async def fill_skeleton_chapter(
     conn: aiosqlite.Connection,
     chapter_id: int,
     *,
@@ -1080,7 +1085,7 @@ async def _fill_skeleton_chapter(
     return (cur.rowcount or 0) > 0
 
 
-async def _set_novel_import_status(
+async def set_novel_import_status(
     conn: aiosqlite.Connection, novel_id: int, status: str,
 ) -> None:
     """Flip novels.import_status. Valid values per the schema comment:
@@ -1094,7 +1099,7 @@ async def _set_novel_import_status(
     await conn.commit()
 
 
-async def _count_pending_skeletons(
+async def count_pending_skeletons(
     conn: aiosqlite.Connection, novel_id: int,
 ) -> int:
     """How many skeleton chapter rows still need a fetch. Read via the
@@ -1111,7 +1116,7 @@ async def _count_pending_skeletons(
     return int(row[0] if row else 0)
 
 
-async def _create_novel_and_chapters(
+async def create_novel_and_chapters(
     conn: aiosqlite.Connection,
     title: str,
     text: str,
@@ -1145,7 +1150,7 @@ async def _create_novel_and_chapters(
     return novel_id, first_chapter
 
 
-async def _ensure_novel_exists(
+async def ensure_novel_exists(
     conn: aiosqlite.Connection, novel_id: int
 ) -> aiosqlite.Row:
     cur = await conn.execute(
@@ -1167,20 +1172,20 @@ async def _max_chapter_num(conn: aiosqlite.Connection, novel_id: int) -> int:
     return int(row["m"]) if row else 0
 
 
-async def _append_parsed_chapters(
+async def append_parsed_chapters(
     conn: aiosqlite.Connection, novel_id: int, text: str
 ) -> tuple[int, int, bool]:
     """Parse text into chapters and append them after the current max chapter_num.
     Returns (added_count, first_new_chapter_num, chapter_num_collision).
-    See _append_with_offset for the collision flag semantics."""
+    See append_with_offset for the collision flag semantics."""
     chapters = parse_chapters(text)
     if not chapters:
         raise HTTPException(status_code=400, detail="no chapters parsed from input")
-    first_new, collision = await _append_with_offset(conn, novel_id, chapters)
+    first_new, collision = await append_with_offset(conn, novel_id, chapters)
     return len(chapters), first_new, collision
 
 
-async def _append_with_offset(
+async def append_with_offset(
     conn: aiosqlite.Connection,
     novel_id: int,
     chapters: list[ParsedChapter],
