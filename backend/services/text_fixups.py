@@ -90,6 +90,57 @@ def enforce_em_dash(text: str) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Spaced-hyphen-as-dash enforcement
+# ---------------------------------------------------------------------------
+
+# A single ASCII hyphen flanked by spaces, used as a clause / sentence dash
+# ("a True Person - ruthless and black-hearted"). The model reaches for this
+# when it is told to avoid the em-dash glyph, so enforce_em_dash never sees it.
+# `(?<=\S)` / `(?=\S)` require a non-space on both outer sides, which excludes
+# `well-known` (no flanking spaces) and a Markdown bullet (the line-start `-`
+# has a newline, a \s char, before its leading space, so the lookbehind fails).
+_SPACED_HYPHEN_RE = re.compile(r"(?<=\S) +- +(?=\S)")
+
+
+def _is_numeric_range(text: str, start: int, end: int) -> bool:
+    """True when the spaced hyphen at text[start:end] joins two numbers
+    ("1 - 2", "Chapter 3 - 4", "10 - 20 cultivators"): a range, not a clause
+    dash. `start` indexes the first flanking space (the char at start-1 is the
+    non-space from the lookbehind); `end` indexes the first char after the
+    trailing spaces (the lookahead char)."""
+    before = text[start - 1] if start - 1 >= 0 else ""
+    after = text[end] if end < len(text) else ""
+    return before.isdigit() and after.isdigit()
+
+
+def enforce_spaced_hyphen_dash(text: str) -> tuple[str, int]:
+    """Replace a space-flanked ASCII hyphen used as a clause / sentence dash
+    with comma-space or period-space, the same policy `enforce_em_dash` applies
+    to the em-dash glyph. Completes the dash-enforcement layer: `enforce_em_dash`
+    owns the long-dash glyphs, this owns the ` - ` the model substitutes for
+    them when told to avoid the glyph.
+
+    Skipped: numeric ranges ("1 - 2"), cut-off speech before a closing quote,
+    and (excluded by the regex itself) Markdown bullets and `well-known`
+    compounds. Returns (rewritten_text, count). Idempotent."""
+    count = 0
+    matches = list(_SPACED_HYPHEN_RE.finditer(text))
+    out = text
+    for m in reversed(matches):
+        start, end = m.start(), m.end()
+        if _is_numeric_range(out, start, end):
+            continue
+        if _is_cutoff(out, end):
+            continue
+        repl = _pick_replacement(out, start, end)
+        # The match spans the flanking spaces (" - "); replacing the whole span
+        # with the chosen ", " / ". " token leaves exactly one trailing space.
+        out = out[:start] + repl + out[end:]
+        count += 1
+    return out, count
+
+
+# ---------------------------------------------------------------------------
 # Bracket enforcement
 # ---------------------------------------------------------------------------
 

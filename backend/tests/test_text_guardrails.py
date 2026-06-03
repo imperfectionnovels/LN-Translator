@@ -25,8 +25,10 @@ from backend.services.text_fixups import (
     enforce_brackets,
     enforce_em_dash,
     enforce_locked_term_casing,
+    enforce_spaced_hyphen_dash,
     enforce_stem_branch_casing,
 )
+from backend.services.text_fixups import _is_numeric_range
 from backend.services.text_observers import (
     detect_double_possessive,
     detect_glossary_predicate_loss,
@@ -247,6 +249,86 @@ def test_em_dash_idempotent_on_clean_text():
     out, count = enforce_em_dash(text)
     assert out == text
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# enforce_spaced_hyphen_dash
+# ---------------------------------------------------------------------------
+
+
+def test_spaced_hyphen_mid_clause_becomes_comma():
+    text = "He was a True Person - ruthless and black-hearted."
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert " - " not in out
+    assert "True Person, ruthless" in out
+    assert "black-hearted" in out  # real compound untouched
+    assert count == 1
+
+
+def test_spaced_hyphen_before_uppercase_becomes_period():
+    text = "He hesitated - Then he struck."
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert " - " not in out
+    assert "hesitated. Then" in out
+    assert count == 1
+
+
+def test_spaced_hyphen_numeric_range_preserved():
+    text = "pages 1 - 2 were torn out"
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_spaced_hyphen_numeric_range_multi_digit_preserved():
+    text = "10 - 20 cultivators had gathered"
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_spaced_hyphen_compound_not_touched():
+    text = "a well-known black-hearted man"
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_spaced_hyphen_markdown_bullet_not_touched():
+    text = "Notes:\n - first item\n - second item"
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_spaced_hyphen_multiple_in_text_all_handled():
+    text = "Natal Divine Ability - a broad golden bridge - it lifted him."
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert " - " not in out
+    assert count == 2
+
+
+def test_spaced_hyphen_idempotent_on_clean_text():
+    text = "He was ruthless, black-hearted, and patient."
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_spaced_hyphen_empty_string():
+    out, count = enforce_spaced_hyphen_dash("")
+    assert out == ""
+    assert count == 0
+
+
+def test_is_numeric_range_helper():
+    # "3 - 4": start indexes the first flanking space, char at start-1 is "3".
+    text = "3 - 4"
+    assert _is_numeric_range(text, 1, 4) is True
+    text2 = "Person - ruthless"
+    # the spaced hyphen here is not a numeric range
+    out, count = enforce_spaced_hyphen_dash(text2)
+    assert count == 1
 
 
 # ---------------------------------------------------------------------------
