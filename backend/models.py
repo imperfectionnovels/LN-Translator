@@ -254,6 +254,19 @@ class ChapterSummary(BaseModel):
     status: Status
     translate_queued: bool = False
 
+    @classmethod
+    def from_row(cls, r) -> "ChapterSummary":
+        """Build from a chapters row (aiosqlite.Row / mapping). Centralizes the
+        row->summary mapping so a column rename or added field lands in one
+        place rather than in each route that lists chapters."""
+        return cls(
+            chapter_num=r["chapter_num"],
+            title_zh=r["title_zh"],
+            title_en=r["title_en"],
+            status=r["status"],
+            translate_queued=bool(r["translate_queued"]),
+        )
+
 
 class CandidateTerm(BaseModel):
     """One pre-flight glossary-saturation candidate: a CN run that recurs in

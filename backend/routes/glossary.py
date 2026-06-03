@@ -376,16 +376,7 @@ async def affected_chapters(
     # Populate translate_queued so the UI accurately reflects whether a
     # chapter is already in the queue. Without this, the affected-chapters
     # list reads every row as "not queued" and the user re-queues duplicates.
-    return [
-        ChapterSummary(
-            chapter_num=r["chapter_num"],
-            title_zh=r["title_zh"],
-            title_en=r["title_en"],
-            status=r["status"],
-            translate_queued=bool(r["translate_queued"]),
-        )
-        for r in rows
-    ]
+    return [ChapterSummary.from_row(r) for r in rows]
 
 
 @router.post("/glossary/{entry_id}/retranslate-affected")

@@ -33,16 +33,7 @@ async def list_chapters(
         (novel_id,),
     )
     rows = await cur.fetchall()
-    return [
-        ChapterSummary(
-            chapter_num=r["chapter_num"],
-            title_zh=r["title_zh"],
-            title_en=r["title_en"],
-            status=r["status"],
-            translate_queued=bool(r["translate_queued"]),
-        )
-        for r in rows
-    ]
+    return [ChapterSummary.from_row(r) for r in rows]
 
 
 @router.get("/novels/{novel_id}/chapters/{chapter_num}")
