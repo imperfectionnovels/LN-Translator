@@ -123,7 +123,7 @@ Grouped by the catalog's `group` field:
 - **Subscription** (no API key, vendor CLI handles auth out-of-band):
   - `codex_cli` — OpenAI Codex CLI, drives a ChatGPT Plus / Pro / Team
     subscription. Install with `npm i -g @openai/codex`, then `codex login`.
-    Curated models: `gpt-5`, `gpt-5-codex`, `o3`.
+    Curated models: `gpt-5.5`, `gpt-5`, `gpt-5-codex`, `o3`.
   - `gemini_cli` — Google Gemini CLI, drives a Google account (free tier +
     Gemini Advanced). Install with `npm i -g @google/gemini-cli`, then run
     `gemini` once to OAuth.

@@ -65,7 +65,7 @@ Key facts:
 - **Glossary-context observers (Phase 3)** flag prose patterns around locked
   terms: double-possessive pileups, intensifier inflation
   (`detect_intensifier_inflation_on_glossary_term`), predicate loss across
-  14 verb groups (`_PREDICATE_GROUPS`), malformed cultivation-noun stacks,
+  13 verb groups (`_PREDICATE_GROUPS`), malformed cultivation-noun stacks,
   mid-sentence paragraph breaks. Observers LOG only; the single-pass thesis
   is that noticing has to happen inside the translator's thinking phase.
 

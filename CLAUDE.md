@@ -73,12 +73,12 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │       ├── base.py            # BaseTranslator, build_prompt, parse_delimited_response, build_system_instruction(genre, custom_brief)
 │   │       ├── factory.py         # get_translator(provider) routes by provider_type; translator_factory() = legacy startup-probe shim
 │   │       ├── claude_agent.py    # Claude Agent SDK (subscription auth)
-│   │       ├── claude_cli.py      # claude subprocess wrapper
+│   │       ├── claude_cli.py, _claude_errors.py  # claude subprocess wrapper + Claude SDK error classification (claude_agent/claude_cli)
 │   │       ├── gemini.py          # Google Gemini API
 │   │       ├── deepseek.py        # OpenAI-compatible single-pass translator (delimited envelope)
 │   │       ├── openai_compatible.py, _openai_errors.py  # shared OpenAI-SDK base + transient-retry helper (openai/xai/mistral/qwen/zhipu/moonshot/groq/openrouter/ollama subclasses)
 │   │       ├── anthropic_api.py, google_translate_free.py  # Anthropic API + free Google-Translate NMT backends
-│   │       └── _subprocess_utils.py  # shared run_subprocess/resolve_binary for CLI backends (codex_cli/gemini_cli/opencode)
+│   │       └── _subprocess_utils.py, _cli_base.py  # shared subprocess plumbing (run_subprocess/resolve_binary) + SubprocessCliTranslator base for CLI backends (codex_cli/gemini_cli/opencode)
 │   ├── prompts/                   # genre-aware prompt hierarchy (ships in the EXE bundle)
 │   │   ├── base.md                # genre-agnostic literary translator core
 │   │   ├── genres/<key>.md        # 10 overlays: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl (+ generic as legacy fallback)
@@ -235,7 +235,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 950 tests.
+- `pytest backend/tests`. Currently 1065 tests.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 
