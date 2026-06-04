@@ -145,6 +145,43 @@ if (!VALID_SOURCES.includes(translationSource)) translationSource = "polished";
 let lastChapter = null;
 applyDual();
 
+// Page-turn transition (2026-06). `_pendingTurnDir` is stashed inside
+// loadChapter's chapter-change guard (where currentCh still holds the OLD
+// chapter) and consumed by renderChapterBody, so the animation plays on the
+// real body, not the "Loading..." placeholder. Preference: off | fade | shift.
+const PAGE_TURN_KEY = "readerPageTurn";
+const _PAGE_TURN_FALLBACK_MS = 650;
+let _pendingTurnDir = null;
+let _pageTurnTimer = 0;
+function _pageTurnPref() {
+  const v = localStorage.getItem(PAGE_TURN_KEY);
+  return (v === "off" || v === "fade" || v === "shift") ? v : "shift";
+}
+function _playPageTurn(direction) {
+  const grid = document.getElementById("dual-grid");
+  if (!grid) return;
+  const pref = _pageTurnPref();
+  if (pref === "off") return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const cls = pref === "fade" ? "turning-fade" : (direction === "prev" ? "turning-prev" : "turning-next");
+  // Clear any in-flight turn first so a fast next/next can't leave two classes
+  // or a parked element, then force a reflow so re-adding restarts the keyframe.
+  grid.classList.remove("turning-fade", "turning-next", "turning-prev");
+  if (_pageTurnTimer) { clearTimeout(_pageTurnTimer); _pageTurnTimer = 0; }
+  void grid.offsetWidth;
+  grid.classList.add(cls);
+  const clear = () => {
+    grid.classList.remove("turning-fade", "turning-next", "turning-prev");
+    grid.removeEventListener("animationend", clear);
+    if (_pageTurnTimer) { clearTimeout(_pageTurnTimer); _pageTurnTimer = 0; }
+  };
+  grid.addEventListener("animationend", clear);
+  // Fallback: animation-fill-mode:both parks the grid at the hidden start-frame
+  // (opacity:0) if the keyframe never paints (tab backgrounded mid-turn); the
+  // timeout guarantees the resting state is always restored.
+  _pageTurnTimer = setTimeout(clear, _PAGE_TURN_FALLBACK_MS);
+}
+
 let chaptersCache = [];
 let glossaryCache = [];
 let novelMeta = null;
@@ -307,6 +344,13 @@ function applyDual() {
   // In bilingual the ZH pane shows; Classic collapses to single-column.
   paneZh.classList.toggle("hidden", !dualMode);
   paneEnLabel.classList.toggle("hidden", !dualMode);
+  // Classic (single column) can't host the edit-mode aligned grid; clear it so
+  // a stale aligned layout can't survive the switch before the re-render paints.
+  if (!dualMode) {
+    stage.dataset.aligned = "off";
+    const alignedEl = document.getElementById("aligned-body");
+    if (alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
+  }
   toggleDual.querySelectorAll("button").forEach(b => {
     const active = b.dataset.mode === viewMode;
     b.classList.toggle("on", active);
@@ -459,13 +503,12 @@ function setReaderMode(next) {
   readerMode = next;
   localStorage.setItem(READER_MODE_KEY, readerMode);
   _applyReaderMode();
-  // Re-render the chapter body unconditionally — even if viewMode didn't
-  // flip, the term-highlight gate depends on readerMode, so the rendered
-  // DOM differs between read and edit. sourceChanged ALSO forces a
-  // re-render because _displayedEnglish picks a different body — and that
-  // matters even when viewModeChanged is also true (applyDual only flips
-  // CSS, not body innerHTML).
-  if (lastChapter && (!viewModeChanged || sourceChanged)) {
+  // Re-render the chapter body unconditionally on a reader-mode change. The
+  // rendered DOM differs between read and edit (term-highlight gate, and the
+  // edit-mode paragraph-aligned grid), and applyDual only flips CSS (never body
+  // innerHTML), so even a forced viewMode flip still needs this render to
+  // rebuild the body / aligned grid for the new mode.
+  if (lastChapter) {
     renderChapterBody(lastChapter);
   }
 }
@@ -1113,6 +1156,57 @@ function renderEnglishMarkdownWithTerms(text, pattern) {
   }).join("");
 }
 
+/* ---- Edit-mode paragraph-aligned grid (2026-06) ----
+ * Pairs each source paragraph with its translation paragraph in shared rows so
+ * a translator can compare and rewrite line by line. Active only in edit mode
+ * (see renderChapterBody). The translator merges / splits paragraphs and emits
+ * no alignment data, so this is best-effort: positional pairing, the longer
+ * side's tail becomes continuation rows (no content is dropped), and when the
+ * counts diverge past ALIGN_DIVERGENCE the layout falls back to the independent
+ * panes (where editing always works). */
+const ALIGN_DIVERGENCE = 0.25;
+
+function _splitSourceParas(zhText, pattern) {
+  // Reuse the exact splitter the legacy ZH pane uses so the source cells match
+  // it (and the count is comparable to the EN block count).
+  const tmp = document.createElement("div");
+  tmp.innerHTML = renderParagraphsWithTerms(zhText, "zh", pattern);
+  return Array.from(tmp.children).map(el => el.outerHTML);
+}
+
+function _splitEnglishBlocks(enHtml) {
+  // enHtml is the already-rendered + DOMPurify-sanitized #body-en markup. Take
+  // its top-level block elements (<p>, <h2>, <blockquote>, ...) as the
+  // translation cells, so .tgt is identical to what the legacy pane shows.
+  const tmp = document.createElement("div");
+  tmp.innerHTML = enHtml;
+  const blocks = [];
+  tmp.childNodes.forEach(node => {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      blocks.push(node.outerHTML);
+    } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+      blocks.push(`<p>${escapeHtml(node.textContent.trim())}</p>`);
+    }
+  });
+  return blocks;
+}
+
+function _buildAlignedRows(zhText, enHtml, pattern) {
+  const zCells = _splitSourceParas(zhText, pattern);
+  const eCells = _splitEnglishBlocks(enHtml);
+  const zN = zCells.length, eN = eCells.length;
+  if (zN === 0 || eN === 0) return null;
+  if (Math.abs(zN - eN) / Math.max(zN, eN) > ALIGN_DIVERGENCE) return null;
+  const n = Math.max(zN, eN);
+  let out = "";
+  for (let i = 0; i < n; i++) {
+    const src = i < zN ? zCells[i] : "";
+    const tgt = i < eN ? eCells[i] : "";
+    out += `<div class="prow"><div class="src" lang="zh">${src}</div><div class="tgt">${tgt}</div></div>`;
+  }
+  return out;
+}
+
 /* ---- Selection popover ---- */
 const glossaryMiniDialog = document.getElementById("glossary-mini-dialog");
 // Clean up the form reference when the dialog is closed by any means
@@ -1167,9 +1261,15 @@ function showPopoverForSelection() {
   const text = sel.toString().trim();
   if (!text || text.length > 60) return;
   const range = sel.getRangeAt(0);
-  // Only react if the selection is inside the reader pane.
-  if (!bodyEn.contains(range.commonAncestorContainer) && !bodyZh.contains(range.commonAncestorContainer)) return;
-  const inZh = bodyZh.contains(range.commonAncestorContainer);
+  // Only react if the selection is inside the reader pane. In the edit-mode
+  // aligned grid the panes are #aligned-body's .src (Chinese) / .tgt (English)
+  // cells; in the legacy layout they are #body-zh / #body-en.
+  const node = range.commonAncestorContainer;
+  const el = node.nodeType === 1 ? node : node.parentElement;
+  const alignedEl = document.getElementById("aligned-body");
+  const inAligned = !!(alignedEl && alignedEl.contains(node));
+  if (!bodyEn.contains(node) && !bodyZh.contains(node) && !inAligned) return;
+  const inZh = inAligned ? !!(el && el.closest(".src")) : bodyZh.contains(node);
   const rect = range.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return;
 
@@ -1470,6 +1570,15 @@ function _handleTermClick(ev, side) {
 
 bodyEn.addEventListener("click", (ev) => _handleTermClick(ev, "en"));
 bodyZh.addEventListener("click", (ev) => _handleTermClick(ev, "zh"));
+// Aligned grid (edit mode): terms live in .tgt (English) / .src (Chinese) cells.
+const _alignedClickHost = document.getElementById("aligned-body");
+if (_alignedClickHost) {
+  _alignedClickHost.addEventListener("click", (ev) => {
+    const cell = ev.target.closest(".tgt, .src");
+    if (!cell) return;
+    _handleTermClick(ev, cell.classList.contains("src") ? "zh" : "en");
+  });
+}
 
 // Outside-click dismiss for the term-edit popover. Matches the
 // mousedown handler the selection popover already uses; kept as a
@@ -1827,7 +1936,8 @@ document.addEventListener("selectionchange", () => {
   let active = false;
   if (sel && !sel.isCollapsed && sel.toString().trim().length > 0 && sel.rangeCount > 0) {
     const node = sel.getRangeAt(0).commonAncestorContainer;
-    if (bodyEn.contains(node) || bodyZh.contains(node)) active = true;
+    const alignedEl = document.getElementById("aligned-body");
+    if (bodyEn.contains(node) || bodyZh.contains(node) || (alignedEl && alignedEl.contains(node))) active = true;
   }
   document.body.classList.toggle("has-selection", active);
 });
@@ -2170,6 +2280,7 @@ async function loadChapter(num) {
       _persistCurrentScroll();
       _ignoreScrollFor(400);
       window.scrollTo(0, 0);
+      _pendingTurnDir = num > currentCh ? "next" : "prev";
     }
     currentCh = num;
     persistReadingPosition(num);
@@ -2221,6 +2332,7 @@ async function loadChapter(num) {
     // save of y=0 for the new chapter — suppress for the next 400ms.
     _ignoreScrollFor(400);
     window.scrollTo(0, 0);
+    _pendingTurnDir = num > currentCh ? "next" : "prev";
   }
   currentCh = num;
   persistReadingPosition(num);
@@ -2695,6 +2807,10 @@ function renderCockpit(ch, num, zhDetailsHtml) {
 }
 
 function renderChapterBody(ch) {
+  // Page-turn: play the stashed direction now that the real body paints (the
+  // stash was set in loadChapter's chapter-change guard). Same-chapter poll
+  // re-renders don't set it, so they don't animate.
+  if (_pendingTurnDir) { _playPageTurn(_pendingTurnDir); _pendingTurnDir = null; }
   // Glossary-term highlights are an edit-mode affordance. In read mode
   // the chapter renders as clean prose — the dotted underlines + hover
   // pills clutter a relaxed read. The cockpit's own raw preview still
@@ -2722,6 +2838,23 @@ function renderChapterBody(ch) {
   const enSource = _displayedEnglish(ch);
   bodyEn.innerHTML = renderEnglishMarkdownWithTerms(enSource, pattern);
   bodyZh.innerHTML = renderParagraphsWithTerms(ch.original_text || "", "zh", pattern);
+  // Feature B: edit-mode paragraph-aligned grid. Pair source + translation
+  // paragraphs into shared rows so editing lines up against the source. Keep
+  // the legacy bodies populated (above) as the fallback + read-mode surface;
+  // _buildAlignedRows returns null (so we stay on the legacy panes) in read
+  // mode, single column, or when the counts diverge too far to align.
+  const alignedEl = document.getElementById("aligned-body");
+  let aligned = false;
+  if (readerMode === "edit" && alignedEl) {
+    const rows = _buildAlignedRows(ch.original_text || "", bodyEn.innerHTML, pattern);
+    if (rows) {
+      alignedEl.innerHTML = rows;
+      alignedEl.hidden = false;
+      aligned = true;
+    }
+  }
+  if (!aligned && alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
+  stage.dataset.aligned = aligned ? "on" : "off";
   // F14 (2026-05-25): pre-render next chapter so Next click feels
   // instant. Only fires when the current chapter is done; pending /
   // translating chapters skip (no point cacheing what isn't ready).
@@ -3157,6 +3290,26 @@ function _stripGlossSpans(p) {
   });
 }
 
+// The active translation surface: the aligned grid (edit mode, when
+// renderChapterBody set data-aligned="on") or the legacy #body-en. The edit
+// machinery (contenteditable paragraphs, paragraph-index capture, scroll-to-
+// paragraph) routes through these so it works in both layouts.
+function _activeParaContainer() {
+  if (stage.dataset.aligned === "on") {
+    return document.getElementById("aligned-body") || bodyEn;
+  }
+  return bodyEn;
+}
+function _activeTgtParas() {
+  const c = _activeParaContainer();
+  // Aligned: the editable units are the <p>s inside .tgt cells only (never the
+  // .src Chinese cells). Legacy: the body's own <p>s. Both keep document order,
+  // so the Nth <p> maps to the Nth markdown chunk identically in either layout.
+  return c === bodyEn
+    ? Array.from(c.querySelectorAll("p"))
+    : Array.from(c.querySelectorAll(".prow > .tgt p"));
+}
+
 function _captureParagraphMeta(p) {
   // Compute and stash paragraph_index + before_md + chapter_num for this
   // <p>. Called on edit-mode entry and on focusin so the metadata is fresh
@@ -3166,7 +3319,7 @@ function _captureParagraphMeta(p) {
   const col = _editColumn(variant);
   const body = lastChapter[col] || "";
   const chunks = body.split("\n\n");
-  const allPs = Array.from(bodyEn.querySelectorAll("p"));
+  const allPs = _activeTgtParas();
   const idx = allPs.indexOf(p);
   if (idx < 0 || idx >= chunks.length) return;
   p.dataset.chapterNum = String(currentCh);
@@ -3178,9 +3331,14 @@ function _captureParagraphMeta(p) {
 function applyEditMode() {
   editBtn?.classList.toggle("on", editMode);
   editBtn?.setAttribute("aria-pressed", editMode ? "true" : "false");
-  bodyEn.classList.toggle("edit-mode", editMode);
+  // Clear the edit-mode flag from both possible surfaces so a stale class can't
+  // survive a layout switch, then set it on the active one.
+  bodyEn.classList.remove("edit-mode");
+  const alignedEl = document.getElementById("aligned-body");
+  if (alignedEl) alignedEl.classList.remove("edit-mode");
   if (editMode) {
-    bodyEn.querySelectorAll("p").forEach(p => {
+    _activeParaContainer().classList.add("edit-mode");
+    _activeTgtParas().forEach(p => {
       p.setAttribute("contenteditable", "true");
       _stripGlossSpans(p);
       _captureParagraphMeta(p);
@@ -3188,7 +3346,7 @@ function applyEditMode() {
   } else {
     // Re-render the whole chapter body so glossary highlights come back
     // and any pre-edit markdown is reflected. The contenteditable / dataset
-    // attributes vanish naturally when bodyEn.innerHTML is replaced.
+    // attributes vanish naturally when the body (or aligned grid) is rebuilt.
     if (lastChapter) renderChapterBody(lastChapter);
   }
 }
@@ -3234,11 +3392,16 @@ editBtn?.addEventListener("click", () => {
   }
 });
 
+// Bind the edit listeners to #pane-en (the common ancestor of #body-en and the
+// aligned #aligned-body) so per-paragraph editing works in both layouts. The
+// closest("p"...) guards keep them scoped to editable paragraphs only.
+const _editHost = document.getElementById("pane-en") || bodyEn;
+
 // Re-capture metadata on focus so a paragraph that becomes editable after a
 // re-render (or that was previously the saved-flash target) carries the
 // current chunk text and index. focusin bubbles; blur (capture phase) is
 // what we use for the save trigger below.
-bodyEn.addEventListener("focusin", (e) => {
+_editHost.addEventListener("focusin", (e) => {
   if (!editMode) return;
   const p = e.target.closest("p[contenteditable='true']");
   if (!p) return;
@@ -3249,7 +3412,7 @@ bodyEn.addEventListener("focusin", (e) => {
   if (!p.dataset.beforeMd) _captureParagraphMeta(p);
 });
 
-bodyEn.addEventListener("blur", async (e) => {
+_editHost.addEventListener("blur", async (e) => {
   // Intentionally NOT gated on `editMode`. When the user exits edit mode or
   // navigates away mid-edit, the focused paragraph loses focus and we still
   // want to flush the pending edit. The presence of data-before-md is the
@@ -3324,6 +3487,7 @@ const fsLhSlider = document.getElementById("fs-lh-slider");
 const fsBodyReadout = document.getElementById("fs-body-readout");
 const fsLhReadout = document.getElementById("fs-lh-readout");
 const focusModeToggle = document.getElementById("focus-mode-toggle");
+const pageTurnSelect = document.getElementById("page-turn-select");
 const DEFAULT_FS_BODY = 17;
 const DEFAULT_FS_LH = 1.75;
 function _currentFsBody() {
@@ -3348,6 +3512,7 @@ function openTypeSettings() {
   // Sync the focus-mode checkbox in case the attribute was changed elsewhere
   // (other tab, or initial bootstrap on first paint).
   if (focusModeToggle) focusModeToggle.checked = _isFocusModeOn();
+  if (pageTurnSelect) pageTurnSelect.value = _pageTurnPref();
   _syncTypeReadouts();
   typeDlg.showModal();
 }
@@ -3357,13 +3522,18 @@ document.getElementById("type-settings-reset")?.addEventListener("click", () => 
   localStorage.removeItem("readerFsBody");
   localStorage.removeItem("readerFsLh");
   localStorage.removeItem("readerFocusMode");
+  localStorage.removeItem(PAGE_TURN_KEY);
   document.documentElement.style.removeProperty("--fs-body");
   document.documentElement.style.removeProperty("--fs-body-lh");
   document.documentElement.removeAttribute("data-focus-mode");
   if (fsBodySlider) fsBodySlider.value = String(DEFAULT_FS_BODY);
   if (fsLhSlider) fsLhSlider.value = String(DEFAULT_FS_LH);
   if (focusModeToggle) focusModeToggle.checked = false;
+  if (pageTurnSelect) pageTurnSelect.value = "shift";
   _syncTypeReadouts();
+});
+pageTurnSelect?.addEventListener("change", () => {
+  localStorage.setItem(PAGE_TURN_KEY, pageTurnSelect.value);
 });
 fsBodySlider?.addEventListener("input", () => {
   const v = parseFloat(fsBodySlider.value);
@@ -3776,14 +3946,25 @@ let _bookmarksCache = []; // last fetched list for the novel
 // topmost paragraph currently in the viewport.
 let _pendingBookmarkParagraph = null;
 
-function _currentTopParagraphIndex() {
-  // The displayed body lives at #body-en; its direct children are <p>
-  // elements indexed 0..N-1. Find the first one whose bounding rect's
-  // bottom is below the chapter-bar (so partially-visible top paragraphs
-  // don't get skipped).
+// Scroll units for the active layout, used as the bookmark/concordance index
+// space. Legacy/read: #body-en's direct <p> children. Edit-mode aligned grid:
+// the .prow rows (one per paragraph pair). Capture and jump both read this, so
+// they stay consistent within a layout; cross-layout jumps can drift by a row
+// or two on heading/quote-heavy chapters, which only shifts the smooth-scroll
+// landing slightly.
+function _activeScrollUnits() {
+  if (stage.dataset.aligned === "on") {
+    const a = document.getElementById("aligned-body");
+    return a ? Array.from(a.querySelectorAll(".prow")) : [];
+  }
   const body = document.getElementById("body-en");
-  if (!body) return null;
-  const paras = Array.from(body.children).filter(el => el.tagName === "P");
+  return body ? Array.from(body.children).filter(el => el.tagName === "P") : [];
+}
+
+function _currentTopParagraphIndex() {
+  // Find the first scroll unit whose bounding rect's bottom is below the
+  // chapter-bar (so partially-visible top paragraphs don't get skipped).
+  const paras = _activeScrollUnits();
   if (!paras.length) return null;
   const bar = document.querySelector(".chapter-bar");
   const fold = bar ? bar.getBoundingClientRect().bottom + 8 : 0;
@@ -3855,9 +4036,7 @@ async function openBookmarksDialog() {
 
 function _scrollToParagraph(paraIndex) {
   if (paraIndex == null) return;
-  const body = document.getElementById("body-en");
-  if (!body) return;
-  const paras = Array.from(body.children).filter(el => el.tagName === "P");
+  const paras = _activeScrollUnits();
   const target = paras[paraIndex];
   if (!target) return;
   // Suppress the synthetic scroll save so the user's existing saved scroll

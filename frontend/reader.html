@@ -203,6 +203,13 @@
               <button type="button" class="hint-dismiss" id="edit-mode-hint-dismiss" aria-label="Dismiss hint">×</button>
             </div>
             <div class="body" id="body-en"></div>
+            <!-- Edit-mode paragraph-aligned grid. Populated by reader.js
+                 (renderChapterBody) only when readerMode === "edit" and the
+                 source/translation paragraph counts track closely enough; each
+                 .prow pairs a source paragraph with its editable translation
+                 paragraph. Hidden (and #body-en shown) in read mode, single
+                 column, and when the counts diverge too far to align. -->
+            <div class="aligned-body" id="aligned-body" hidden></div>
 
             <div id="end-block" class="hidden">
             <div class="ornament"><span class="g">❖ ❖ ❖</span></div>
@@ -252,6 +259,15 @@
         <span class="focus-mode-hint muted">Hide utility buttons &amp; breadcrumbs while reading</span>
       </label>
       <input id="focus-mode-toggle" type="checkbox">
+      <label for="page-turn-select" class="focus-mode-row">
+        <span>Page turn</span>
+        <span class="focus-mode-hint muted">Animate the chapter change</span>
+      </label>
+      <select id="page-turn-select">
+        <option value="shift">Paper shift</option>
+        <option value="fade">Soft fade</option>
+        <option value="off">Off</option>
+      </select>
     </div>
     <div class="dialog-actions">
       <button type="button" class="btn-ghost" id="type-settings-reset">Reset</button>

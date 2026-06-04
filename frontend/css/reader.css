@@ -746,6 +746,64 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   .reader-stage[data-dual="on"] .dual-grid { grid-template-columns: 1fr; gap: 24px; }
 }
 
+/* ===== Edit-mode paragraph-aligned grid (2026-06) =====
+ * Active only in edit mode, when reader.js sets data-aligned="on" on the stage
+ * (see renderChapterBody). It collapses the dual-grid to one full-width column,
+ * hides the independent ZH pane and the legacy EN body, and shows #aligned-body
+ * whose .prow rows pair each source paragraph (.src) with its editable
+ * translation paragraph (.tgt). The masthead + end-block (inside #pane-en) stay
+ * full width above and below the rows. Read mode and single column never set
+ * data-aligned, so this whole block is inert there. */
+.aligned-body[hidden] { display: none; }
+.reader-stage[data-aligned="on"] .dual-grid { grid-template-columns: 1fr; }
+.reader-stage[data-aligned="on"] #pane-zh { display: none; }
+.reader-stage[data-aligned="on"] #body-en { display: none; }
+.reader-stage[data-aligned="on"] #aligned-body { display: block; }
+
+.aligned-body .prow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: start;
+}
+.aligned-body .src {
+  font-family: var(--font-family-han);
+  font-size: 17px;
+  line-height: 2;
+  color: var(--fg-soft);
+}
+.aligned-body .tgt {
+  font-family: var(--font-family-serif);
+  font-size: var(--fs-body, 17px);
+  line-height: var(--fs-body-lh, 1.75);
+}
+.aligned-body .src p { margin: 0 0 1em; }
+.aligned-body .tgt p { margin: 0 0 0.85em; text-wrap: pretty; }
+.aligned-body .tgt strong { font-weight: 700; }
+.aligned-body .tgt em { font-style: italic; }
+
+/* Editing chrome on the aligned translation cells, mirroring .body.edit-mode p
+ * so contenteditable paragraphs feel identical in the aligned layout. reader.js
+ * adds .edit-mode to #aligned-body (the active container) when the per-paragraph
+ * editor is on. */
+.aligned-body.edit-mode .tgt p {
+  outline: 1px dashed transparent;
+  outline-offset: 4px;
+  border-radius: var(--r-sm);
+  transition: outline-color 0.15s;
+  cursor: text;
+}
+.aligned-body.edit-mode .tgt p:hover { outline-color: var(--border); }
+.aligned-body.edit-mode .tgt p:focus { outline-color: var(--accent, var(--fg)); }
+.aligned-body.edit-mode .tgt p.saving { opacity: 0.6; }
+.aligned-body.edit-mode .tgt p.saved-flash { background: rgba(60, 140, 75, 0.10); transition: background 0.6s; }
+.aligned-body.edit-mode .tgt p.save-failed { outline-color: #b14545; }
+
+@media (max-width: 1200px) {
+  .aligned-body .prow { grid-template-columns: 1fr; gap: 12px; }
+  .aligned-body .src { padding-bottom: 10px; border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
+}
+
 .pane-label {
   font-family: var(--font-family-sans);
   font-size: 11px;
@@ -1868,6 +1926,34 @@ body[data-reader-mode="read"] .util-menu-divider { display: none; }
   to   { transform: rotate(360deg); }
 }
 
+/* ===== Page-turn chapter transition (2026-06) =====
+ * Subtle paper-shift / fade played on the chapter body (#dual-grid wraps both
+ * panes + the masthead) when the chapter changes. Direction comes from the nav:
+ * `next` slides in from the right, `prev` from the left. Driven by reader.js
+ * `_playPageTurn`, which also clears the class on animationend + a timeout
+ * fallback. (`animation-fill-mode: both` would otherwise park the body at the
+ * hidden start-frame, opacity:0, if the keyframe never paints.) */
+@keyframes pt-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pt-shift {        /* forward / next */
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes pt-shift-back {   /* backward / prev */
+  from { opacity: 0; transform: translateX(-18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.dual-grid.turning-fade { animation: pt-fade 340ms var(--ease) both; }
+.dual-grid.turning-next { animation: pt-shift 360ms var(--ease) both; }
+.dual-grid.turning-prev { animation: pt-shift-back 360ms var(--ease) both; }
+@media (prefers-reduced-motion: reduce) {
+  .dual-grid.turning-fade,
+  .dual-grid.turning-next,
+  .dual-grid.turning-prev { animation: none; }
+}
+
 /* ===== Floating shortcuts (?) + type-settings (Aa) buttons ===== */
 .shortcuts-btn {
   position: fixed;
@@ -2038,6 +2124,11 @@ body[data-reader-mode="read"] .util-menu-divider { display: none; }
   /* In bilingual mode, stack ZH above EN — side-by-side wastes paper width. */
   .pane-zh.hidden { display: none !important; }
   .pane-zh, .pane-en { width: 100%; }
+
+  /* Edit-mode aligned grid: print the legacy stacked panes, not the rows. */
+  #aligned-body { display: none !important; }
+  .reader-stage[data-aligned="on"] #body-en,
+  .reader-stage[data-aligned="on"] #pane-zh { display: block !important; }
 
   .body, .ch-h1 { color: #000 !important; }
   .body { font-size: 12pt; line-height: 1.55; }
