@@ -50,6 +50,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    ScrapeError,
     extract_printed_num_cn,
 )
 
@@ -107,7 +108,6 @@ class PiaotianRecipe(BaseRecipe):
         fetch: Any,
         progress: ProgressFn = None,
     ) -> RecipePlan:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         if progress:
             await progress("fetching_overview", 0, 0)
@@ -198,7 +198,6 @@ class PiaotianRecipe(BaseRecipe):
         fetch: Any,
         recipe_state: dict,
     ) -> FetchedChapter:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         # Polite delay between fetches — caller-driven loop; we don't
         # know the position here, so the runner is responsible for

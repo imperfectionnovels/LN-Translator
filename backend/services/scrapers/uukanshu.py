@@ -42,6 +42,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    ScrapeError,
     extract_printed_num_cn,
 )
 
@@ -83,7 +84,6 @@ class UukanshuRecipe(BaseRecipe):
         fetch: Any,
         progress: ProgressFn = None,
     ) -> RecipePlan:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         if progress:
             await progress("fetching_overview", 0, 0)
@@ -165,7 +165,6 @@ class UukanshuRecipe(BaseRecipe):
         fetch: Any,
         recipe_state: dict,
     ) -> FetchedChapter:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         await asyncio.sleep(_CHAPTER_FETCH_INTERVAL)
         referer = recipe_state.get("referer") or planned.source_url

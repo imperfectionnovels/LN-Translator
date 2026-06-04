@@ -43,6 +43,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    ScrapeError,
     han_digits_to_int,
 )
 
@@ -95,7 +96,6 @@ class SyosetuRecipe(BaseRecipe):
         fetch: Any,
         progress: ProgressFn = None,
     ) -> RecipePlan:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         if progress:
             await progress("fetching_overview", 0, 0)
@@ -201,7 +201,6 @@ class SyosetuRecipe(BaseRecipe):
         fetch: Any,
         recipe_state: dict,
     ) -> FetchedChapter:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         await asyncio.sleep(_CHAPTER_FETCH_INTERVAL)
         try:

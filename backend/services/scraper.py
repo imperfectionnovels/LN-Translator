@@ -165,22 +165,11 @@ class ScrapeResult:
     cover_ext: str | None = None
 
 
-class ScrapeError(Exception):
-    """User-facing scraping failure (bad URL, blocked target, no extractable
-    content, response too large, timeout). The HTTP route turns this into a
-    400/413/504 with the message body as `detail`.
-
-    `error_kind` is a coarse classifier the frontend uses to render
-    differentiated recovery UI per failure mode (CF block opens the
-    cookies-paste tutorial; auth surfaces "this site requires login";
-    timeout offers retry with a longer cap; etc.). Defaults to 'unknown'
-    when callers raise without specifying — UI falls back to the generic
-    error display in that case.
-    """
-
-    def __init__(self, message: str, *, error_kind: str = "unknown") -> None:
-        super().__init__(message)
-        self.error_kind = error_kind
+# ScrapeError now lives in the stdlib-only scrapers/base.py so recipe modules
+# can import it at module scope (no scraper<->recipe import cycle). Re-exported
+# here for back-compat: routes/translate.py and others still do
+# `from backend.services.scraper import ScrapeError`.
+from backend.services.scrapers.base import ScrapeError  # noqa: E402,F401
 
 
 # ---- SSRF guard ------------------------------------------------------------

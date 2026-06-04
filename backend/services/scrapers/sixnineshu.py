@@ -43,6 +43,7 @@ from backend.services.scrapers.base import (
     PlannedChapterRef,
     ProgressFn,
     RecipePlan,
+    ScrapeError,
     extract_printed_num_cn,
 )
 
@@ -131,7 +132,6 @@ class SixNineShuRecipe(BaseRecipe):
         # individual chapter URL we'd just import that one chapter — but
         # that's a degenerate case for this recipe; the user would more
         # naturally paste the overview URL.
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415 — avoid circular
 
         if progress:
             await progress("fetching_overview", 0, 0)
@@ -250,7 +250,6 @@ class SixNineShuRecipe(BaseRecipe):
         fetch: Any,
         recipe_state: dict,
     ) -> FetchedChapter:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
 
         # Polite throttle — 1 req/s keeps us under 69shuba's CF rate limit.
         await asyncio.sleep(_CHAPTER_FETCH_INTERVAL)
@@ -346,7 +345,6 @@ async def _fetch_chapter_with_backoff(
         )
     # Exhausted retries.
     if last_exc is not None:
-        from backend.services.scraper import ScrapeError  # noqa: PLC0415
         raise ScrapeError(
             f"69shuba: failed fetching chapter {position}/{total} "
             f"({title}) after {len(attempts)} attempts: {last_exc}"

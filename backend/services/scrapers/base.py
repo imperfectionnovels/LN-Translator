@@ -36,6 +36,28 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 
+class ScrapeError(Exception):
+    """User-facing scraping failure (bad URL, blocked target, no extractable
+    content, response too large, timeout). The HTTP route turns this into a
+    400/413/504 with the message body as `detail`.
+
+    `error_kind` is a coarse classifier the frontend uses to render
+    differentiated recovery UI per failure mode (CF block opens the
+    cookies-paste tutorial; auth surfaces "this site requires login";
+    timeout offers retry with a longer cap; etc.). Defaults to 'unknown'
+    when callers raise without specifying; the UI falls back to the generic
+    error display in that case.
+
+    Lives here (stdlib-only base) rather than in the scraper orchestrator so
+    the recipe modules can import it at module scope. Re-exported from
+    services/scraper.py for back-compat.
+    """
+
+    def __init__(self, message: str, *, error_kind: str = "unknown") -> None:
+        super().__init__(message)
+        self.error_kind = error_kind
+
+
 @dataclass(frozen=True)
 class RecipeResult:
     """Summary of a completed recipe import (novel + chapters already
