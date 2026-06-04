@@ -329,6 +329,16 @@ class DeleteCounts(BaseModel):
     fr_snapshots: int
 
 
+class DeleteResult(DeleteCounts):
+    """Response for the destructive endpoints DELETE /novels/{id} (archive)
+    and DELETE /novels/{id}/purge (hard delete): the same affected-row counts
+    as the /delete-counts preview, plus which action ran. Lets a client use
+    one typed shape across the preview-then-act flow instead of parsing a
+    flat dict whose action key (`archived` vs `purged`) it must branch on."""
+
+    status: Literal["archived", "purged"]
+
+
 class Observation(BaseModel):
     """One deterministic detect_* hit (or the implicit translation_degraded /
     glossary_merge_error kind) persisted from the queue worker. Reader's QA

@@ -12,6 +12,7 @@ from backend.genres import normalize_and_validate_genre
 from backend.models import (
     AddNovelGenreRequest,
     DeleteCounts,
+    DeleteResult,
     MassQueueRequest,
     Novel,
     NovelGenresResponse,
@@ -440,7 +441,7 @@ async def list_global_queue(
 @router.delete("/{novel_id}")
 async def delete_novel(
     novel_id: int, conn: aiosqlite.Connection = Depends(get_conn)
-) -> dict:
+) -> DeleteResult:
     # F11 (2026-05-25): DELETE soft-archives instead of hard-deleting.
     # Returns the quantified counts so the UI's confirm dialog can show
     # exactly what was archived ("247 chapters, 89 glossary").
@@ -448,15 +449,7 @@ async def delete_novel(
     # below; purge requires that the novel was archived first.
     from backend.services.soft_delete import archive_novel  # noqa: PLC0415
     counts = await archive_novel(conn, novel_id)
-    return {
-        "archived": novel_id,
-        "chapters": counts.chapters,
-        "glossary_entries": counts.glossary_entries,
-        "bookmarks": counts.bookmarks,
-        "chapter_observations": counts.chapter_observations,
-        "tm_segments": counts.tm_segments,
-        "fr_snapshots": counts.fr_snapshots,
-    }
+    return DeleteResult(status="archived", **vars(counts))
 
 
 @router.post("/{novel_id}/restore")
@@ -472,21 +465,13 @@ async def restore_archived_novel(
 @router.delete("/{novel_id}/purge")
 async def purge_archived_novel(
     novel_id: int, conn: aiosqlite.Connection = Depends(get_conn)
-) -> dict:
-    """Hard delete — only allowed on already-archived novels. Fires
-    CASCADE on chapters/glossary/etc. The novel must be in the Archive
-    tab first (409 otherwise) — this is the safety rail."""
+) -> DeleteResult:
+    """Hard delete, only allowed on already-archived novels. Fires CASCADE
+    on chapters/glossary/etc. The novel must be in the Archive tab first
+    (409 otherwise): this is the safety rail."""
     from backend.services.soft_delete import purge_novel  # noqa: PLC0415
     counts = await purge_novel(conn, novel_id)
-    return {
-        "purged": novel_id,
-        "chapters": counts.chapters,
-        "glossary_entries": counts.glossary_entries,
-        "bookmarks": counts.bookmarks,
-        "chapter_observations": counts.chapter_observations,
-        "tm_segments": counts.tm_segments,
-        "fr_snapshots": counts.fr_snapshots,
-    }
+    return DeleteResult(status="purged", **vars(counts))
 
 
 @router.get("/{novel_id}/delete-counts")

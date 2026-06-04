@@ -73,6 +73,31 @@ class CommitResponse(BaseModel):
     rows_updated_refined: int
 
 
+class FrSnapshot(BaseModel):
+    """One find/replace commit-log entry (mirrors services.fr_snapshots
+    SnapshotSummary). Rendered by the History tab; carries enough to show
+    the commit and a Restore button."""
+    id: int
+    novel_id: int
+    commit_token: str
+    find_pattern: str
+    replace_pattern: str
+    target: str
+    scope: str
+    chapters_changed: int
+    committed_at: str
+    restored_at: str | None
+
+
+class RestoreSnapshotResponse(BaseModel):
+    """Result of replaying a snapshot (mirrors services.fr_snapshots
+    RestoreResult). Matches the typed contract of /find and /replace in this
+    router instead of a bare dict passthrough."""
+    snapshot_id: int
+    chapters_restored: int
+    target: str
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
@@ -153,36 +178,22 @@ async def find_replace_commit(
 async def list_fr_snapshots(
     novel_id: int,
     conn: aiosqlite.Connection = Depends(get_conn),
-) -> list[dict]:
+) -> list[FrSnapshot]:
     """Per-novel find/replace commit log. Returns snapshots newest first;
     each row carries enough metadata for the History tab to render +
     a Restore button. Payload is fetched on demand by the restore route."""
     from backend.services.fr_snapshots import list_for_novel  # noqa: PLC0415
     snapshots = await list_for_novel(conn, novel_id)
-    return [
-        {
-            "id": s.id,
-            "novel_id": s.novel_id,
-            "commit_token": s.commit_token,
-            "find_pattern": s.find_pattern,
-            "replace_pattern": s.replace_pattern,
-            "target": s.target,
-            "scope": s.scope,
-            "chapters_changed": s.chapters_changed,
-            "committed_at": s.committed_at,
-            "restored_at": s.restored_at,
-        }
-        for s in snapshots
-    ]
+    return [FrSnapshot(**vars(s)) for s in snapshots]
 
 
 @router.post("/fr-snapshots/{snapshot_id}/restore")
 async def restore_fr_snapshot(
     snapshot_id: int,
     conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
+) -> RestoreSnapshotResponse:
     """Replay a snapshot back onto the affected chapters. Single-shot:
     once restored, the snapshot is marked restored_at and can't be
     replayed again (the History row's button disables)."""
     from backend.services.fr_snapshots import restore_snapshot  # noqa: PLC0415
-    return await restore_snapshot(conn, snapshot_id)
+    return RestoreSnapshotResponse(**await restore_snapshot(conn, snapshot_id))
