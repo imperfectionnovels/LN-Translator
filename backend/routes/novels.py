@@ -29,6 +29,7 @@ from backend.services.covers import (
     write_cover_for_novel,
 )
 from backend.services.epub_export import build_epub
+from backend.services.uploads import ensure_novel_exists
 from backend.services.providers import load_provider
 
 router = APIRouter()
@@ -826,12 +827,6 @@ async def set_novel_primary_genre(
 # disk at USER_DATA_ROOT/covers/{novel_id}.{ext}; the DB tracks the relative
 # path. Image validation is a magic-byte sniff (PNG/JPEG/WebP/GIF). -----
 
-async def _ensure_novel_exists(conn: aiosqlite.Connection, novel_id: int) -> None:
-    cur = await conn.execute("SELECT 1 FROM novels WHERE id = ?", (novel_id,))
-    if await cur.fetchone() is None:
-        raise HTTPException(status_code=404, detail="novel not found")
-
-
 @router.post("/{novel_id}/cover")
 async def upload_cover(
     novel_id: int,
@@ -840,7 +835,7 @@ async def upload_cover(
 ) -> dict:
     """Upload (or replace) a novel cover. Validates magic bytes, caps size,
     writes atomically (temp + rename), updates novels.cover_image_path."""
-    await _ensure_novel_exists(conn, novel_id)
+    await ensure_novel_exists(conn, novel_id)  # 404s if the novel is gone
     head = await file.read(MAX_COVER_BYTES + 1)
     if len(head) > MAX_COVER_BYTES:
         raise HTTPException(

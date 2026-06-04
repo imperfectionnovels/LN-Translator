@@ -555,18 +555,18 @@ async def insert_chapters_incrementally(
     boot drain flips it to 'paused'.
     """
     from backend.services.uploads import (
-        _INSERT_BATCH_SIZE,
-        _insert_novel_row,
+        INSERT_BATCH_SIZE,
+        insert_novel_row,
     )
 
     if batch_size <= 0:
-        batch_size = _INSERT_BATCH_SIZE
+        batch_size = INSERT_BATCH_SIZE
 
     # Phase 1: novel row + in_progress flag.
     async with open_conn() as conn:
         await conn.execute("BEGIN IMMEDIATE")
         try:
-            novel_id = await _insert_novel_row(
+            novel_id = await insert_novel_row(
                 conn, title, source_type, source_url,
                 genre=genre, source_language=source_language,
             )

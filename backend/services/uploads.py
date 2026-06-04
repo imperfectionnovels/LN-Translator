@@ -16,7 +16,7 @@ Three groups live here:
   `_strip_bom`, `read_text_file`, `read_bulk_file`) — scored CJK-density
   decoding that closes the chardet-misdetects-windows-1252 trap.
 
-- **Atomic create** (`_insert_novel_row`, `_insert_parsed_chapters`,
+- **Atomic create** (`insert_novel_row`, `_insert_parsed_chapters`,
   `atomic_create_novel`, `create_novel_and_chapters`) — novel + chapter
   rows committed in a single BEGIN IMMEDIATE transaction so a crash can't
   leave an orphan novel.
@@ -821,7 +821,7 @@ async def read_bulk_file(file: UploadFile) -> tuple[str, str, int] | None:
 # Batch size for executemany on chapter insertion. Bulk uploads with thousands
 # of files would otherwise hold the entire batch's decoded text in a single
 # Python list passed to executemany at once.
-_INSERT_BATCH_SIZE = 500
+INSERT_BATCH_SIZE = 500
 
 
 async def _resolve_novel_defaults(conn: aiosqlite.Connection) -> dict:
@@ -870,7 +870,7 @@ async def _resolve_novel_defaults(conn: aiosqlite.Connection) -> dict:
     return out
 
 
-async def _insert_novel_row(
+async def insert_novel_row(
     conn: aiosqlite.Connection,
     title: str,
     source_type: str,
@@ -923,11 +923,11 @@ async def _insert_parsed_chapters(
     chapters: list[ParsedChapter],
 ) -> None:
     """Stream rows to executemany in batches so a 10,000-file import doesn't
-    materialize one giant list at peak. Does NOT commit — see _insert_novel_row."""
+    materialize one giant list at peak. Does NOT commit — see insert_novel_row."""
     batch: list[tuple[int, int, str | None, str]] = []
     for ch in chapters:
         batch.append((novel_id, ch.chapter_num, ch.title_zh, ch.original_text))
-        if len(batch) >= _INSERT_BATCH_SIZE:
+        if len(batch) >= INSERT_BATCH_SIZE:
             await conn.executemany(
                 "INSERT INTO chapters (novel_id, chapter_num, title_zh, original_text, status) "
                 "VALUES (?, ?, ?, ?, 'pending')",
@@ -957,7 +957,7 @@ async def atomic_create_novel(
     novel row (visible in the library, unopenable, with zero chapters)."""
     await conn.execute("BEGIN IMMEDIATE")
     try:
-        novel_id = await _insert_novel_row(
+        novel_id = await insert_novel_row(
             conn, title, source_type, source_url,
             genre=genre, source_language=source_language,
         )
@@ -1022,7 +1022,7 @@ async def create_novel_skeleton(
     resume query O(pending) regardless of novel size."""
     await conn.execute("BEGIN IMMEDIATE")
     try:
-        novel_id = await _insert_novel_row(
+        novel_id = await insert_novel_row(
             conn, title, source_type, source_url,
             genre=genre, source_language=source_language,
         )
@@ -1030,13 +1030,13 @@ async def create_novel_skeleton(
             "UPDATE novels SET import_status = 'in_progress' WHERE id = ?",
             (novel_id,),
         )
-        # Batch-insert skeletons. Same _INSERT_BATCH_SIZE chunking as
+        # Batch-insert skeletons. Same INSERT_BATCH_SIZE chunking as
         # _insert_parsed_chapters so a 5000-chapter plan doesn't push a
         # single 5000-row executemany at SQLite.
         batch: list[tuple[int, int, str | None, str]] = []
         for p in planned:
             batch.append((novel_id, p.chapter_num, p.title_zh, p.source_url))
-            if len(batch) >= _INSERT_BATCH_SIZE:
+            if len(batch) >= INSERT_BATCH_SIZE:
                 await conn.executemany(
                     "INSERT INTO chapters "
                     "(novel_id, chapter_num, title_zh, original_text, status, "
