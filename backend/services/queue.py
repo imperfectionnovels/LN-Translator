@@ -580,6 +580,43 @@ async def _record_commit_provenance(
         )
 
 
+def _apply_text_fixups(result, glossary, chapter_num: int) -> tuple[str | None, str]:
+    """Run the deterministic post-translation text fixups (no LLM) and return
+    (title_en, cleaned_text).
+
+    Two groups: casing/strip fixups land on result.translated_text, then the
+    em-dash / bracket / sentence-initial fixups produce the final committed
+    body. The second group runs BEFORE the observers so detectors see the same
+    text the reader will, preserving the QA dashboard's "observers run on the
+    final committed body" invariant.
+    """
+    text, ts_n = strip_leading_title_line(result.translated_text, result.title_en)
+    text, lt_n = enforce_locked_term_casing(text, glossary)
+    text, lc_n = enforce_lowercase_locked_terms(text, glossary)
+    text, sb_n = enforce_stem_branch_casing(text)
+    text, cm_n = strip_chapter_end_marker(text)
+    result.translated_text = text
+    if ts_n + lt_n + lc_n + sb_n + cm_n:
+        logger.info(
+            "queue: chapter %d post-fixes: %d (title-strip) + %d (locked-case) "
+            "+ %d (lowercase) + %d (stem-branch) + %d (end-marker)",
+            chapter_num, ts_n, lt_n, lc_n, sb_n, cm_n,
+        )
+
+    title_en = normalize_title_en(result.title_en, chapter_num)
+    cleaned_text, em_count = enforce_em_dash(result.translated_text)
+    cleaned_text, sh_count = enforce_spaced_hyphen_dash(cleaned_text)
+    cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
+    cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
+    if em_count or sh_count or brk_count or si_count:
+        logger.info(
+            "queue: chapter %d translate guardrails: %d em-dash, %d spaced-hyphen, "
+            "%d bracket, %d sentence-initial fix(es)",
+            chapter_num, em_count, sh_count, brk_count, si_count,
+        )
+    return title_en, cleaned_text
+
+
 async def _translate_chapter_in_db(
     conn: aiosqlite.Connection, novel_id: int, chapter_id: int
 ) -> None:
@@ -665,38 +702,11 @@ async def _translate_chapter_in_db(
             r["chapter_num"], time.perf_counter() - translate_t0,
         )
 
-        # Pure text fixups — strip duplicated title lines, normalize locked-term
-        # casing, normalize Stem/Branch casing. Cheap, deterministic, no LLM.
-        text, ts_n = strip_leading_title_line(
-            result.translated_text, result.title_en
+        # Pure deterministic text fixups (casing, em-dash, brackets, title
+        # normalization). No LLM. Returns the canonical title + committed body.
+        title_en, cleaned_text = _apply_text_fixups(
+            result, glossary, r["chapter_num"]
         )
-        text, lt_n = enforce_locked_term_casing(text, glossary)
-        text, lc_n = enforce_lowercase_locked_terms(text, glossary)
-        text, sb_n = enforce_stem_branch_casing(text)
-        text, cm_n = strip_chapter_end_marker(text)
-        result.translated_text = text
-        if ts_n + lt_n + lc_n + sb_n + cm_n:
-            logger.info(
-                "queue: chapter %d post-fixes: %d (title-strip) + %d (locked-case) "
-                "+ %d (lowercase) + %d (stem-branch) + %d (end-marker)",
-                r["chapter_num"], ts_n, lt_n, lc_n, sb_n, cm_n,
-            )
-
-        # Em-dash + bracket + sentence-initial fixups land BEFORE the observers
-        # so detectors see the same body that gets committed — the QA
-        # dashboard's invariant ("observers run on the final committed body")
-        # only holds when the input matches what the reader sees.
-        title_en = normalize_title_en(result.title_en, r["chapter_num"])
-        cleaned_text, em_count = enforce_em_dash(result.translated_text)
-        cleaned_text, sh_count = enforce_spaced_hyphen_dash(cleaned_text)
-        cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
-        cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
-        if em_count or sh_count or brk_count or si_count:
-            logger.info(
-                "queue: chapter %d translate guardrails: %d em-dash, %d spaced-hyphen, "
-                "%d bracket, %d sentence-initial fix(es)",
-                r["chapter_num"], em_count, sh_count, brk_count, si_count,
-            )
 
         # Observations only — no retry, no degraded mark. The single-pass
         # thesis is that noticing happens inside the translator's thinking
