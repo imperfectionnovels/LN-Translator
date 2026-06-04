@@ -10,11 +10,19 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "aiosqlite>=0.20",
     "chardet>=5.2",
-    "google-genai>=0.3",
+    # 1.0 introduced the unified `from google import genai` surface
+    # (genai.Client / genai.types / genai.errors) that gemini.py uses; the
+    # 0.x line had a different, incompatible API.
+    "google-genai>=1.0",
     "python-dotenv>=1.0",
     "python-multipart>=0.0.12",
     "pydantic>=2.9",
     "claude-agent-sdk>=0.1.81",
+    # Hard dependency of the `anthropic_api` provider type
+    # (services/translators/anthropic_api.py imports `anthropic` and
+    # constructs anthropic.AsyncAnthropic). Not pulled in transitively by
+    # claude-agent-sdk, so a clean install needs it declared.
+    "anthropic>=0.40",
     "openai>=1.50",
     "zhconv>=1.4",
     "python-docx>=1.1",
