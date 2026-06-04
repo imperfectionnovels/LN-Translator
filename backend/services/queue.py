@@ -45,6 +45,7 @@ from backend.services.observations import (
 )
 from backend.services.parser import normalize_title_en, strip_leading_title_line
 from backend.services.prompt_inputs import (
+    NovelGenreBrief,
     fetch_novel_genre_brief,
     fetch_previous_chapter_tail,
     fetch_style_edits,
@@ -79,7 +80,7 @@ logger = logging.getLogger(__name__)
 def _build_prompt_config_snapshot(
     *,
     provider: Provider | None,
-    novel_meta: dict,
+    novel_meta: NovelGenreBrief,
     free_draft_included: bool,
     previous_context_included: bool,
     style_note_included: bool,
@@ -100,8 +101,8 @@ def _build_prompt_config_snapshot(
         "translator_provider_id": provider.id if provider else None,
         "translator_provider_type": provider.provider_type if provider else None,
         "translator_model_id": provider.model_id if provider else None,
-        "genre": novel_meta.get("genre"),
-        "custom_brief_present": bool(novel_meta.get("custom_style_brief")),
+        "genre": novel_meta["genre"],
+        "custom_brief_present": bool(novel_meta["custom_style_brief"]),
         "free_draft_included": free_draft_included,
         "previous_context_included": previous_context_included,
         "style_note_included": style_note_included,
@@ -482,7 +483,7 @@ async def _record_commit_provenance(
     chapter_id: int,
     chapter_num: int,
     provider: Provider | None,
-    novel_meta: dict,
+    novel_meta: NovelGenreBrief,
     result,
     translation_degraded: bool,
     original_text: str,

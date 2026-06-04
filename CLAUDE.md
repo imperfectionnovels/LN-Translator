@@ -92,14 +92,15 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   └── tests/                     # 80+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
-│   ├── settings.html, queue.html, stats.html, find-replace.html, onboarding.html
+│   ├── settings.html, queue.html, stats.html, find-replace.html, novel-overview.html, onboarding.html
 │   ├── css/
 │   │   ├── base.css           # shared
-│   │   └── home.css, library.css, reader.css, glossary.css, queue.css, onboarding.css
+│   │   └── home.css, library.css, reader.css, glossary.css, queue.css, settings.css,
+│   │       stats.css, find-replace.css, novel-overview.css, onboarding.css
 │   └── js/
-│       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js     # shared across pages
-│       ├── reader.js          # the big one (~2k lines) — TOC, polling, terms, dialogs
-│       ├── home.js, library.js, glossary.js, glossary-global.js
+│       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
+│       ├── reader.js          # the big one (~2k lines): TOC, polling, terms, dialogs
+│       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
 │       ├── settings.js, queue.js, stats.js, find-replace.js, onboarding.js
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses

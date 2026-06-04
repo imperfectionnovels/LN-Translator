@@ -22,11 +22,28 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import TypedDict
 
 from backend.config import USER_DATA_ROOT
 from backend.models import TranslationResult
 
 logger = logging.getLogger(__name__)
+
+
+class CacheStageStats(TypedDict):
+    hits: int
+    misses: int
+    hit_rate: float | None
+
+
+class CacheStats(TypedDict):
+    """Fixed shape returned by `get_stats`, consumed by the cache-stats route
+    and the dashboard. Naming it makes a dropped/renamed nested key a
+    type-check failure rather than a runtime surprise in the UI."""
+    translator: CacheStageStats
+    refiner: CacheStageStats
+    on_disk_bytes: int
+    on_disk_files: int
 
 # Age (in seconds) past which a `*.tmp` file in a cache stage dir is assumed
 # orphaned by a crashed write and is safe to delete.
@@ -78,7 +95,7 @@ _STATS = {
 }
 
 
-def get_stats() -> dict:
+def get_stats() -> CacheStats:
     """Snapshot of the in-process cache counters. Read-only; reset_stats()
     is the only mutator besides the load_* functions."""
     total_t = _STATS["translator_hits"] + _STATS["translator_misses"]
