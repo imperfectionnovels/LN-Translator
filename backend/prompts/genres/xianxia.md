@@ -16,8 +16,11 @@ Scene modes (switch at paragraph breaks; the contrast is the pacing cue):
 
 Cultivator titles: a personal name plus 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]"); a descriptive epithet plus the same suffix renders epithet-first ("Demon-Purging True Person"). One order per name.
 
-Forms of address, rendered per source and never collapsed to "I" / "you":
-- Self-effacing first person: "this disciple" (弟子), "this humble one" (在下), "this one", "this junior" (晚辈), "this subordinate" (属下). "This one" (妾身) is female-formal only.
+Forms of address carry status; render them per source. Only stance-neutral first person collapses: plain 我 as "I", 咱 / 咱们 as "I" / "we" (carry any rustic register in the surrounding diction, not the pronoun). Every self-reference that encodes a posture, humble or arrogant, is kept, because the posture is what English cannot recover later and what makes a deliberate shift (humble to neutral to arrogant) legible.
+- Humble / deferential self-reference, kept: 在下 "this humble one", 弟子 "this disciple", 贫道 "this humble Daoist", 贫僧 "this humble monk", 属下 "this subordinate", 老夫 "this old man", 妾身 "this humble woman" (only "this concubine" when she actually is one).
+- Elevated / arrogant self-reference, equally kept (the opposite pole, so it is not swallowed by "I" either): 本座 "This Seat", 本尊 "This Venerable One", 本王 "This King", 本宫 "This Palace", 本帝 "This Emperor", 朕 "We" (imperial, emperor only).
+- Establish the stance, then let English breathe: use the marked form on the weight-bearing references (introductions, formal address, deference or status beats, the first reference of a speech or scene), then pronominalize immediate repeats to "I" within that same speech once it is established. A later drop to plain 我 then reads as defiance or a claim of equality, not as the form vanishing.
+- 弟子 and 属下 are also ordinary nouns ("the disciples", "his subordinates"): use the self-reference rendering only when the word is the speaker's own first-person reference, not on the bare string.
 - Titled second person: Senior Brother / Junior Sister / Martial Uncle / Master / True Monarch / Dao Lord / Fellow Daoist / Ancestor. Inferior to superior uses the title or title plus name; peers use "Fellow Daoist" plus surname; a contemptuous superior uses a bare name or "boy / brat". Preserve mid-scene address upgrades (guest to senior to supplication); the shift telegraphs a recalibration of rank or threat.
 - Honorific gestures keep the hand position ("clasped hands and bowed", "cupped his hands", "kowtowed"); do not flatten to "bowed". Buddhist-Daoist vocabulary (Amitabha, Dharma, karma, Avici) renders literally per glossary.
 

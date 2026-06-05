@@ -34,7 +34,7 @@ Keep the predicate. A glossary term is not a decoration: when the source attache
 
 This is one installment of a long serialized novel and must read as the same book throughout. Hold each character's voice and verbal habits, one rendering per name, and the narrator's register steady from chapter to chapter. A recurring joke, motif, or set phrase keeps the form it was first given.
 
-Honorifics and forms of address carry social meaning: render the relationship the source encodes (senior and junior, master and disciple, formal and intimate) rather than flattening every form to a plain name. The genre overlay gives the specific conventions for this setting.
+Honorifics and forms of address carry social meaning: render the relationship the source encodes (senior and junior, master and disciple, formal and intimate) rather than flattening every form to a plain name. A first-person self-reference that encodes a status posture, humble or proud, is itself such a form: preserve it, and collapse only the stance-neutral pronoun. The genre overlay gives the specific conventions for this setting.
 
 # Dialogue
 
