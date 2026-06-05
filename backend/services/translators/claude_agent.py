@@ -56,6 +56,17 @@ logger = logging.getLogger(__name__)
 # headroom for cold-disk / first-call warmup as the CLI backend.
 _CALL_TIMEOUT_SECONDS = 600.0
 
+# Extended thinking ("effort") can split one chapter response across more than
+# one SDK turn (a thinking turn, then the text turn), so a hard max_turns=1
+# makes the SDK abort a thinking model mid-response with "Reached maximum number
+# of turns (1)". That bug kept claude_agent on opus-4-5 from ever completing a
+# chapter (opus-4-8 happened to finish within one turn, so it slipped through).
+# allowed_tools=[] below means the model cannot enter a real tool loop, so these
+# extra turns are pure headroom for thinking to finish, never runaway agentic
+# behavior; the model still stops at its own end_turn well before this cap. The
+# claude_cli backend keeps --max-turns 1 because it runs without thinking-config.
+_MAX_TURNS = 8
+
 
 # The genre brief is passed to the SDK as a system-prompt FILE (see
 # `system_prompt_file_for` in `_subprocess_utils`): an inline --system-prompt
@@ -305,9 +316,10 @@ class ClaudeAgentTranslator(BaseTranslator):
                 else None
             ),
             stderr=_log_stderr,
-            # Single turn — no tool loop, no follow-up. Matches the
-            # `--max-turns 1` flag the CLI backend uses for the same reason.
-            max_turns=1,
+            # Headroom for extended thinking to finish (see _MAX_TURNS). A hard
+            # cap of 1 aborts a thinking model mid-response; allowed_tools=[]
+            # keeps the extra turns safe (no tool loop possible).
+            max_turns=_MAX_TURNS,
             # No tools. We want a pure text-in-text-out call; Claude should
             # not try to read files, run commands, or invoke MCP servers.
             allowed_tools=[],
