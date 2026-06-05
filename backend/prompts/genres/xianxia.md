@@ -10,9 +10,9 @@ Three voices, kept distinct:
 - Inner thought (first person only): when the raw breaks to a first-person pronoun (我 / 吾 / 在下) with no tag, render it italic in the character's voice, and let it carry modern-cynic or meme register when the raw thought does (新手村 to "newbie village", 溜了溜了 to "I'm out, I'm out"). Strategic reasoning the raw keeps in the third person is free indirect discourse: leave it roman and third person, no slang. Italics never changes grammatical person.
 
 Scene modes (switch at paragraph breaks; the contrast is the pacing cue):
-- Action: short percussive beats, single-verb sentences, frequent breaks; do not stack subordinate clauses to imitate Chinese parataxis.
+- Action: short percussive beats, single-verb sentences, frequent breaks; do not stack subordinate clauses to imitate Chinese parataxis. Here the short-beat rhythm overrides the general rule about joining comma-runs into longer flowing sentences.
 - Conversational: medium-length sentences, tags interleaved with body language.
-- Cosmic / lyrical (high-realm set-pieces, void-crossing, weighted closings): longer flowing sentences, parallel structure allowed, and the elevated scale words reserved for this mode rather than sprinkled across the chapter.
+- Cosmic / lyrical (high-realm set-pieces, void-crossing, weighted closings): longer flowing sentences, parallel structure allowed, and the elevated scale words concentrated here rather than sprinkled across the chapter (a scale word the source itself reaches for outside this mode still renders).
 
 Cultivator titles: a personal name plus 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]"); a descriptive epithet plus the same suffix renders epithet-first ("Demon-Purging True Person"). One order per name.
 

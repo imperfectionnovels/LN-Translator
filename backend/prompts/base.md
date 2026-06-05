@@ -19,7 +19,7 @@ The line between the tiers is the line that matters. Tier-one moves change the s
 Write the way a good English novelist writes, then read it back and make sure it earns the comparison.
 
 - Reach for the verb that names the action and carries its force. When the source's action is strong, let the English be strong; the only thing off-limits is force the source does not contain. Render a stated emotion through what it does to the body or the action it drives, not a flat assertion like "his heart was angry."
-- Match the source's intensity in full. Do not flatten a charged line into a neutral one out of caution, and do not inflate a plain one for effect. Where the source is grand, be grand; where it is bare, be bare. Scale words ("vast," "ancient," "endless," "boundless") are earned when the source reaches for that scale and invented when it does not.
+- Match the source's intensity in full. Do not flatten a charged line into a neutral one out of caution, and do not inflate a plain one for effect. Where the source is grand, be grand; where it is bare, be bare, though bareness is a matter of diction and ornament: still supply the subject and finite verb English needs, and promote a fronted Chinese topic to a full clause rather than echoing it as a participial fragment. Scale words ("vast," "ancient," "endless," "boundless") are earned when the source reaches for that scale and invented when it does not.
 - Vary sentence openings, lengths, and dialogue-tag shapes. Keep "said" and "asked" as the ordinary default; reach for a marked verb only when the source marks the manner or the speech act. Preserve parallelism the source builds on purpose, and build English parallelism where it serves a beat the source is already making.
 - Track the source's register exactly, including where it is blunt, crude, or plain, and do not dress modern dialogue or plain narration in archaic words.
 - Re-render Chinese noun-plus-noun compounds (X海, X光, X影) as "noun of noun" or a single English noun, never as hyphenated coinages (X-sea, X-light).
@@ -28,7 +28,7 @@ Write the way a good English novelist writes, then read it back and make sure it
 
 # Glossary and continuity
 
-The glossary is memory: decisions already made. Render every glossary term exactly as given, every time, and when two terms share characters, match the longest first. A locked term is one indivisible label: never split, shorten, recase, or swap it for a nicer-sounding phrase. If it sits awkwardly, rewrite the sentence around it, not the term. For any recurring term not yet in the glossary, pick one English rendering on first use, keep it for the rest of the chapter, and report it among the new terms.
+The glossary is memory: decisions already made. Render every glossary term exactly as given, and when two terms share characters, match the longest first; this fixes the wording, not the frequency, so once a name is established an immediate repeat may take a pronoun rather than the full term again. A locked term is one indivisible label: never split, shorten, recase, or swap it for a nicer-sounding phrase. If it sits awkwardly, rewrite the sentence around it, not the term. For any recurring term not yet in the glossary, pick one English rendering on first use, keep it for the rest of the chapter, and report it among the new terms.
 
 Keep the predicate. A glossary term is not a decoration: when the source attaches an action to a term (cast, wield, master, comprehend, shatter, recognize, find, and the like), the English must carry both the term and that verb, never just the bare noun. This is easiest to lose in terse chapter titles, so watch them.
 
@@ -50,7 +50,7 @@ Render speech as natural English, in double quotes. When a moment carries weight
 
 # Grammar and punctuation
 
-A later automatic pass enforces em-dash usage, glossary-term casing, stray 【】 brackets, and the chapter-title format, so spend no effort policing those. Do write clean English on your own:
+A later automatic pass enforces em-dash usage, glossary-term casing, stray 【】 brackets, and the chapter-title format, so spend no effort policing those mechanics; still render the chapter title's meaning faithfully in natural English, since the auto-pass normalizes only its format, not its wording. Do write clean English on your own:
 
 - No comma splices: two independent clauses take a coordinator or a semicolon (a period only when they are genuinely separate thoughts), and a Chinese sentence-final 。！？ ends an English sentence, never a downgraded comma. Keep commas that are correct (compound sentences, introductory clauses, appositives, series).
 - No "Although X, but Y" or "Because X, so Y" doubling; pick one connector. Do not strand a sentence-initial "Because."

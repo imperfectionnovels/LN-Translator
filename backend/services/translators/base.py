@@ -143,12 +143,27 @@ def _build_system_instruction_cached(
     base = _read_required(_BASE_PROMPT_PATH)
     overlay = get_genre_overlay(genre)
     examples = get_worked_examples(genre)
-    parts = [base, "GENRE OVERLAY:", overlay, examples]
+    parts = [
+        base,
+        "GENRE OVERLAY:",
+        overlay,
+        "WORKED EXAMPLES (illustrative: they show the rules applied to sample "
+        "lines; they never override a stated rule):",
+        examples,
+    ]
     if custom_brief:
         parts.extend([
-            "CUSTOM STYLE BRIEF — user-supplied directive for THIS novel. "
-            "Appended after the genre overlay; takes precedence when it "
-            "explicitly contradicts a genre rule:",
+            "CUSTOM STYLE BRIEF, a user-supplied directive for THIS novel. It "
+            "governs word choice, set-phrase and idiom sense, naturalization, "
+            "and this novel's voice, and wins over base/overlay defaults within "
+            "that scope. It does NOT override the glossary or the overlay's "
+            "structural conventions (forms of address, title order, realm "
+            "names, casing, register zones); where it appears to, the "
+            "structural rule wins. Precedence, highest first: glossary and the "
+            "deterministic post-pass, then the overlay's structural "
+            "conventions, then this brief for voice and word choice, then the "
+            "universal base rules, then the worked examples (illustrative "
+            "only):",
             custom_brief.strip(),
         ])
     return "\n\n".join(parts)
@@ -319,8 +334,9 @@ def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
     if not lines:
         return ""
     return (
-        "USER STYLE PREFERENCES (paragraph rewrites the user made on prior chapters — "
-        "treat as voice / phrasing guidance, not as text to reproduce literally):\n"
+        "USER STYLE PREFERENCES (paragraph rewrites the user made on prior chapters: "
+        "treat as voice and phrasing guidance, not as text to reproduce literally. "
+        "Where one conflicts with a glossary term or a structural rule, the rule wins):\n"
         + "\n\n".join(lines)
         + "\n\n"
     )
@@ -375,7 +391,10 @@ def build_prompt(
     context_block = ""
     if previous_context and previous_context.strip():
         context_block = (
-            "PREVIOUS CHAPTER TAIL (English — tone / voice reference, DO NOT TRANSLATE OR REPEAT):\n"
+            "PREVIOUS CHAPTER TAIL (English, for continuity only: carry over names, "
+            "honorifics, and ongoing tone. DO NOT translate or repeat it, and do not "
+            "imitate its phrasing where that conflicts with the voice rules above; the "
+            "brief and overlay win over this tail):\n"
             f"{previous_context.strip()}\n\n"
         )
     style_block = format_style_edits(style_edits or [])
