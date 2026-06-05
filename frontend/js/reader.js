@@ -2534,6 +2534,12 @@ async function loadChapter(num) {
     // render for a network round-trip the user doesn't need.
     refreshTocIfStale(ch);
     if (ch.status === "pending" || ch.status === "translating") {
+      // Refresh the per-chapter terms rail here too: this branch early-returns
+      // before renderChapterBody (which is the rail's usual refresh point), so
+      // without this the rail would stay stuck on the PREVIOUS chapter's terms
+      // when navigating into a not-yet-translated chapter. collectChapterTerms
+      // falls back to the raw ZH source when there's no translation yet.
+      renderTermsRail(ch);
       setChapterBarTitle(num, null, ch.title_zh);
       // Title hasn't been translated yet; fall back to the Han title (with
       // any 第N章 prefix stripped) or "Chapter N" as last resort. The Han
