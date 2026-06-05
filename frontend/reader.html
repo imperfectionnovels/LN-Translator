@@ -8,7 +8,7 @@
      readerFocusMode + mobile TOC default to avoid a flash). -->
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=3">
-<link rel="stylesheet" href="/static/css/reader.css?v=2">
+<link rel="stylesheet" href="/static/css/reader.css?v=3">
 <!-- marked + DOMPurify vendored locally (frontend/js/vendor) so the XSS
      sanitizer is not a runtime CDN dependency and the bundle stays offline. -->
 <script src="/static/js/vendor/marked.umd.min.js" defer></script>
@@ -19,7 +19,7 @@
 <aside class="ink-spine"><!-- stamped by /static/js/spine.js (C2) --></aside>
 
 <main class="full-bleed" id="main" tabindex="-1">
-  <div class="reader-stage" id="reader-stage" data-toc="on" data-dual="off">
+  <div class="reader-stage" id="reader-stage" data-toc="on" data-dual="off" data-terms="off">
     <aside class="toc-rail" id="toc-rail">
       <div class="toc-head">
         <!-- Cross-page nav for mobile (≤720px). On phones the .ink-spine
@@ -108,6 +108,14 @@
         <div class="util-group">
           <button class="icon-btn add-term-btn edit-only" id="add-term-btn" title="Add a glossary term. Opens the Add form with both fields empty. (Or just select any phrase in either pane to add from context.)" aria-label="Add glossary term">
             <span aria-hidden="true">+ Term</span>
+          </button>
+          <!-- 2026-06-04: per-chapter glossary cards rail. Lists the glossary
+               terms that appear in the chapter on screen as editable cards, so
+               the user edits terminology without hunting for inline highlights
+               in the body. Edit-mode only (matches +Term / observations). The
+               panel itself is #terms-rail, docked on the right of the stage. -->
+          <button class="icon-btn terms-rail-toggle edit-only" id="terms-rail-toggle" title="Show or hide the per-chapter glossary terms panel" aria-label="Toggle glossary terms panel" aria-pressed="false">
+            <span aria-hidden="true">Terms</span>
           </button>
           <button class="icon-btn observations-btn edit-only" id="observations-btn" title="Open the QA panel for translation issues the system noticed for this chapter" aria-label="Translation issues" hidden>
             <span class="observations-icon">⚠</span>
@@ -235,6 +243,26 @@
         </div>
       </div>
     </div>
+
+    <!-- Per-chapter glossary cards rail (2026-06-04). Edit-mode only; docked
+         on the right of the stage, mirroring the left chapter rail. Populated
+         by reader.js::renderTermsRail with one editable card per glossary term
+         that appears in the chapter on screen. Visibility is gated by
+         #reader-stage[data-terms="on"|"off"] (forced "off" in read mode). On
+         narrow screens it becomes an off-canvas drawer from the right. -->
+    <aside class="terms-rail" id="terms-rail" aria-label="Glossary terms on this page">
+      <div class="terms-rail-head">
+        <h3 class="terms-rail-title">Terms on this page <span class="terms-count" id="terms-count"></span></h3>
+        <button type="button" class="btn-ghost" id="terms-rail-close" aria-label="Hide terms panel">hide</button>
+      </div>
+      <p class="terms-rail-intro muted">Edit any term here, no hunting through the chapter. Changes rewrite this novel's chapters in place.</p>
+      <div class="terms-list" id="terms-list" aria-live="polite"></div>
+    </aside>
+    <!-- Tap-to-dismiss backdrop for the mobile terms drawer (mirrors
+         #toc-backdrop). Child of .reader-stage so the descendant selector
+         .reader-stage[data-terms="on"] .terms-backdrop matches. Hidden on
+         desktop; fades in on narrow screens when data-terms="on". -->
+    <div class="terms-backdrop" id="terms-backdrop" hidden></div>
   </div>
 
   <div class="reading-rail" id="reading-rail">

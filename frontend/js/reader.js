@@ -25,6 +25,16 @@ const tocFootStats = document.getElementById("toc-foot-stats");
 const tocToggle = document.getElementById("toc-toggle");
 const mobileTocToggle = document.getElementById("mobile-toc-toggle");
 const tocBackdrop = document.getElementById("toc-backdrop");
+// Per-chapter glossary terms rail (edit-mode only). Visibility is the AND of
+// edit mode and the user's persisted open/closed pick, expressed as a single
+// #reader-stage[data-terms="on"|"off"] attribute (see applyTermsRail).
+const termsList = document.getElementById("terms-list");
+const termsCount = document.getElementById("terms-count");
+const termsRailToggle = document.getElementById("terms-rail-toggle");
+const termsRailClose = document.getElementById("terms-rail-close");
+const termsBackdrop = document.getElementById("terms-backdrop");
+const TERMS_RAIL_OPEN_KEY = "termsRailOpen";
+let termsRailOpen = localStorage.getItem(TERMS_RAIL_OPEN_KEY) !== "0"; // default open
 const chIdEl = document.getElementById("ch-id");
 const chTitleEl = document.getElementById("ch-title");
 const chTitleZhEl = document.getElementById("ch-title-zh");
@@ -455,6 +465,10 @@ function _applyReaderMode() {
       }
     });
   }
+  // Keep the per-chapter terms rail in sync with the mode: it's edit-mode
+  // only, so flipping to read forces it closed (the toggle/close buttons are
+  // .edit-only and vanish anyway). applyTermsRail is hoisted (declaration).
+  applyTermsRail();
 }
 
 function setReaderMode(next) {
@@ -1590,6 +1604,152 @@ document.addEventListener("mousedown", (ev) => {
     if (!ev.target.closest(".term")) clearTermEditPop();
   }
 });
+
+/* ---- Per-chapter glossary terms rail (2026-06-04) ----
+ *
+ * A right-side drawer that lists, as editable cards, exactly the glossary
+ * terms that appear in the chapter on screen, so terminology can be fixed
+ * without hunting for the inline dotted-underline highlights in the body.
+ * Edit-mode only. No backend call: the per-chapter set is derived from the
+ * in-memory glossaryCache using the same matcher the body highlighter uses
+ * (buildTermPattern / termInfo). Editing reuses showTermEditPop wholesale
+ * (PATCH + apply-in-place + chapter refresh + toast), and because that flow
+ * ends in renderChapterBody, the card list refreshes itself after a save.
+ */
+function applyTermsRail() {
+  const show = (readerMode === "edit") && termsRailOpen;
+  if (stage) stage.dataset.terms = show ? "on" : "off";
+  if (termsRailToggle) termsRailToggle.setAttribute("aria-pressed", show ? "true" : "false");
+}
+function setTermsRailOpen(open) {
+  termsRailOpen = !!open;
+  localStorage.setItem(TERMS_RAIL_OPEN_KEY, termsRailOpen ? "1" : "0");
+  applyTermsRail();
+}
+termsRailToggle?.addEventListener("click", () => setTermsRailOpen(!termsRailOpen));
+termsRailClose?.addEventListener("click", () => setTermsRailOpen(false));
+termsBackdrop?.addEventListener("click", () => setTermsRailOpen(false));
+
+// Returns [{ entry, count }] for every glossary term occurring in `ch`,
+// ordered by first appearance in the English body (the side being edited),
+// with terms that only surface on the Chinese side appended after. Counts sum
+// occurrences across both panes. Reuses buildTermPattern() + termInfo().
+function collectChapterTerms(ch) {
+  if (!ch) return [];
+  const pattern = buildTermPattern();
+  if (!pattern) return [];
+  const found = new Map(); // entry.id -> { entry, count, firstIdx, firstSide }
+  const scan = (text, side, re) => {
+    if (!re || !text) return;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const g = termInfo(m[0], side);
+      // Guard against a zero-width match wedging the loop (defensive; our
+      // patterns never match empty, but advancing keeps this total).
+      if (m.index === re.lastIndex) re.lastIndex++;
+      if (!g) continue;
+      const cur = found.get(g.id);
+      if (cur) {
+        cur.count++;
+      } else {
+        found.set(g.id, { entry: g, count: 1, firstIdx: m.index, firstSide: side });
+      }
+    }
+  };
+  // English first so the ordering matches reading order in the edited pane.
+  scan(_displayedEnglish(ch), "en", pattern.en);
+  scan(ch.original_text || "", "zh", pattern.zh);
+  return Array.from(found.values()).sort((a, b) => {
+    if (a.firstSide !== b.firstSide) return a.firstSide === "en" ? -1 : 1;
+    return a.firstIdx - b.firstIdx;
+  });
+}
+
+function renderTermsRail(ch) {
+  if (!termsList) return;
+  // Compute only in edit mode; the rail is hidden otherwise, and skipping the
+  // scan keeps read-mode renders cheap.
+  const items = (readerMode === "edit") ? collectChapterTerms(ch) : [];
+  if (termsCount) termsCount.textContent = items.length ? `· ${items.length}` : "";
+  if (!items.length) {
+    termsList.innerHTML =
+      `<div class="terms-empty">No glossary terms appear in this chapter. Select any phrase in the body and choose <em>Add to glossary</em> to create one.</div>`;
+    return;
+  }
+  termsList.innerHTML = items.map(({ entry, count }) => {
+    const cat = entry.category || "other";
+    const lock = entry.locked ? `<span class="tc-lock" title="Locked">🔒</span>` : "";
+    const cnt = count > 1 ? `<span class="tc-count">(${count})</span>` : "";
+    return `
+      <div class="term-card" data-id="${entry.id}" role="button" tabindex="0" title="Click to find it in the chapter · ✎ to edit">
+        <div class="tc-main">
+          <div class="tc-zh">${escapeHtml(entry.term_zh)}</div>
+          <div class="tc-en">${escapeHtml(entry.term_en)}</div>
+        </div>
+        <button type="button" class="tc-edit" data-act="edit" title="Edit this term" aria-label="Edit ${escapeHtml(entry.term_en)}">✎</button>
+        <div class="tc-foot">
+          <span class="tc-cat">${escapeHtml(cat)}</span>
+          ${cnt}
+          ${lock}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+// Scrolls the visible body to the first highlighted occurrence of `entry` and
+// flashes it. Matches by entry id via termInfo so casing differences between
+// the stored term and the prose don't matter. Prefers the aligned edit grid,
+// then the EN pane, then the ZH pane.
+function _jumpToTermInBody(entry, card) {
+  const aligned = document.getElementById("aligned-body");
+  const enHost = (aligned && !aligned.hidden && aligned.innerHTML) ? aligned : bodyEn;
+  let target = null;
+  const pick = (host, side) => {
+    if (target || !host) return;
+    const spans = host.querySelectorAll(".term");
+    for (const span of spans) {
+      const shown = (span.textContent || "").trim();
+      const g = termInfo(shown, side)
+        || termInfo(span.getAttribute("data-term") || "", side === "en" ? "zh" : "en");
+      if (g && g.id === entry.id) { target = span; break; }
+    }
+  };
+  pick(enHost, "en");
+  if (!target) pick((aligned && !aligned.hidden && aligned.innerHTML) ? aligned : bodyZh, "zh");
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("term-flash");
+    setTimeout(() => target.classList.remove("term-flash"), 1200);
+  } else if (card) {
+    showFloatToast("Not highlighted in the current view", card.getBoundingClientRect());
+  }
+}
+
+if (termsList) {
+  termsList.addEventListener("click", (ev) => {
+    const card = ev.target.closest(".term-card");
+    if (!card) return;
+    const id = Number(card.getAttribute("data-id"));
+    const entry = glossaryCache.find(g => g.id === id);
+    if (!entry) return;
+    if (ev.target.closest("[data-act='edit']")) {
+      ev.preventDefault();
+      showTermEditPop(card, entry, "en");
+    } else {
+      _jumpToTermInBody(entry, card);
+    }
+  });
+  // Keyboard parity: Enter / Space on a focused card opens its editor.
+  termsList.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const card = ev.target.closest(".term-card");
+    if (!card) return;
+    ev.preventDefault();
+    const entry = glossaryCache.find(g => g.id === Number(card.getAttribute("data-id")));
+    if (entry) showTermEditPop(card, entry, "en");
+  });
+}
 
 // Walks up from `range.commonAncestorContainer` to the nearest <p> child of
 // `pane` and returns its 0-based index among siblings (any-tag), matching the
@@ -2862,6 +3022,10 @@ function renderChapterBody(ch) {
   applyGlossaryMergeBanner(ch);
   applyQualityBanner(ch);
   applyRefinementBanner(ch);
+  // Refresh the per-chapter glossary cards rail. Runs on every body render, so
+  // it tracks chapter nav, poll re-renders, mode flips, and post-edit
+  // re-renders (showTermEditPop ends here) with no extra wiring.
+  renderTermsRail(ch);
   updatePaneEnLabel(ch);
   // QA dashboard (Initiative 1) — fire-and-forget; the observations panel
   // populates whenever the chapter has any persisted detect_* rows. Hidden

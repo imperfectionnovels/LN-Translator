@@ -11,6 +11,135 @@
 .reader-stage[data-toc="off"] { grid-template-columns: 1fr; }
 .reader-stage[data-toc="off"] .toc-rail { display: none; }
 
+/* ===== Per-chapter glossary terms rail (right side, edit-mode only) =====
+ * Visibility is driven entirely by #reader-stage[data-terms="on"|"off"]
+ * (reader.js forces "off" in read mode), so the rail deliberately does NOT
+ * use the .edit-only class — that applies `display: revert`, which would
+ * clobber the flex column layout below in edit mode. The desktop grid track
+ * is added only above the drawer breakpoint; at ≤900px the rail becomes an
+ * off-canvas drawer (see the matching @media block lower in this file) and
+ * the stage stays single-column. */
+.reader-stage[data-terms="off"] .terms-rail { display: none; }
+@media (min-width: 901px) {
+  .reader-stage[data-toc="on"][data-terms="on"]  { grid-template-columns: 280px 1fr 300px; }
+  .reader-stage[data-toc="off"][data-terms="on"] { grid-template-columns: 1fr 300px; }
+}
+
+.terms-rail {
+  background: var(--pane-bg);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  height: 100vh;
+  position: sticky; top: 0;
+  overflow: hidden;
+}
+.terms-rail-head {
+  padding: 14px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.terms-rail-title {
+  font-family: var(--font-family-display);
+  font-size: 14.5px;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+  line-height: 1.2;
+}
+.terms-rail-title .terms-count {
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.terms-rail-head .btn-ghost { font-size: 12px; padding: 2px 6px; }
+.terms-rail-intro {
+  margin: 0;
+  padding: 8px 14px 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.terms-list {
+  flex: 1; overflow-y: auto;
+  padding: 8px 12px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.terms-list .terms-empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px 2px;
+}
+
+.term-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "main edit" "foot foot";
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+.term-card:hover { background: var(--bg-tint); border-color: var(--accent); }
+.term-card .tc-main { grid-area: main; min-width: 0; }
+.term-card .tc-zh {
+  font-family: var(--font-family-han);
+  font-size: 15px;
+  line-height: 1.25;
+}
+.term-card .tc-en {
+  font-family: var(--font-family-display);
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.term-card .tc-edit {
+  grid-area: edit;
+  align-self: start;
+  background: none; border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.term-card .tc-edit:hover { color: var(--accent); }
+.term-card .tc-foot {
+  grid-area: foot;
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.term-card .tc-cat { text-transform: capitalize; }
+.term-card .tc-count { font-variant-numeric: tabular-nums; }
+.term-card .tc-lock { color: var(--accent); }
+
+/* Brief highlight on the body occurrence when a term card is clicked, so the
+ * eye lands on it after the smooth scroll. Applied to the in-body .term span
+ * by reader.js::_jumpToTermInBody. */
+.term.term-flash { animation: term-flash 1200ms var(--ease); border-radius: 3px; }
+@keyframes term-flash {
+  0%, 35% { background: var(--accent); color: var(--bg); }
+  100% { background: transparent; }
+}
+
+/* Mobile terms drawer backdrop — hidden on desktop, mirrors #toc-backdrop. */
+.terms-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  z-index: 19;
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms var(--ease);
+  display: none;
+}
+
 /* Hamburger that opens the mobile drawer. Lives inside .chapter-bar but is
  * hidden on desktop — at widths above TOC_DRAWER_BREAKPOINT (see below) the
  * rail is always visible (or toggled via the in-rail "hide rail" button) and
@@ -82,6 +211,29 @@
    * Existing JS already flips data-toc to "off", which now slides the drawer
    * back out via the transform rule above. */
   .toc-foot #toc-toggle { font-size: 12.5px; }
+}
+
+/* Terms rail mobile drawer — mirrors the TOC drawer, sliding in from the
+ * RIGHT. The @media (min-width: 901px) grid-track rules above don't apply
+ * here, so the stage stays single-column and the rail floats over it. */
+@media (max-width: 900px) {
+  .terms-rail {
+    position: fixed;
+    top: 0; right: 0;
+    width: min(86vw, 320px);
+    height: 100vh; height: 100dvh;
+    z-index: 20;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+    transform: translateX(100%);
+    transition: transform 200ms var(--ease);
+  }
+  .reader-stage[data-terms="on"] .terms-rail { transform: translateX(0); }
+  /* Keep the rail rendered when closed so the slide-out transition plays
+   * (the desktop data-terms="off" display:none would kill it). */
+  .reader-stage[data-terms="off"] .terms-rail { display: flex; }
+
+  .terms-backdrop { display: block; }
+  .reader-stage[data-terms="on"] .terms-backdrop { opacity: 1; pointer-events: auto; }
 }
 
 /* Phone widths: the reader pane's 48/60/100 padding eats half a phone's
