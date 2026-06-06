@@ -37,7 +37,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── models.py              # Pydantic models
 │   ├── genres.py              # GENRES registry + resolve_genre()
 │   ├── routes/                # 15 routers, mounted under /api
-│   │   ├── translate.py           # /paste, /upload, /bulk + /append/*, /scrape
+│   │   ├── translate.py           # /paste, /upload, /bulk + /append/* + /insert (mid-novel) + /scrape
 │   │   ├── novels.py              # /novels list/get/patch/delete + downloads
 │   │   ├── chapters.py            # /chapters, /retranslate, /edit-paragraph, /retry-refinement
 │   │   ├── glossary.py            # per-novel CRUD + /affected-chapters + /retranslate-affected
