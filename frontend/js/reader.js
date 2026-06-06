@@ -1092,40 +1092,44 @@ function termClass(g) {
   return "term";
 }
 
+// Shared paragraph splitter for both reading panes and the edit-mode aligned
+// grid. Blank lines delimit paragraphs. When a raw has internal newlines but no
+// blank-line separator (some scraped CN raws), each non-empty line becomes its
+// own paragraph, so the source pane does not collapse into one giant <p> while
+// the EN side (marked with breaks:true) shows paragraph-level breaks. Returns
+// trimmed, non-empty paragraph strings.
+function _splitParas(text) {
+  const raw = String(text || "");
+  if (raw.includes("\n") && !/\n\s*\n/.test(raw)) {
+    return raw.split(/\n+/).map(p => p.trim()).filter(Boolean);
+  }
+  return raw.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+}
+
+// Render ONE already-split paragraph to a single <p>, overlaying glossary-term
+// highlight spans. `re` is the precompiled term regex for this side (or null).
+function _renderOneParaWithTerms(para, side, re) {
+  if (!re) return `<p>${escapeHtml(para).replace(/\n/g, "<br>")}</p>`;
+  // Run regex over the raw (unescaped) paragraph so word boundaries work,
+  // but render each piece via escapeHtml afterwards.
+  const out = [];
+  let lastIdx = 0;
+  let m;
+  re.lastIndex = 0;
+  while ((m = re.exec(para))) {
+    if (m.index > lastIdx) out.push(escapeHtml(para.slice(lastIdx, m.index)));
+    const matched = m[0];
+    const g = termInfo(matched, side);
+    out.push(`<span class="${termClass(g)}" data-term="${escapeHtml(g ? (side === "en" ? g.term_zh : g.term_en) : matched)}" title="${escapeHtml(g ? `${g.term_zh} ↔ ${g.term_en}${g.category ? " · " + g.category : ""}` : matched)}">${escapeHtml(matched)}</span>`);
+    lastIdx = m.index + matched.length;
+  }
+  if (lastIdx < para.length) out.push(escapeHtml(para.slice(lastIdx)));
+  return `<p>${out.join("").replace(/\n/g, "<br>")}</p>`;
+}
+
 function renderParagraphsWithTerms(text, side, pattern) {
   const re = pattern && pattern[side];
-  const raw = String(text || "");
-  // Detect single-newline-paragraph CN raws: when there are no blank-line
-  // separators but there ARE internal newlines, treat each non-empty line as
-  // its own paragraph. Without this branch, the whole chapter renders as one
-  // giant <p> with internal <br>s, while the EN side (rendered via marked
-  // with breaks:true) shows paragraph-level breaks — bilingual mode then
-  // visibly mismatches.
-  let paras;
-  if (raw.includes("\n") && !/\n\s*\n/.test(raw)) {
-    paras = raw.split(/\n+/).map(p => p.trim()).filter(Boolean);
-  } else {
-    paras = raw.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-  }
-  return paras.map(para => {
-    const safeBefore = escapeHtml(para).replace(/\n/g, "<br>");
-    if (!re) return `<p>${safeBefore}</p>`;
-    // Run regex over the raw (unescaped) paragraph so word boundaries work,
-    // but render each piece via escapeHtml afterwards.
-    const out = [];
-    let lastIdx = 0;
-    let m;
-    re.lastIndex = 0;
-    while ((m = re.exec(para))) {
-      if (m.index > lastIdx) out.push(escapeHtml(para.slice(lastIdx, m.index)));
-      const matched = m[0];
-      const g = termInfo(matched, side);
-      out.push(`<span class="${termClass(g)}" data-term="${escapeHtml(g ? (side === "en" ? g.term_zh : g.term_en) : matched)}" title="${escapeHtml(g ? `${g.term_zh} ↔ ${g.term_en}${g.category ? " · " + g.category : ""}` : matched)}">${escapeHtml(matched)}</span>`);
-      lastIdx = m.index + matched.length;
-    }
-    if (lastIdx < para.length) out.push(escapeHtml(para.slice(lastIdx)));
-    return `<p>${out.join("").replace(/\n/g, "<br>")}</p>`;
-  }).join("");
+  return _splitParas(text).map(para => _renderOneParaWithTerms(para, side, re)).join("");
 }
 
 function renderEnglishMarkdownWithTerms(text, pattern) {
@@ -1173,50 +1177,120 @@ function renderEnglishMarkdownWithTerms(text, pattern) {
 /* ---- Edit-mode paragraph-aligned grid (2026-06) ----
  * Pairs each source paragraph with its translation paragraph in shared rows so
  * a translator can compare and rewrite line by line. Active only in edit mode
- * (see renderChapterBody). The translator merges / splits paragraphs and emits
- * no alignment data, so this is best-effort: positional pairing, the longer
- * side's tail becomes continuation rows (no content is dropped), and when the
- * counts diverge past ALIGN_DIVERGENCE the layout falls back to the independent
+ * (see renderChapterBody).
+ *
+ * Both columns are split from the STORED text with one shared rule (_splitParas)
+ * so the cell counts reflect real paragraph structure. original_text keeps its
+ * leading chapter heading while the English title is stripped (it lives in the
+ * masthead), so we drop that heading from the source before aligning, otherwise
+ * every row shifts down by one.
+ *
+ * The translator may merge or split paragraphs and emits no alignment data, so
+ * the counts can legitimately diverge. _alignParas runs a length-ratio
+ * alignment (1:1 / 2:1 / 1:2) that keeps the columns in step past a local
+ * merge/split instead of letting one mismatch cascade down the chapter. Every
+ * target paragraph is stamped with its true stored-text index, so per-paragraph
+ * editing stays exact even when several paragraphs share one row. When the two
+ * sides are too divergent to align, the layout falls back to the independent
  * panes (where editing always works). */
-const ALIGN_DIVERGENCE = 0.25;
 
-function _splitSourceParas(zhText, pattern) {
-  // Reuse the exact splitter the legacy ZH pane uses so the source cells match
-  // it (and the count is comparable to the EN block count).
-  const tmp = document.createElement("div");
-  tmp.innerHTML = renderParagraphsWithTerms(zhText, "zh", pattern);
-  return Array.from(tmp.children).map(el => el.outerHTML);
+// Mirror of backend tm.py::_drop_leading_heading. Conservative: only the first
+// paragraph, only when it is a CN chapter-heading line.
+const _ZH_HEADING_RE = /^[ \t]*第[\d零〇一二三四五六七八九十百千万两]+[ \t]*[章回节]/;
+function _dropLeadingZhHeading(paras) {
+  return (paras.length && _ZH_HEADING_RE.test(paras[0])) ? paras.slice(1) : paras;
 }
 
-function _splitEnglishBlocks(enHtml) {
-  // enHtml is the already-rendered + DOMPurify-sanitized #body-en markup. Take
-  // its top-level block elements (<p>, <h2>, <blockquote>, ...) as the
-  // translation cells, so .tgt is identical to what the legacy pane shows.
+// Render one stored English paragraph (markdown) to display HTML, stamping each
+// top-level block with its true index in translated_text/refined_text so the
+// edit-on-blur handler splices the right chunk regardless of row grouping.
+function _renderEnChunkCell(chunk, pattern, paraIndex) {
   const tmp = document.createElement("div");
-  tmp.innerHTML = enHtml;
-  const blocks = [];
+  tmp.innerHTML = renderEnglishMarkdownWithTerms(chunk, pattern);
   tmp.childNodes.forEach(node => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      blocks.push(node.outerHTML);
-    } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-      blocks.push(`<p>${escapeHtml(node.textContent.trim())}</p>`);
-    }
+    if (node.nodeType === Node.ELEMENT_NODE) node.dataset.paragraphIndex = String(paraIndex);
   });
-  return blocks;
+  return tmp.innerHTML;
 }
 
-function _buildAlignedRows(zhText, enHtml, pattern) {
-  const zCells = _splitSourceParas(zhText, pattern);
-  const eCells = _splitEnglishBlocks(enHtml);
-  const zN = zCells.length, eN = eCells.length;
-  if (zN === 0 || eN === 0) return null;
-  if (Math.abs(zN - eN) / Math.max(zN, eN) > ALIGN_DIVERGENCE) return null;
-  const n = Math.max(zN, eN);
+/* Length-ratio paragraph alignment (Gale-Church-lite). Returns an ordered list
+ * of { src:[indices], tgt:[indices] } groups, or null when the two sides are
+ * too divergent to align meaningfully (caller falls back to the plain panes).
+ * Deterministic. Moves: 1:1, 2:1 (two source paras to one target), 1:2, and
+ * 1:0 / 0:1 (a paragraph with no counterpart) at a high penalty so content is
+ * grouped rather than dropped. Cost compares each target group's length to its
+ * expected length r*sourceLength, where r is the chapter's CN to EN expansion. */
+function _alignParas(srcParas, tgtParas) {
+  const n = srcParas.length, m = tgtParas.length;
+  if (!n || !m) return null;
+  // Very divergent counts: 1:1 / 2:1 / 1:2 moves cannot span it cleanly, and the
+  // plain panes read better than a forced grouping.
+  if (Math.abs(n - m) / Math.max(n, m) > 0.5) return null;
+  if (n * m > 4000000) return null; // perf backstop for pathological chapters
+  const sLen = srcParas.map(s => s.length);
+  const tLen = tgtParas.map(t => t.length);
+  const sTot = sLen.reduce((a, b) => a + b, 0);
+  const tTot = tLen.reduce((a, b) => a + b, 0);
+  if (!sTot || !tTot) return null;
+  const r = tTot / sTot;     // expected EN chars per CN char
+  const avgT = tTot / m;     // one average target paragraph, the penalty unit
+  // Bias hard toward 1:1. A merge or split must cut the length mismatch by more
+  // than a whole paragraph to be worth it, so equal-count chapters (the common
+  // case once the heading is dropped) stay 1:1 instead of reshuffling on
+  // per-paragraph length noise. STEP_PEN only gates OPTIONAL deviations: when the
+  // counts genuinely differ the move is forced regardless of the penalty.
+  const STEP_PEN = avgT;
+  const DROP_PEN = 4 * avgT; // dropping a paragraph (an empty cell) is a last resort
+  const cost = (srcChars, tgtChars) => Math.abs(tgtChars - r * srcChars);
+  const dp = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(Infinity));
+  const back = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(null));
+  dp[0][0] = 0;
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= m; j++) {
+      const base = dp[i][j];
+      if (base === Infinity) continue;
+      const relax = (di, dj, add) => {
+        const ni = i + di, nj = j + dj;
+        const c = base + add;
+        if (c < dp[ni][nj]) { dp[ni][nj] = c; back[ni][nj] = [di, dj]; }
+      };
+      if (i < n && j < m) relax(1, 1, cost(sLen[i], tLen[j]));
+      if (i + 1 < n && j < m) relax(2, 1, cost(sLen[i] + sLen[i + 1], tLen[j]) + STEP_PEN);
+      if (i < n && j + 1 < m) relax(1, 2, cost(sLen[i], tLen[j] + tLen[j + 1]) + STEP_PEN);
+      if (i < n) relax(1, 0, DROP_PEN + r * sLen[i]); // source para, no target
+      if (j < m) relax(0, 1, DROP_PEN + tLen[j]);     // target para, no source
+    }
+  }
+  if (dp[n][m] === Infinity) return null;
+  const groups = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    const mv = back[i][j];
+    if (!mv) return null; // unreachable; bail to the fallback
+    const [di, dj] = mv;
+    const src = [];
+    const tgt = [];
+    for (let k = i - di; k < i; k++) src.push(k);
+    for (let k = j - dj; k < j; k++) tgt.push(k);
+    groups.push({ src, tgt });
+    i -= di; j -= dj;
+  }
+  groups.reverse();
+  return groups;
+}
+
+function _buildAlignedRows(zhText, enMarkdown, pattern) {
+  const srcParas = _dropLeadingZhHeading(_splitParas(zhText));
+  const tgtParas = _splitParas(enMarkdown);
+  if (!srcParas.length || !tgtParas.length) return null;
+  const groups = _alignParas(srcParas, tgtParas);
+  if (!groups) return null;
+  const zhRe = pattern && pattern.zh;
   let out = "";
-  for (let i = 0; i < n; i++) {
-    const src = i < zN ? zCells[i] : "";
-    const tgt = i < eN ? eCells[i] : "";
-    out += `<div class="prow"><div class="src" lang="zh">${src}</div><div class="tgt">${tgt}</div></div>`;
+  for (const grp of groups) {
+    const srcHtml = grp.src.map(idx => _renderOneParaWithTerms(srcParas[idx], "zh", zhRe)).join("");
+    const tgtHtml = grp.tgt.map(idx => _renderEnChunkCell(tgtParas[idx], pattern, idx)).join("");
+    out += `<div class="prow"><div class="src" lang="zh">${srcHtml}</div><div class="tgt">${tgtHtml}</div></div>`;
   }
   return out;
 }
@@ -3012,7 +3086,7 @@ function renderChapterBody(ch) {
   const alignedEl = document.getElementById("aligned-body");
   let aligned = false;
   if (readerMode === "edit" && alignedEl) {
-    const rows = _buildAlignedRows(ch.original_text || "", bodyEn.innerHTML, pattern);
+    const rows = _buildAlignedRows(ch.original_text || "", enSource, pattern);
     if (rows) {
       alignedEl.innerHTML = rows;
       alignedEl.hidden = false;
@@ -3489,9 +3563,15 @@ function _captureParagraphMeta(p) {
   const col = _editColumn(variant);
   const body = lastChapter[col] || "";
   const chunks = body.split("\n\n");
-  const allPs = _activeTgtParas();
-  const idx = allPs.indexOf(p);
-  if (idx < 0 || idx >= chunks.length) return;
+  // The aligned grid stamps each target <p> with its true stored-text index at
+  // render time (alignment can put several paragraphs in one row, so DOM order
+  // is not the chunk index). Honor that stamp; the legacy single-column body
+  // has none, so fall back to DOM position there.
+  const stamped = p.dataset.paragraphIndex;
+  const idx = (stamped !== undefined && stamped !== "")
+    ? parseInt(stamped, 10)
+    : _activeTgtParas().indexOf(p);
+  if (!Number.isFinite(idx) || idx < 0 || idx >= chunks.length) return;
   p.dataset.chapterNum = String(currentCh);
   p.dataset.paragraphIndex = String(idx);
   p.dataset.beforeMd = chunks[idx];
