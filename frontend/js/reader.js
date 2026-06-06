@@ -3470,6 +3470,61 @@ if (styleNoteBtn && styleNoteDialog) {
   });
 }
 
+// Insert a chapter that was missed during import into the MIDDLE of the novel.
+// Edit-mode-only util-menu action; mirrors the style-note dialog wiring. All
+// derefs are null-guarded so a cached reader.html without the markup just
+// no-ops rather than throwing (which would kill the rest of reader.js).
+const insertChapterBtn = document.getElementById("insert-chapter");
+const insertChapterDialog = document.getElementById("insert-chapter-dialog");
+const insertAfterNum = document.getElementById("insert-after-num");
+const insertTitleInput = document.getElementById("insert-title");
+const insertTextArea = document.getElementById("insert-text");
+const insertStatus = document.getElementById("insert-status");
+const insertSave = document.getElementById("insert-save");
+const insertCancel = document.getElementById("insert-cancel");
+if (insertChapterBtn && insertChapterDialog) {
+  insertChapterBtn.addEventListener("click", () => {
+    // Default to "after the chapter you're reading"; the common case is
+    // noticing a gap right where you are.
+    insertAfterNum.value = String(Number.isInteger(currentCh) ? currentCh : 0);
+    insertTitleInput.value = "";
+    insertTextArea.value = "";
+    insertStatus.textContent = "";
+    insertChapterDialog.showModal();
+  });
+  insertCancel.addEventListener("click", () => insertChapterDialog.close());
+  insertSave.addEventListener("click", async () => {
+    const after = parseInt(insertAfterNum.value, 10);
+    const text = (insertTextArea.value || "").trim();
+    if (!Number.isInteger(after) || after < 0) {
+      insertStatus.textContent = "Enter a valid 'after chapter' number (0 or more).";
+      return;
+    }
+    if (!text) {
+      insertStatus.textContent = "Paste the chapter text first.";
+      return;
+    }
+    insertSave.disabled = true;
+    insertStatus.textContent = "Inserting…";
+    try {
+      const r = await api.insertChapter(novelId, after, text, insertTitleInput.value.trim() || null);
+      insertStatus.textContent = `Inserted ${r.added_chapters} chapter(s) at ${r.first_new_chapter}. Opening…`;
+      // Nudge any other open tab for this novel to refresh its TOC.
+      try {
+        const bc = new BroadcastChannel("novel-changes");
+        bc.postMessage({ novel_id: Number(novelId), type: "inserted" });
+        bc.close();
+      } catch (_) { /* ignore */ }
+      setTimeout(() => {
+        location.href = `/reader?novel=${novelId}&ch=${r.first_new_chapter || 1}`;
+      }, 500);
+    } catch (err) {
+      insertStatus.textContent = `Insert failed: ${err.message || err}`;
+      insertSave.disabled = false;
+    }
+  });
+}
+
 // Copy the whole chapter (English title + body) to the clipboard. Reads the
 // source markdown string straight from the loaded chapter so the copy matches
 // the .md download shape rather than the rendered, term-highlighted DOM.

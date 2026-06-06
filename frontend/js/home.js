@@ -679,10 +679,11 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
     try {
       const r = await api.appendBulk(appendNovelId, files);
       const skipped = r.skipped_files ? ` (${r.skipped_files} empty file(s) skipped)` : "";
-      showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipped}. Open the reader and click Translate on a chapter to queue it.`, "ok");
+      showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipped}. Opening reader. Click Translate on a chapter to queue it.`, "ok");
       broadcastNovelChange(appendNovelId);
       renderRecent();
-      setTimeout(() => { location.href = `/library`; }, 800);
+      const goto = r.first_new_chapter || 1;
+      setTimeout(() => { location.href = `/reader?novel=${appendNovelId}&ch=${goto}`; }, 800);
     } catch (err) {
       showStatus(`Failed: ${err.message}`, "err");
       unlockSubmit(btn);

@@ -28,6 +28,21 @@ class AppendPasteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_PASTE_CHARS)
 
 
+class InsertChapterRequest(BaseModel):
+    """Body for POST /api/translate/insert/{novel_id}.
+
+    Inserts pasted chapter(s) into the MIDDLE of a novel, immediately AFTER
+    `after_chapter_num`, renumbering the tail so reading order is preserved
+    (unlike /append/*, which only ever lands at the end). Fills a chapter that
+    was missed during import. `after_chapter_num=0` inserts at the very front.
+    `title` overrides the parsed/absent heading for the common single-chapter
+    case. Renumber logic lives in services/uploads.py::insert_parsed_chapters.
+    """
+    after_chapter_num: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=MAX_PASTE_CHARS)
+    title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS)
+
+
 class ScrapeRequest(BaseModel):
     """Body for POST /api/translate/scrape (Phase 5).
 

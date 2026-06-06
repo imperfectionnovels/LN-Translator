@@ -1256,3 +1256,97 @@ async def append_with_offset(
         await conn.rollback()
         raise
     return (rows[0][1] if rows else offset + 1), collision
+
+
+async def insert_parsed_chapters(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    after_chapter_num: int,
+    text: str,
+    title: str | None = None,
+) -> tuple[int, int]:
+    """Parse `text` and insert the chapter(s) immediately AFTER
+    `after_chapter_num`, renumbering the tail so reading order is preserved.
+
+    Unlike append_with_offset (which only ever lands above MAX(chapter_num)),
+    this places chapters in the MIDDLE, used to slot in a chapter missed
+    during a scrape. Returns (added_count, first_new_chapter_num).
+
+    Position: target = after_chapter_num + 1 is the chapter_num the first
+    inserted chapter receives. `after_chapter_num` must be 0..MAX(chapter_num);
+    0 inserts at the very front, MAX appends after the last chapter.
+
+    Renumbering is minimal: an existing numbering gap at the target slot(s) is
+    filled with no tail disturbance; otherwise every chapter at or after target
+    is shifted up by `count`. The shift uses a two-phase negative rewrite so it
+    never trips UNIQUE(novel_id, chapter_num) mid-statement (a plain
+    `chapter_num + count` UPDATE can collide with a not-yet-moved row).
+    novels.last_read_chapter_num is bumped in lockstep so the saved reading
+    position keeps pointing at the same actual chapter.
+
+    BEGIN IMMEDIATE up front (same reason as append_with_offset): serialize
+    concurrent writers on this novel so two inserts can't both read the same
+    layout and produce duplicate chapter_num values."""
+    chapters = parse_chapters(text)
+    if not chapters:
+        raise HTTPException(status_code=400, detail="no chapters parsed from input")
+    if title and len(chapters) == 1:
+        # User-supplied title wins for the common single missing-chapter case.
+        # Multi-chapter pastes keep their own parsed headings.
+        chapters[0].title_zh = title.strip() or chapters[0].title_zh
+    count = len(chapters)
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        max_num = await _max_chapter_num(conn, novel_id)
+        if not 0 <= after_chapter_num <= max_num:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"after_chapter_num must be between 0 and {max_num} "
+                    f"(got {after_chapter_num})"
+                ),
+            )
+        target = after_chapter_num + 1
+        # Are any of the slots we want to occupy already taken? A clean gap is
+        # filled directly; an occupied window shifts the tail to make room.
+        cur = await conn.execute(
+            "SELECT 1 FROM chapters WHERE novel_id = ? "
+            "AND chapter_num >= ? AND chapter_num < ? LIMIT 1",
+            (novel_id, target, target + count),
+        )
+        occupied = await cur.fetchone() is not None
+        if occupied:
+            # Two-phase negative shift: park the tail in the negative range
+            # (unique, can't collide with positive rows), then flip it back
+            # with the +count offset applied.
+            await conn.execute(
+                "UPDATE chapters SET chapter_num = -(chapter_num + ?) "
+                "WHERE novel_id = ? AND chapter_num >= ?",
+                (count, novel_id, target),
+            )
+            await conn.execute(
+                "UPDATE chapters SET chapter_num = -chapter_num "
+                "WHERE novel_id = ? AND chapter_num < 0",
+                (novel_id,),
+            )
+        rows = [
+            (novel_id, target + i, ch.title_zh, ch.original_text)
+            for i, ch in enumerate(chapters)
+        ]
+        await conn.executemany(
+            "INSERT INTO chapters (novel_id, chapter_num, title_zh, original_text, status) "
+            "VALUES (?, ?, ?, ?, 'pending')",
+            rows,
+        )
+        # Keep the durable reading position on the same actual chapter.
+        await conn.execute(
+            "UPDATE novels SET last_read_chapter_num = last_read_chapter_num + ? "
+            "WHERE id = ? AND last_read_chapter_num IS NOT NULL "
+            "AND last_read_chapter_num >= ?",
+            (count, novel_id, target),
+        )
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
+    return count, target

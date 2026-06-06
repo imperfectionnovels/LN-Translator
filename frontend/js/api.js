@@ -109,6 +109,13 @@ const api = {
     method: "POST",
     body: JSON.stringify({ text }),
   }),
+  // Insert pasted chapter(s) into the MIDDLE of a novel, after `afterNum`
+  // (0 = before the first chapter), renumbering the tail. Unlike appendPaste,
+  // which only lands at the end.
+  insertChapter: (novelId, afterNum, text, title = null) => apiFetch(`/api/translate/insert/${novelId}`, {
+    method: "POST",
+    body: JSON.stringify({ after_chapter_num: afterNum, text, ...(title ? { title } : {}) }),
+  }),
   appendUpload: (novelId, file) => {
     const fd = new FormData();
     fd.append("file", file);

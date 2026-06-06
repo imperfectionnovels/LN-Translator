@@ -25,6 +25,7 @@ from backend.genres import normalize_and_validate_genre
 from backend.models import (
     MAX_TITLE_CHARS,
     AppendPasteRequest,
+    InsertChapterRequest,
     PasteRequest,
     ScrapeRequest,
 )
@@ -58,6 +59,7 @@ from backend.services.uploads import (
     decode_html,
     ensure_novel_exists,
     ext_from_filename,
+    insert_parsed_chapters,
     read_bulk_file,
     read_text_file,
 )
@@ -518,6 +520,29 @@ async def append_upload(
         "detected_encoding": decoded.encoding,
         "source_type": source_type,
         "chapter_num_collision": collision,
+    }
+
+
+@router.post("/insert/{novel_id}")
+async def insert_chapter(
+    novel_id: int,
+    payload: InsertChapterRequest,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Insert pasted chapter(s) into the MIDDLE of a novel, immediately after
+    `after_chapter_num`, renumbering the tail. Fills a chapter missed during
+    import. Unlike /append/* (which only lands at the end), this places the
+    chapter at a chosen position. The inserted chapter is 'pending'; nothing
+    auto-translates."""
+    await ensure_novel_exists(conn, novel_id)
+    added, first = await insert_parsed_chapters(
+        conn, novel_id, payload.after_chapter_num, payload.text, payload.title,
+    )
+    return {
+        "novel_id": novel_id,
+        "added_chapters": added,
+        "first_new_chapter": first,
+        "first_chapter": first,  # alias for cross-endpoint consistency
     }
 
 

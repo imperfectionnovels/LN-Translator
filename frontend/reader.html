@@ -134,6 +134,7 @@
               <button class="util-menu-item" id="copy-chapter" title="Copy this chapter's English text to the clipboard" aria-label="Copy chapter"><span class="ico">⧉</span>Copy chapter</button>
               <button class="util-menu-item edit-only" id="edit-mode" title="Edit paragraphs so your rewrites teach the translator your preferred style" aria-label="Edit paragraphs"><span class="ico">✎</span>Edit paragraphs</button>
               <a class="util-menu-item" id="append-chapters" href="#" title="Append more raw chapters to this novel" aria-label="Append more chapters"><span class="ico">＋</span>Append chapters</a>
+              <button class="util-menu-item edit-only" id="insert-chapter" title="Insert a chapter that was missed during import into the middle of this novel (renumbers later chapters)" aria-label="Insert chapter"><span class="ico">⎀</span>Insert chapter…</button>
               <button class="util-menu-item edit-only" id="style-note-btn" title="Edit per-novel style note (voice anchor for translations)" aria-label="Style note"><span class="ico">✒</span>Style note</button>
               <!-- F22 (2026-05-25): edit-mode diagnostics. See the actual
                    prompt the LLM received and the per-attempt status. -->
@@ -461,6 +462,25 @@
     <div class="dialog-actions">
       <button type="button" class="btn-ghost" id="style-note-cancel">Cancel</button>
       <button type="button" class="btn-primary" id="style-note-save">Save</button>
+    </div>
+  </dialog>
+
+  <dialog id="insert-chapter-dialog" class="dialog edit-only" aria-labelledby="insert-chapter-title">
+    <h3 id="insert-chapter-title">Insert a chapter</h3>
+    <p style="font-size:.9em;color:var(--muted);margin:.4rem 0 .6rem">
+      Paste a chapter that was missed during import. It lands immediately <em>after</em> the chapter number you choose; later chapters are renumbered to make room. The inserted chapter starts untranslated, click Translate on it afterward.
+    </p>
+    <label style="display:block;font-size:.9em;margin-bottom:.5rem">
+      Insert after chapter
+      <input type="number" id="insert-after-num" min="0" step="1" style="width:6em;margin:0 .4rem;padding:.3rem;" />
+      <span style="color:var(--muted)">(0 = before the first chapter)</span>
+    </label>
+    <input type="text" id="insert-title" placeholder="Optional title (e.g. The Duel)" style="width:100%;padding:.4rem;box-sizing:border-box;margin-bottom:.5rem;" />
+    <textarea id="insert-text" rows="12" style="width:100%;font-family:var(--font-family-serif,serif);font-size:14px;padding:.6rem;box-sizing:border-box;" placeholder="Paste the raw chapter text here…"></textarea>
+    <div id="insert-status" style="font-size:.85em;color:var(--muted);margin-top:.4rem;min-height:1.2em;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="insert-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="insert-save">Insert</button>
     </div>
   </dialog>
 </main>
