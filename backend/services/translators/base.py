@@ -75,7 +75,7 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # xianxia examples, and the refiner reconciled to preserve (not flatten) force.
 # The composed system instruction is already part of the llm_cache key, so this
 # token is provenance plus a belt-and-suspenders force-miss of stale caches.
-PROMPT_TEMPLATE_VERSION = "phase5-novel-voice-recompose-1"
+PROMPT_TEMPLATE_VERSION = "phase6-novel-voice-natural-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
@@ -156,13 +156,15 @@ def _build_system_instruction_cached(
             "CUSTOM STYLE BRIEF, a user-supplied directive for THIS novel. It "
             "governs word choice, set-phrase and idiom sense, naturalization, "
             "and this novel's voice, and wins over base/overlay defaults within "
-            "that scope. It does NOT override the glossary or the overlay's "
-            "structural conventions (forms of address, title order, realm "
-            "names, casing, register zones); where it appears to, the "
-            "structural rule wins. Precedence, highest first: glossary and the "
-            "deterministic post-pass, then the overlay's structural "
-            "conventions, then this brief for voice and word choice, then the "
-            "universal base rules, then the worked examples (illustrative "
+            "that scope. It does NOT change glossary term wordings or the "
+            "overlay's structural conventions (forms of address, title order, "
+            "realm names, casing, register zones); where it appears to, the "
+            "structural rule wins. Precedence, highest first: (1) the "
+            "deterministic post-pass and glossary term wordings are fixed; "
+            "(2) write natural English novel prose, which is the job itself, "
+            "not a tiebreaker to settle last; (3) the overlay's structural "
+            "conventions; (4) this brief, for voice and word choice; (5) the "
+            "universal base rules; (6) the worked examples (illustrative "
             "only):",
             custom_brief.strip(),
         ])
