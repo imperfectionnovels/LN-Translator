@@ -79,8 +79,13 @@ function _refreshImportButtonStates() {
   for (const { tab, btn } of _IMPORT_TABS) {
     const sel = document.getElementById(`genre-${tab}`);
     const buttonEl = document.getElementById(btn);
-    if (!sel || !buttonEl) continue;
-    const ok = (sel.value || "").trim() !== "";
+    if (!buttonEl) continue;
+    // Append mode reuses the existing novel's genre, so initAppendMode() hides
+    // the genre picker. The genre gate must NOT apply there: a hidden, empty
+    // <select> would otherwise keep the submit button disabled forever, so
+    // clicking "Append chapters" silently does nothing. Create mode still
+    // requires a deliberate genre pick.
+    const ok = appendMode || (sel ? (sel.value || "").trim() !== "" : false);
     // Don't override an already-disabled "in flight" lock. The submit
     // handlers call lockSubmit() during the import and we mustn't
     // re-enable mid-flight just because the user clicks the dropdown.
@@ -219,7 +224,7 @@ async function initAppendMode() {
     const novel = await api.novel(appendNovelId);
     document.getElementById("page-title").textContent = `Append: ${novel.title}`;
     document.title = `Add chapters · ${novel.title}`;
-    banner.textContent = `Appending to “${novel.title}” (currently ${novel.total_chapters} chapters). New chapters land at the end.`;
+    banner.textContent = `Appending to “${novel.title}” (currently ${novel.total_chapters} chapters). A numbered chapter lands at its own number, filling any gap; otherwise it lands at the end.`;
   } catch (e) {
     banner.className = "status err";
     banner.textContent = `Could not load novel: ${e.message}`;

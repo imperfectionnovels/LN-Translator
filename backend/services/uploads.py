@@ -1192,25 +1192,24 @@ async def append_with_offset(
 ) -> tuple[int, bool]:
     """Atomically read MAX(chapter_num) and insert `chapters`.
 
-    When every appended chapter carries a printed heading number and the
-    batch's own reconciled numbers all sit above the novel's current
-    MAX(chapter_num), the chapters are inserted at those numbers directly — so
-    appending the next run of raws (第299章 …) lands at 299, not MAX+1. When
-    the batch is not reliably numbered (a missing heading, or numbers that
-    would collide with existing rows), every number is shifted by
-    MAX(chapter_num) instead — the original positional behavior.
+    Placement is gap-aware. When every appended chapter carries a printed
+    heading number and each target slot is free, the chapters are inserted at
+    their own numbers directly: appending 第357章 to a novel that is missing
+    357 fills the gap at 357, and appending the next run of raws (第1450章 ...)
+    lands at 1450. Only when the batch is not reliably numbered (a missing
+    heading) or a target slot is already taken does every number get shifted by
+    MAX(chapter_num) instead, the positional fallback that also guards a
+    re-upload of chapters that already exist (it never overwrites a row).
 
-    Returns (first_new_chapter_num, chapter_num_collision). `collision` is
-    True when the offset path was chosen specifically because the batch's
-    printed numbers would overlap existing rows (all_printed=True but
-    fits_above=False) — almost always means the user re-appended raws that
-    already exist. Surfaced in the route response so the frontend can warn,
-    and logged at WARNING so an operator can spot the case. False means
-    either no collision (printed-direct path) or a legitimately positional
-    append (no printed numbers at all).
+    Returns (first_new_chapter_num, chapter_num_collision). `collision` is True
+    only when the batch is fully printed but a target slot was occupied, so the
+    rows were offset-placed at the end instead, almost always a re-upload of
+    existing chapters. Surfaced in the route response so the frontend can warn,
+    and logged at WARNING. False means either a clean placement (gap-fill or
+    above-MAX) or a positional append (no printed numbers at all).
 
     BEGIN IMMEDIATE acquires the write lock up front so a concurrent append on
-    the same novel waits on the lock instead of reading the same MAX and
+    the same novel waits on the lock instead of reading the same layout and
     producing duplicate chapter_num values that violate UNIQUE(novel_id,
     chapter_num)."""
     await conn.execute("BEGIN IMMEDIATE")
@@ -1219,9 +1218,27 @@ async def append_with_offset(
         all_printed = bool(chapters) and all(
             ch.printed_num is not None for ch in chapters
         )
-        fits_above = bool(chapters) and min(ch.chapter_num for ch in chapters) > offset
-        collision = all_printed and not fits_above
-        if all_printed and fits_above:
+        # Reconciled numbers are where the batch wants to land if placed at its
+        # own headings. Drop it there directly when EVERY target slot is free
+        # (fills a gap, or extends above MAX). A slot that's already taken means
+        # the user re-appended raws that exist, so the whole batch falls back to
+        # offset-mode (it never overwrites a row). The BETWEEN-bounded scan
+        # keeps this O(range) and dodges the SQLite variable cap a big IN-list
+        # would hit on a many-thousand-file bulk append.
+        target_nums = [ch.chapter_num for ch in chapters]
+        occupied = False
+        if all_printed and target_nums:
+            lo, hi = min(target_nums), max(target_nums)
+            cur = await conn.execute(
+                "SELECT chapter_num FROM chapters "
+                "WHERE novel_id = ? AND chapter_num BETWEEN ? AND ?",
+                (novel_id, lo, hi),
+            )
+            taken = {r["chapter_num"] for r in await cur.fetchall()}
+            occupied = any(n in taken for n in target_nums)
+        place_direct = all_printed and not occupied
+        collision = all_printed and occupied
+        if place_direct:
             rows = [
                 (novel_id, ch.chapter_num, ch.title_zh, ch.original_text)
                 for ch in chapters
@@ -1235,12 +1252,11 @@ async def append_with_offset(
             printed_lo = min(ch.printed_num for ch in chapters)
             printed_hi = max(ch.printed_num for ch in chapters)
             logger.warning(
-                "append: novel %d printed range %d-%d collides with existing "
-                "chapters (max=%d); falling back to offset-mode insertion at "
-                "%d-%d. The append was probably a re-upload of existing "
-                "chapters; the new rows do NOT overwrite the originals.",
-                novel_id, printed_lo, printed_hi, offset,
-                rows[0][1], rows[-1][1],
+                "append: novel %d printed range %d-%d overlaps existing "
+                "chapters; falling back to offset-mode insertion at %d-%d. The "
+                "append was probably a re-upload of existing chapters; the new "
+                "rows do NOT overwrite the originals.",
+                novel_id, printed_lo, printed_hi, rows[0][1], rows[-1][1],
             )
         await conn.executemany(
             "INSERT INTO chapters (novel_id, chapter_num, title_zh, original_text, status) "

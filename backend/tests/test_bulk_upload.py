@@ -486,6 +486,37 @@ def test_append_paste_no_collision_when_above_max(client: TestClient) -> None:
     assert r2.json()["first_new_chapter"] == 3
 
 
+def test_append_paste_fills_gap_at_printed_number(client: TestClient) -> None:
+    """Gap-aware append: a chapter whose printed number points at a free slot
+    BELOW max lands in the gap, not offset to the end. This is the real-world
+    case of a scrape that skipped a chapter (e.g. 357 missing between 356/358)."""
+    body = "正文内容。" * 80
+    r = client.post(
+        "/api/translate/paste",
+        json={
+            "title": "Gappy",
+            # nums 1, 2, 4 with a hole at 3.
+            "text": f"第一章 甲\n{body}\n\n第二章 乙\n{body}\n\n第四章 丁\n{body}",
+        },
+    )
+    novel_id = r.json()["novel_id"]
+    r2 = client.post(
+        f"/api/translate/append/{novel_id}/paste",
+        json={"text": f"第三章 丙\n{body}"},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["chapter_num_collision"] is False
+    assert r2.json()["first_new_chapter"] == 3  # filled the gap, NOT 4 + max
+    nums = [
+        row["chapter_num"]
+        for row in _row(
+            "SELECT chapter_num FROM chapters WHERE novel_id = ? ORDER BY chapter_num",
+            (novel_id,),
+        )
+    ]
+    assert nums == [1, 2, 3, 4]
+
+
 def test_paste_title_whitespace_rejected(client: TestClient) -> None:
     """H5: whitespace-only title is rejected. PasteRequest's Pydantic
     min_length doesn't catch '   ' (it's three chars); normalize_title
