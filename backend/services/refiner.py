@@ -61,7 +61,8 @@ _REFINER_SYSTEM_INSTRUCTION = (
 
 
 # The user-supplied prompt template (rewritten 2026-06-06 from the user's
-# style brief). Edit-only directives — surface polish, preserve everything
+# style brief; kept genre-agnostic so every genre's refiner reads the same
+# editor brief). Edit-only directives: surface polish, preserve everything
 # else. The {glossary_block} placeholder names every glossary entry so the
 # refiner preserves them. The editor role is folded in at the top because
 # most backends' plain-text completion path doesn't forward
@@ -70,10 +71,10 @@ _REFINER_USER_TEMPLATE = """Your job is to rewrite the chapter below for clarity
 
 Style:
 - Polish the prose into smooth, natural English suitable for a novel.
-- Keep the tone dramatic, crisp, and slightly elevated, matching xianxia / cultivation fiction.
-- Preserve all cultivation terminology exactly unless it is clearly awkward or inconsistent.
-- Preserve names, titles, sect names, realms, treasures, techniques, and proper nouns.
-- Do not simplify worldbuilding terms such as True Monarch, Foundation Establishment, Fruition Attainment, Dao Foundation, Boundary Heaven, Divine Ability, Spirit Treasure, and the like.
+- Keep the tone crisp and clean, and preserve the draft's own voice and register rather than flattening it toward a plainer style.
+- Preserve all specialized and setting-specific terminology exactly unless it is clearly awkward or inconsistent.
+- Preserve character names, place names, titles, and other proper nouns.
+- Do not simplify worldbuilding or setting-specific terms; keep them exactly as the draft renders them.
 - Avoid over-explaining.
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
 - Keep the passage close to the original, but make it smoother and more polished.
