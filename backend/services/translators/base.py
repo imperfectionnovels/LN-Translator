@@ -75,7 +75,7 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # xianxia examples, and the refiner reconciled to preserve (not flatten) force.
 # The composed system instruction is already part of the llm_cache key, so this
 # token is provenance plus a belt-and-suspenders force-miss of stale caches.
-PROMPT_TEMPLATE_VERSION = "phase6-novel-voice-natural-1"
+PROMPT_TEMPLATE_VERSION = "phase6-novel-voice-lean-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
@@ -229,18 +229,15 @@ class TransientTranslatorError(Exception):
 
 
 def _scope_marker(g: GlossaryEntry) -> str:
-    """Initiative 3 scope label for the prompt-glossary line.
+    """Scope label for a prompt-glossary line.
 
-    Renders as `[novel-locked]` / `[novel-auto]` / `[global]` so the
-    translator can see precedence directly. Empty string when scope info
-    isn't useful (older callers that don't set scope still work — the
-    GlossaryEntry default is "novel" which combines with `locked` to give
-    [novel-locked] or [novel-auto]).
+    The MASTER (locked terms) vs THIS CHAPTER (auto-detected) block headers
+    already convey novel-locked vs novel-auto, so per-line tags are omitted for
+    novel entries to save tokens; only a cross-novel `[global]` term carries a
+    tag, since a global entry can sit inside either block. Empty string for any
+    novel-scope entry.
     """
-    scope = getattr(g, "scope", "novel")
-    if scope == "global":
-        return "[global]"
-    return "[novel-locked]" if getattr(g, "locked", False) else "[novel-auto]"
+    return "[global]" if getattr(g, "scope", "novel") == "global" else ""
 
 
 def _containment_notes(
@@ -302,18 +299,18 @@ def format_glossary(
         # Longest-term-first inside each category so the LLM matches compound
         # terms before their substrings. Stable secondary sort by term_zh.
         for g in sorted(entries, key=lambda e: (-len(e.term_zh), e.term_zh)):
-            # Scope tag right after the term so the precedence is visible
-            # without scanning to the end of the line.
-            base = f"  {g.term_zh} → {g.term_en}  {_scope_marker(g)}"
+            base = f"  {g.term_zh} → {g.term_en}"
+            marker = _scope_marker(g)
+            if marker:
+                base += f"  {marker}"
             usage = getattr(g, "usage_note", None)
             if usage and usage.strip():
                 base += f"  [usage: {usage.strip()}]"
             container = notes.get(id(g))
             if container is not None:
-                base += (
-                    f"  [part of {container.term_zh} → {container.term_en};"
-                    " match the longer term first, do not substitute this sub-term]"
-                )
+                # Compact containment pointer; base.md already states the
+                # longest-match rule, so the per-line note need not repeat it.
+                base += f"  [part of {container.term_zh} → {container.term_en}]"
             lines.append(base)
     return "\n".join(lines)
 

@@ -126,9 +126,19 @@ class AnthropicApiTranslator(BaseTranslator):
             "temperature": 0.3,
         }
         if system_prompt:
-            # Claude's API takes the system prompt as a top-level field, not
-            # as a message role.
-            kwargs["system"] = system_prompt
+            # Claude's API takes the system prompt as a top-level field. Send it
+            # as a structured block with cache_control so the static system
+            # instruction (byte-identical across a novel's chapters) is
+            # prompt-cached: chapters within the 5-minute window read it from
+            # cache instead of re-billing the full prefix. The cache hits surface
+            # as usage.cache_read_input_tokens (plumbed into _emit_usage above).
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
 
         t0 = time.perf_counter()
         last_exc: BaseException | None = None

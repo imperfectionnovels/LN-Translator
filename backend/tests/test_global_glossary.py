@@ -68,13 +68,14 @@ def test_format_glossary_labels_scope_for_each_kind():
         ),
     ]
     out = format_glossary(glossary)
-    # Every entry gets a scope tag visible to the translator.
-    assert "[novel-locked]" in out
-    assert "[novel-auto]" in out
+    # Novel-locked vs novel-auto is conveyed by the MASTER vs THIS CHAPTER block
+    # headers, so those per-line tags are omitted to save tokens; only a
+    # cross-novel [global] term carries a tag (it can sit in either block).
+    assert "[novel-locked]" not in out
+    assert "[novel-auto]" not in out
     assert "[global]" in out
-    # The tag sits beside the term, not at the line end after usage etc.
-    assert "Soaring Firmament  [novel-locked]" in out
-    assert "Hongyun Daoist  [novel-auto]" in out
+    assert "Soaring Firmament" in out
+    assert "Hongyun Daoist" in out
     assert "Foundation Establishment  [global]" in out
 
 
