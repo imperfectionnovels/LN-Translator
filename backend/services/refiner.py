@@ -60,14 +60,27 @@ _REFINER_SYSTEM_INSTRUCTION = (
 )
 
 
-# The user-supplied prompt template (Phase 4 kickoff, 2026-05-23). Edit-only
-# directives — surface polish, preserve everything else. The {glossary_block}
-# placeholder names every glossary entry so the refiner preserves them.
-# The editor role is folded in at the top because most backends' plain-text
-# completion path doesn't forward system_instruction.
-_REFINER_USER_TEMPLATE = """You are a literary editor giving one chapter of a translated web novel its final polish. The draft below has already been written as finished novel prose by a translator working from the source; treat it as canonical and well-made. Preserve its voice and force while fixing only what a copy editor fixes: a slack rhythm, an accidental word repetition, a muddled pronoun reference, a paragraph break in the wrong place, a dialogue or interior-thought line whose attribution or italicization is unclear.
+# The user-supplied prompt template (rewritten 2026-06-06 from the user's
+# style brief). Edit-only directives — surface polish, preserve everything
+# else. The {glossary_block} placeholder names every glossary entry so the
+# refiner preserves them. The editor role is folded in at the top because
+# most backends' plain-text completion path doesn't forward
+# system_instruction.
+_REFINER_USER_TEMPLATE = """Your job is to rewrite the chapter below for clarity, flow, and novel readability while preserving the original meaning, tone, terminology, character names, and plot details. The draft has already been translated from the source; treat it as canonical and rewrite only its English surface.
 
-Do not flatten the draft. Its vividness, varied rhythm, and strong verbs are deliberate and were matched to the source; leave them intact rather than smoothing them toward a plainer register. Equally, do not push the draft further: you cannot see the source, so you cannot tell licensed force from invented force. Add no events, facts, named entities, imagery, scale words, or intensity the draft does not already carry, and never re-translate. Keep every plot event, character name, point of view, and tense; keep first-person direct inner thought in italics regardless of tense; preserve the glossary terms below exactly as written.
+Style:
+- Polish the prose into smooth, natural English suitable for a novel.
+- Keep the tone dramatic, crisp, and slightly elevated, matching xianxia / cultivation fiction.
+- Preserve all cultivation terminology exactly unless it is clearly awkward or inconsistent.
+- Preserve names, titles, sect names, realms, treasures, techniques, and proper nouns.
+- Do not simplify worldbuilding terms such as True Monarch, Foundation Establishment, Fruition Attainment, Dao Foundation, Boundary Heaven, Divine Ability, Spirit Treasure, and the like.
+- Avoid over-explaining.
+- Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
+- Keep the passage close to the original, but make it smoother and more polished.
+- Prefer vivid but clean phrasing.
+- Break up long or tangled sentences when needed.
+- Preserve paragraph breaks when they help pacing.
+- Use standard novel dialogue formatting.
 
 Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
 
