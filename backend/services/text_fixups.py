@@ -286,6 +286,84 @@ def enforce_brackets(
 
 
 # ---------------------------------------------------------------------------
+# Markdown emphasis balancing
+# ---------------------------------------------------------------------------
+
+# The translator emits Markdown that the reader renders with `marked`: `**bold**`
+# for `**【Field: Value】**` system lines, `*italics*` for inner thought. The
+# model occasionally drops one half of a pair, leaving an unbalanced `**` / `*`
+# that `marked` cannot match and renders as a literal asterisk — a stray symbol
+# in the reader (e.g. a standalone `Sword Heart Illumination.**` paragraph).
+# `marked` matches emphasis delimiters within a single paragraph block (blank-
+# line separated), so balance is decided PER PARAGRAPH: a delimiter with no
+# partner in its own paragraph is stray and is removed. Balanced delimiters are
+# left intact — those are the intended bold / italic the reader renders.
+
+_PARA_SPLIT_RE = re.compile(r"(\n{2,})")
+_ASTERISK_RUN_RE = re.compile(r"\*+")
+
+
+def _balance_emphasis_in_paragraph(para: str) -> tuple[str, int]:
+    """Remove unpaired `**` / `*` emphasis delimiters from one paragraph.
+
+    Each maximal run of `*` is tokenized into delimiter slots: a run of length L
+    contributes `L // 2` bold (`**`) slots followed by one italic (`*`) slot when
+    L is odd (so `***` is one bold + one italic). Bold slots are paired across
+    the paragraph with an open/close toggle, italic slots likewise and
+    independently; any slot still open at end-of-paragraph is stray, and exactly
+    its `*` characters are dropped. Returns (text, removed_delimiter_count)."""
+    bold_slots: list[tuple[int, int]] = []  # 2-char [start, end) ranges
+    italic_slots: list[tuple[int, int]] = []  # 1-char [start, end) ranges
+    for m in _ASTERISK_RUN_RE.finditer(para):
+        pos, end = m.start(), m.end()
+        for _ in range((end - pos) // 2):
+            bold_slots.append((pos, pos + 2))
+            pos += 2
+        if pos < end:  # one leftover `*`
+            italic_slots.append((pos, pos + 1))
+
+    remove: list[tuple[int, int]] = []
+    for slots in (bold_slots, italic_slots):
+        open_idx: int | None = None
+        for idx in range(len(slots)):
+            open_idx = idx if open_idx is None else None
+        if open_idx is not None:
+            remove.append(slots[open_idx])
+
+    if not remove:
+        return para, 0
+
+    remove.sort()
+    out: list[str] = []
+    prev = 0
+    for start, end in remove:
+        out.append(para[prev:start])
+        prev = end
+    out.append(para[prev:])
+    return "".join(out), len(remove)
+
+
+def enforce_balanced_emphasis(text: str) -> tuple[str, int]:
+    """Strip unpaired Markdown emphasis delimiters so none render literally.
+
+    Splits on blank-line paragraph boundaries (preserving the separators
+    verbatim) and balances `**` / `*` within each paragraph, the same scope
+    `marked` uses to match emphasis. Balanced delimiters are kept (intended bold
+    / italic); only stray, unpaired ones are removed. Idempotent — a second pass
+    finds nothing unbalanced. Returns (rewritten_text, count)."""
+    if not text or "*" not in text:
+        return text, 0
+    parts = _PARA_SPLIT_RE.split(text)
+    total = 0
+    for i in range(0, len(parts), 2):  # even = paragraph content, odd = separators
+        cleaned, n = _balance_emphasis_in_paragraph(parts[i])
+        if n:
+            parts[i] = cleaned
+            total += n
+    return "".join(parts), total
+
+
+# ---------------------------------------------------------------------------
 # Heavenly Stem / Earthly Branch × Five-Phase casing enforcement
 # ---------------------------------------------------------------------------
 
