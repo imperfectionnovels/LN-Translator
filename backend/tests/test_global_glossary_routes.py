@@ -259,6 +259,34 @@ def test_apply_in_place_global_substitutes_across_chapters(client):
     assert any("Golden Core" in t for t in texts)
 
 
+def test_apply_in_place_respects_word_boundary_and_case(client):
+    """The substitution is `\\b`-anchored and case-sensitive: a plural
+    ('Golden Seats') and a lowercase form ('golden seat') must survive, while
+    the exact 'Golden Seat' token is replaced."""
+    _seed_novel_with_chapter(
+        "Boundary",
+        translated_text="The Golden Seat, the Golden Seats, and a golden seat.",
+    )
+    created = client.post(
+        "/api/glossary/global",
+        json={"term_zh": "金丹", "term_en": "Golden Seat", "category": "item"},
+    ).json()
+
+    resp = client.post(
+        f"/api/glossary/global/{created['id']}/apply-in-place",
+        json={"old_en": "Golden Seat", "new_en": "Golden Core"},
+    )
+    assert resp.status_code == 200
+
+    conn = sqlite3.connect(DB_PATH)
+    text = conn.execute(
+        "SELECT translated_text FROM chapters ORDER BY id DESC LIMIT 1"
+    ).fetchone()[0]
+    conn.close()
+    # Exact token replaced; plural and lowercase left untouched.
+    assert text == "The Golden Core, the Golden Seats, and a golden seat."
+
+
 def test_apply_in_place_global_404_for_unknown_entry(client):
     resp = client.post(
         "/api/glossary/global/999999/apply-in-place",

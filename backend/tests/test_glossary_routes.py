@@ -167,13 +167,34 @@ def test_create_locked_duplicate_returns_409(client):
     assert rows[0]["term_en"] == "Golden Core"
 
 
-def test_patch_updates_fields_and_keeps_locked(client):
+def _seed_unlocked_entry(novel_id: int, term_zh: str, term_en: str) -> int:
+    """Insert an auto-detected, UNLOCKED glossary row (as auto-extraction would),
+    so a PATCH can prove the implicit lock-on-edit rather than starting locked."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO glossary_entries "
+            "(novel_id, term_zh, term_en, category, auto_detected, locked) "
+            "VALUES (?, ?, ?, 'technique', 1, 0)",
+            (novel_id, term_zh, term_en),
+        )
+        eid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        return eid
+    finally:
+        conn.close()
+
+
+def test_patch_implicitly_locks_unlocked_entry(client):
+    """A PATCH on an unlocked auto-detected entry updates the field AND flips
+    locked 0->1 so later auto-detection can't clobber the user's edit."""
     novel_id = _seed_novel()
-    created = client.post(
-        f"/api/novels/{novel_id}/glossary",
-        json={"term_zh": "聚气", "term_en": "Qi Gathering", "category": "technique"},
-    ).json()
-    entry_id = created["id"]
+    entry_id = _seed_unlocked_entry(novel_id, "聚气", "Qi Gathering")
+
+    # Precondition: it really starts unlocked.
+    before = client.get(f"/api/novels/{novel_id}/glossary").json()
+    seeded = next(e for e in before if e["id"] == entry_id)
+    assert seeded["locked"] is False
 
     patched = client.patch(
         f"/api/glossary/{entry_id}",
@@ -183,7 +204,7 @@ def test_patch_updates_fields_and_keeps_locked(client):
     body = patched.json()
     assert body["term_en"] == "Qi Condensation"
     assert body["notes"] == "renamed"
-    # Editing keeps the entry locked so auto-detection won't clobber it.
+    # The edit itself flipped the lock (the load-bearing behavior).
     assert body["locked"] is True
 
 
@@ -240,7 +261,9 @@ def test_export_markdown_groups_by_category(client):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/markdown")
     text = resp.text
-    assert "# Glossary" in text
+    # Header uses a colon (no em-dash, per the project's no-em-dash rule).
+    assert "# Glossary: MD Novel" in text
+    assert "—" not in text and "–" not in text
     assert "## character" in text
     # Locked manual entry renders the check mark in the Locked column.
     assert "| 白小纯 | Bai Xiaochun | ✓ |" in text

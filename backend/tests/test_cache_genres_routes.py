@@ -48,6 +48,9 @@ def test_cache_stats_shape(client):
         assert set(body[stage]) == {"hits", "misses", "hit_rate"}
         assert isinstance(body[stage]["hits"], int)
         assert isinstance(body[stage]["misses"], int)
+        # hit_rate is None when no lookups happened, else a valid 0..1 ratio.
+        rate = body[stage]["hit_rate"]
+        assert rate is None or (isinstance(rate, float) and 0.0 <= rate <= 1.0)
     assert isinstance(body["on_disk_bytes"], int)
     assert isinstance(body["on_disk_files"], int)
 

@@ -48,8 +48,10 @@ def test_construct_with_default_base_url_no_api_key() -> None:
     t = OllamaTranslator(_provider(model_id="qwen2.5:72b"))
     assert t.model_id == "qwen2.5:72b"
     assert t._provider_name == "my-ollama"
-    # The SDK client was built with the conventional placeholder key, not None.
+    # The SDK client was built with the conventional placeholder key (the whole
+    # reason Ollama overrides __init__), not None and not the missing secret_ref.
     assert t._client is not None
+    assert t._client.api_key == "ollama"
     assert str(t._client.base_url).startswith("http://localhost:11434")
 
 

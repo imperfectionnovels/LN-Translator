@@ -66,7 +66,7 @@ async def export_glossary(
     else:
         # Markdown: a single table per category. Sorted within category by
         # term_zh so the output is stable and diffable.
-        lines: list[str] = [f"# Glossary — {novel['title']}", ""]
+        lines: list[str] = [f"# Glossary: {novel['title']}", ""]
         by_cat: dict[str, list[GlossaryEntry]] = {}
         for e in entries:
             by_cat.setdefault(e.category, []).append(e)

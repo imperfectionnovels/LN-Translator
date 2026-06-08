@@ -131,6 +131,10 @@ def test_to_model_maps_service_dataclass_fields():
     assert model.secret_ref == "DEEPSEEK_API_KEY"
     assert model.is_default is True
     assert model.last_tested_at == "2026-06-08T00:00:00"
+    # created_at / updated_at are plumbed separately and are the most likely to
+    # be dropped in a _to_model refactor, so pin them explicitly.
+    assert model.created_at == "2026-06-01T00:00:00"
+    assert model.updated_at == "2026-06-02T00:00:00"
 
 
 def test_bucket_iso_dates_length_and_ordering():
