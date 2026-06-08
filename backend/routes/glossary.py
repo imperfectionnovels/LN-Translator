@@ -110,16 +110,16 @@ async def create_glossary_entry(
             notes=payload.notes,
             usage_note=payload.usage_note,
         )
-    except glossary_svc.LockedEntryConflict:
+    except glossary_svc.LockedEntryConflict as exc:
         raise HTTPException(
             status_code=409,
             detail=(
                 f'Term "{payload.term_zh}" already exists and is locked. '
                 "Edit the existing entry instead."
             ),
-        )
+        ) from exc
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/glossary/{entry_id}")
@@ -142,7 +142,7 @@ async def update_entry(
             locked=payload.locked,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if updated is None:
         raise HTTPException(status_code=404, detail="entry not found")
     return updated

@@ -134,7 +134,9 @@ async def search_chapters(
             cur = await conn.execute(sql, (novel_id, f'"{safe}"'))
             rows = await cur.fetchall()
         except aiosqlite.OperationalError as e2:
-            raise HTTPException(status_code=503, detail=f"search unavailable: {e2}")
+            raise HTTPException(
+                status_code=503, detail=f"search unavailable: {e2}"
+            ) from e2
     return ChapterSearchResults(
         matches=[
             ChapterSearchMatch(

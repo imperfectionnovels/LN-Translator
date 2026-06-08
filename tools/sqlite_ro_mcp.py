@@ -36,17 +36,33 @@ _PRAGMA_OK = re.compile(
     re.IGNORECASE,
 )
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--db", required=True, help="absolute path to the SQLite file")
-parser.add_argument("--name", default=None, help="server display name")
-parser.add_argument("--selftest", action="store_true", help="run a local check, no MCP")
-ARGS, _ = parser.parse_known_args()
+# Resolved lazily by main()/_configure() so importing this module is side-effect
+# free (no argv parsing at import time), keeps it inspectable by tooling/tests.
+DB_PATH: str | None = None
+SERVER_NAME: str | None = None
 
-DB_PATH = os.path.abspath(os.path.expandvars(ARGS.db))
-SERVER_NAME = ARGS.name or ("sqlite-ro:" + os.path.basename(DB_PATH))
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--db", required=True, help="absolute path to the SQLite file")
+    parser.add_argument("--name", default=None, help="server display name")
+    parser.add_argument(
+        "--selftest", action="store_true", help="run a local check, no MCP"
+    )
+    args, _ = parser.parse_known_args(argv)
+    return args
+
+
+def _configure(db: str, name: str | None = None) -> None:
+    """Resolve the module-global DB_PATH / SERVER_NAME from a db path."""
+    global DB_PATH, SERVER_NAME
+    DB_PATH = os.path.abspath(os.path.expandvars(db))
+    SERVER_NAME = name or ("sqlite-ro:" + os.path.basename(DB_PATH))
 
 
 def _connect() -> sqlite3.Connection:
+    if DB_PATH is None:
+        raise RuntimeError("DB_PATH not configured; call _configure() or run main()")
     # mode=ro: open an existing DB read-only; any write raises OperationalError.
     uri = "file:" + DB_PATH.replace("\\", "/") + "?mode=ro"
     con = sqlite3.connect(uri, uri=True, timeout=10)
@@ -72,8 +88,10 @@ def _rows_to_json(cur: sqlite3.Cursor, limit: int) -> str:
     return json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=1, default=str)
 
 
-def main() -> None:
-    if ARGS.selftest:
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    _configure(args.db, args.name)
+    if args.selftest:
         con = _connect()
         n = con.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view')"
