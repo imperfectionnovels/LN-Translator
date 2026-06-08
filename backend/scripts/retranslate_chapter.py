@@ -25,6 +25,7 @@ import argparse
 import asyncio
 
 from backend.db import open_conn
+from backend.scripts._db_banner import confirm_db, print_db_banner
 from backend.services import queue
 
 
@@ -64,7 +65,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("novel_id", type=int)
     ap.add_argument("chapter_num", type=int)
+    ap.add_argument("--yes", action="store_true",
+                    help="skip the DB-write confirmation prompt")
     args = ap.parse_args()
+    print_db_banner(mutates=True)
+    if not confirm_db(
+        f"force-retranslate novel {args.novel_id} chapter {args.chapter_num}",
+        assume_yes=args.yes,
+    ):
+        raise SystemExit(1)
     asyncio.run(_run(args.novel_id, args.chapter_num))
 
 

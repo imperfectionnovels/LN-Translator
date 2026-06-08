@@ -47,6 +47,7 @@ from datetime import datetime
 
 from backend.config import PROJECT_ROOT, PROMPT_INCLUDE_FREE_DRAFT
 from backend.db import open_conn
+from backend.scripts._db_banner import print_db_banner
 from backend.services import global_glossary as global_glossary_svc
 from backend.services.prompt_inputs import (
     STYLE_EDIT_LIMIT,
@@ -324,6 +325,7 @@ def main() -> None:
         help="skip writing the markdown report under data/",
     )
     args = ap.parse_args()
+    print_db_banner(mutates=False)
     code = asyncio.run(
         run(args.novel_id, args.chapter, args.limit, not args.no_report)
     )

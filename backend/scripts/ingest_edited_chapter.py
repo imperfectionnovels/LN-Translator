@@ -39,6 +39,7 @@ from datetime import datetime
 
 from backend.config import DB_PATH, PROJECT_ROOT
 from backend.db import open_conn
+from backend.scripts._db_banner import print_db_banner
 from backend.scripts.ab_style_edits import _clip
 from backend.services import global_glossary as global_glossary_svc
 from backend.services.glossary import is_half_applied_lowercase_hatch
@@ -331,6 +332,7 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true",
                     help="stage STYLE-route rewrites as style_edits (prompts for confirmation)")
     args = ap.parse_args()
+    print_db_banner(mutates=args.apply)
     if args.edited_stdin:
         edited = sys.stdin.read()
     else:

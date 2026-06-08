@@ -26,6 +26,7 @@ import argparse
 import asyncio
 
 from backend.db import open_conn
+from backend.scripts._db_banner import confirm_db, print_db_banner
 from backend.scripts.ab_style_edits import _clip, _score
 from backend.scripts.ingest_edited_chapter import _align_pairs, _split_paras
 
@@ -111,7 +112,15 @@ def main() -> None:
     ap.add_argument("--source", choices=["draft", "refined"], default="draft")
     ap.add_argument("--retranslate", action="store_true",
                     help="force a fresh translation first (burns the subscription window)")
+    ap.add_argument("--yes", action="store_true",
+                    help="skip the DB-write confirmation prompt (only relevant with --retranslate)")
     args = ap.parse_args()
+    print_db_banner(mutates=args.retranslate)
+    if args.retranslate and not confirm_db(
+        f"force-retranslate novel {args.novel_id} chapter {args.chapter}",
+        assume_yes=args.yes,
+    ):
+        raise SystemExit(1)
     with open(args.edited_file, encoding="utf-8") as fh:
         edited = fh.read()
     raise SystemExit(asyncio.run(
