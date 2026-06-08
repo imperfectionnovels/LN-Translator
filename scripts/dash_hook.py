@@ -26,7 +26,12 @@ _DASHES = "—–―"  # em, en, horizontal bar
 
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
+        # Read stdin as raw bytes and decode UTF-8 explicitly. On Windows the
+        # default stdin codec is cp1252, which misdecodes the UTF-8 bytes of CJK
+        # source text in the prompt examples: e.g. 门 (E9 97 A8) has a 0x97 byte
+        # that cp1252 maps to U+2014 (em-dash), falsely tripping the guard.
+        raw = sys.stdin.buffer.read()
+        payload = json.loads(raw.decode("utf-8"))
     except Exception:
         return 0
     tool_input = payload.get("tool_input") or {}
