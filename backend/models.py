@@ -329,6 +329,48 @@ class ChapterSearchResults(BaseModel):
     matches: list[ChapterSearchMatch]
 
 
+class OtherRendering(BaseModel):
+    """How a near-duplicate source paragraph was rendered in another chapter."""
+
+    chapter_num: int
+    target_text: str
+    similarity: float  # 0..1
+    exact: bool
+
+
+class ConsistencyMatch(BaseModel):
+    """A current-chapter paragraph whose Chinese source recurs elsewhere in the
+    novel with a different English rendering than the one shown here."""
+
+    paragraph_index: int
+    source_text: str
+    current_rendering: str
+    others: list[OtherRendering]
+
+
+class ConsistencyGlossaryFlag(BaseModel):
+    """A locked glossary term present in the source but absent from the
+    translation (likely rendered off-canon in this chapter)."""
+
+    term_id: int | None
+    term_zh: str
+    expected_en: str
+    paragraph_index: int | None
+
+
+class ConsistencyFindings(BaseModel):
+    """Response for GET /novels/{id}/chapters/{n}/consistency. The edit-mode
+    rail reads this. `status` drives the empty-state copy:
+      - "ok": ran; `matches`/`glossary_flags` may still be empty (no drift).
+      - "not_translated": the chapter has no English yet.
+      - "tm_unavailable": source/translation couldn't be aligned, so the fuzzy
+        tier is skipped (glossary flags may still be present)."""
+
+    status: str
+    matches: list[ConsistencyMatch]
+    glossary_flags: list[ConsistencyGlossaryFlag]
+
+
 class DeleteCounts(BaseModel):
     """Response for GET /novels/{id}/delete-counts. Mirrors the
     `services.soft_delete.DeleteCounts` dataclass field-for-field so the

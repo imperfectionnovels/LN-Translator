@@ -140,6 +140,110 @@
   display: none;
 }
 
+/* ===== Per-chapter consistency rail (right side, edit-mode only) =====
+ * Shares the right grid column with the terms rail; reader.js keeps the two
+ * mutually exclusive. Hidden by default (the rail defaults CLOSED), shown only
+ * when #reader-stage[data-consistency="on"]. At <=900px it becomes an
+ * off-canvas drawer from the right, mirroring the terms rail. */
+@media (min-width: 901px) {
+  .reader-stage[data-toc="on"][data-consistency="on"]  { grid-template-columns: 280px 1fr 320px; }
+  .reader-stage[data-toc="off"][data-consistency="on"] { grid-template-columns: 1fr 320px; }
+}
+.consistency-rail {
+  display: none;
+  background: var(--pane-bg);
+  border-left: 1px solid var(--border);
+  flex-direction: column;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  height: 100vh;
+  position: sticky; top: 0;
+  overflow: hidden;
+}
+.reader-stage[data-consistency="on"] .consistency-rail { display: flex; }
+.consistency-rail-head {
+  padding: 14px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.consistency-rail-title {
+  font-family: var(--font-family-display);
+  font-size: 14.5px; font-weight: 600; margin: 0; flex: 1; line-height: 1.2;
+}
+.consistency-rail-title .consistency-count {
+  font-family: var(--font-family-sans); font-size: 11.5px; font-weight: 500; color: var(--muted);
+}
+.consistency-rail-head .btn-ghost { font-size: 12px; padding: 2px 6px; }
+.consistency-rail-intro { margin: 0; padding: 8px 14px 4px; font-size: 11.5px; line-height: 1.4; }
+.consistency-list {
+  flex: 1; overflow-y: auto; padding: 8px 12px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.consistency-empty, .consistency-note {
+  color: var(--muted); font-size: 12.5px; line-height: 1.5; padding: 8px 2px;
+}
+.consistency-note { border-left: 2px solid var(--border); padding-left: 8px; }
+.cons-section-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin-top: 2px;
+}
+.cons-item {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px; background: var(--bg);
+}
+.cons-item-head { display: flex; gap: 6px; cursor: pointer; align-items: baseline; }
+.cons-pmark { color: var(--muted); font-size: 11px; flex: none; }
+.cons-src { font-size: 12.5px; line-height: 1.4; }
+.cons-here { font-size: 12px; line-height: 1.4; }
+.cons-here-label {
+  display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--muted); margin-right: 5px;
+}
+.cons-other {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; line-height: 1.4; padding-top: 5px; border-top: 1px dashed var(--border);
+}
+.cons-other-ch { color: var(--muted); flex: none; }
+.cons-other-text { line-height: 1.4; }
+.cons-badge {
+  flex: none; font-size: 10px; font-weight: 600; border-radius: 4px;
+  padding: 1px 5px; background: var(--border); color: var(--muted);
+}
+.cons-badge.exact { background: #b91c1c; color: #fff; }
+.cons-badge.fuzzy { background: var(--border); color: var(--muted); }
+.cons-badge.warn  { background: #b45309; color: #fff; }
+.cons-flag {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  font-size: 12.5px; line-height: 1.4; background: var(--bg);
+}
+.cons-flag .cons-arrow { color: var(--muted); }
+.cons-flag:hover, .cons-other:hover, .cons-item-head:hover { opacity: .82; }
+
+.consistency-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  z-index: 19;
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms var(--ease);
+  display: none;
+}
+@media (max-width: 900px) {
+  .consistency-rail {
+    display: flex;
+    position: fixed; top: 0; right: 0;
+    width: min(86vw, 340px);
+    height: 100vh; height: 100dvh;
+    z-index: 20;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+    transform: translateX(100%);
+    transition: transform 200ms var(--ease);
+  }
+  .reader-stage[data-consistency="on"] .consistency-rail { transform: translateX(0); }
+  .consistency-backdrop { display: block; }
+  .reader-stage[data-consistency="on"] .consistency-backdrop { opacity: 1; pointer-events: auto; }
+}
+
 /* Hamburger that opens the mobile drawer. Lives inside .chapter-bar but is
  * hidden on desktop — at widths above TOC_DRAWER_BREAKPOINT (see below) the
  * rail is always visible (or toggled via the in-rail "hide rail" button) and

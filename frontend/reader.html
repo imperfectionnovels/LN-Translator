@@ -117,6 +117,15 @@
           <button class="icon-btn terms-rail-toggle edit-only" id="terms-rail-toggle" title="Show or hide the per-chapter glossary terms panel" aria-label="Toggle glossary terms panel" aria-pressed="false">
             <span aria-hidden="true">Terms</span>
           </button>
+          <!-- 2026-06-07: edit-mode consistency rail toggle. Surfaces near-
+               duplicate Chinese source paragraphs rendered differently
+               elsewhere in the novel (fuzzy TM) plus locked glossary terms
+               missing from this chapter. On-demand: the fetch fires only while
+               the panel is open. Shares the right column with #terms-rail
+               (reader.js keeps them mutually exclusive). -->
+          <button class="icon-btn consistency-rail-toggle edit-only" id="consistency-rail-toggle" title="Show or hide the consistency check: near-duplicate source rendered differently elsewhere, plus locked glossary terms missing here" aria-label="Toggle consistency panel" aria-pressed="false">
+            <span aria-hidden="true">Consistency</span>
+          </button>
           <button class="icon-btn observations-btn edit-only" id="observations-btn" title="Open the QA panel for translation issues the system noticed for this chapter" aria-label="Translation issues" hidden>
             <span class="observations-icon">⚠</span>
             <span class="observations-count" id="observations-count">0</span>
@@ -264,6 +273,24 @@
          .reader-stage[data-terms="on"] .terms-backdrop matches. Hidden on
          desktop; fades in on narrow screens when data-terms="on". -->
     <div class="terms-backdrop" id="terms-backdrop" hidden></div>
+
+    <!-- Edit-mode consistency rail (on-demand, 2026-06-07). Surfaces near-
+         duplicate Chinese source paragraphs rendered differently elsewhere in
+         the novel (fuzzy TM, services/consistency.py) plus locked glossary
+         terms missing from this chapter's translation. Read-only / advisory:
+         fixes reuse the paragraph-edit and glossary-editor flows. Shares the
+         right column with #terms-rail (reader.js keeps them mutually
+         exclusive). Gated by #reader-stage[data-consistency="on"|"off"]
+         (forced "off" in read mode). Off-canvas drawer on narrow screens. -->
+    <aside class="consistency-rail" id="consistency-rail" aria-label="Consistency check for this chapter">
+      <div class="consistency-rail-head">
+        <h3 class="consistency-rail-title">Consistency <span class="consistency-count" id="consistency-count"></span></h3>
+        <button type="button" class="btn-ghost" id="consistency-rail-close" aria-label="Hide consistency panel">hide</button>
+      </div>
+      <p class="consistency-rail-intro muted">Near-identical source rendered differently elsewhere, and locked terms missing here. Click to jump or open the glossary editor.</p>
+      <div class="consistency-list" id="consistency-list" aria-live="polite"></div>
+    </aside>
+    <div class="consistency-backdrop" id="consistency-backdrop" hidden></div>
   </div>
 
   <div class="reading-rail" id="reading-rail">

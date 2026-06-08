@@ -62,6 +62,12 @@ dependencies = [
     # that throttling is rare. Version-pinned because the library wraps
     # Google's web HTML and breaks if the API drifts.
     "deep-translator>=1.11,<2.0",
+    # rapidfuzz: fast character-level fuzzy matching (Levenshtein/Indel ratio).
+    # Powers the edit-mode consistency rail (services/consistency.py), which
+    # finds near-duplicate Chinese source paragraphs that were translated
+    # differently across chapters. MIT-licensed. Compiled C/C++ extension, so
+    # PyInstaller picks it up via hiddenimports in LN-Translator.spec.
+    "rapidfuzz>=3.0",
 ]
 
 [project.optional-dependencies]

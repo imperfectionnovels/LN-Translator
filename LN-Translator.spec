@@ -143,6 +143,16 @@ except Exception:
     pass
 # beautifulsoup4 is used by site recipes for CSS-selector extraction.
 hiddenimports += collect_submodules("bs4")
+# rapidfuzz: compiled C++ extension (fuzz / process / distance submodules
+# plus bundled .pyd binaries) powering the edit-mode consistency rail
+# (backend/services/consistency.py). PyInstaller's static analysis misses
+# the dynamically-loaded compiled modules, so collect both the submodules
+# and the dynamic libraries explicitly. MIT-licensed.
+hiddenimports += collect_submodules("rapidfuzz")
+try:
+    binaries_free_draft += collect_dynamic_libs("rapidfuzz")
+except Exception:
+    pass
 
 
 a = Analysis(

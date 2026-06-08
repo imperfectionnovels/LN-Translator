@@ -243,6 +243,8 @@ const api = {
   glossaryHealth: (novelId) => apiFetch(`/api/novels/${novelId}/glossary/health`),
   chapterSaturation: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/saturation`),
+  getChapterConsistency: (novelId, chapterNum) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/consistency`),
   searchChapters: (novelId, q) =>
     apiFetch(`/api/novels/${novelId}/search?q=${encodeURIComponent(q)}`),
   editParagraph: (novelId, chapterNum, paragraphIndex, beforeMd, afterText, source = "draft") =>

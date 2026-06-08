@@ -13,9 +13,14 @@ from backend.models import (
     ChapterSearchMatch,
     ChapterSearchResults,
     ChapterSummary,
+    ConsistencyFindings,
+    ConsistencyGlossaryFlag,
+    ConsistencyMatch,
     EditParagraphRequest,
     OcrIssues,
+    OtherRendering,
 )
+from backend.services import consistency as consistency_svc
 from backend.services import queue as queue_svc
 from backend.services.pre_check import chapter_pre_check
 
@@ -600,3 +605,50 @@ async def get_chapter_last_prompt(
     from backend.services.translation_attempts import latest_prompt  # noqa: PLC0415
     snapshot = await latest_prompt(conn, ch["id"])
     return {"prompt": snapshot}
+
+
+@router.get("/novels/{novel_id}/chapters/{chapter_num}/consistency")
+async def get_chapter_consistency(
+    novel_id: int,
+    chapter_num: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> ConsistencyFindings:
+    """Edit-mode consistency rail data: near-duplicate Chinese source
+    paragraphs rendered differently elsewhere in the novel (fuzzy TM) plus
+    locked glossary terms missing from this chapter's translation. Read-only,
+    on-demand. 404 only when the chapter row is missing; an untranslated or
+    unalignable chapter returns a populated `status` with empty findings."""
+    result = await consistency_svc.consistency_for_chapter(
+        conn, novel_id, chapter_num
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    return ConsistencyFindings(
+        status=result.status,
+        matches=[
+            ConsistencyMatch(
+                paragraph_index=m.paragraph_index,
+                source_text=m.source_text,
+                current_rendering=m.current_rendering,
+                others=[
+                    OtherRendering(
+                        chapter_num=o.chapter_num,
+                        target_text=o.target_text,
+                        similarity=o.similarity,
+                        exact=o.exact,
+                    )
+                    for o in m.others
+                ],
+            )
+            for m in result.matches
+        ],
+        glossary_flags=[
+            ConsistencyGlossaryFlag(
+                term_id=f.term_id,
+                term_zh=f.term_zh,
+                expected_en=f.expected_en,
+                paragraph_index=f.paragraph_index,
+            )
+            for f in result.glossary_flags
+        ],
+    )
