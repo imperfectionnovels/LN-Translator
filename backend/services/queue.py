@@ -63,6 +63,7 @@ from backend.services.text_fixups import (
     enforce_em_dash,
     enforce_locked_term_casing,
     enforce_lowercase_locked_terms,
+    enforce_mid_sentence_comma_break,
     enforce_sentence_initial_capitalization,
     enforce_spaced_hyphen_dash,
     enforce_stem_branch_casing,
@@ -611,11 +612,12 @@ def _apply_text_fixups(result, glossary, chapter_num: int) -> tuple[str | None, 
     cleaned_text, emph_count = enforce_balanced_emphasis(cleaned_text)
     cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
     cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
-    if em_count or sh_count or emph_count or brk_count or si_count:
+    cleaned_text, mc_count = enforce_mid_sentence_comma_break(cleaned_text)
+    if em_count or sh_count or emph_count or brk_count or si_count or mc_count:
         logger.info(
             "queue: chapter %d translate guardrails: %d em-dash, %d spaced-hyphen, "
-            "%d emphasis, %d bracket, %d sentence-initial fix(es)",
-            chapter_num, em_count, sh_count, emph_count, brk_count, si_count,
+            "%d emphasis, %d bracket, %d sentence-initial, %d comma-break-join fix(es)",
+            chapter_num, em_count, sh_count, emph_count, brk_count, si_count, mc_count,
         )
     return title_en, cleaned_text
 
@@ -1102,12 +1104,14 @@ async def _refine_chapter_in_db(
     refined, emph_n = enforce_balanced_emphasis(refined)
     refined, brk_n = enforce_brackets(refined, glossary=glossary)
     refined, si_n = enforce_sentence_initial_capitalization(refined)
-    if lt_n + lc_n + sb_n + cm_n + em_n + sh_n + emph_n + brk_n + si_n:
+    refined, mc_n = enforce_mid_sentence_comma_break(refined)
+    if lt_n + lc_n + sb_n + cm_n + em_n + sh_n + emph_n + brk_n + si_n + mc_n:
         logger.info(
             "refine ch %d post-fixes on refined text: %d locked-case, "
             "%d lowercase, %d stem-branch, %d end-marker, %d em-dash, "
-            "%d spaced-hyphen, %d emphasis, %d bracket, %d sentence-initial",
-            r["chapter_num"], lt_n, lc_n, sb_n, cm_n, em_n, sh_n, emph_n, brk_n, si_n,
+            "%d spaced-hyphen, %d emphasis, %d bracket, %d sentence-initial, "
+            "%d comma-break-join",
+            r["chapter_num"], lt_n, lc_n, sb_n, cm_n, em_n, sh_n, emph_n, brk_n, si_n, mc_n,
         )
     logger.info(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",

@@ -21,6 +21,7 @@ import re
 from backend.models import GlossaryEntry
 from backend.services.glossary import is_atomic_case_locked_term
 from backend.services.glossary_casing import GENERIC_LOWERCASE
+from backend.services.text_observers import _NEXT_PARA_DIALOGUE_OPENERS
 
 # ---------------------------------------------------------------------------
 # Em-dash enforcement
@@ -790,12 +791,59 @@ def enforce_sentence_initial_capitalization(text: str) -> tuple[str, int]:
     return "".join(chars), count
 
 
+# ---------------------------------------------------------------------------
+# Mid-sentence comma-break joining
+# ---------------------------------------------------------------------------
+
+# Punctuation that can never legitimately end a paragraph: a `\n\n` break here
+# splits one sentence mid-clause. Colon (`:` / `：`) is deliberately EXCLUDED
+# (`He said:` before a quote is a legitimate dialogue/list intro), and so is the
+# bare-lowercase-letter ending, which includes standalone label lines (an
+# ability name on its own line). Those broader signals stay log-only via
+# `text_observers.detect_mid_sentence_paragraph_break`.
+_JOINABLE_NON_TERMINAL = frozenset(",;，；、")
+
+
+def enforce_mid_sentence_comma_break(text: str) -> tuple[str, int]:
+    """Join a paragraph that ends mid-clause (a comma/semicolon) onto the next,
+    so a single sentence the model split across `\\n\\n` becomes one line again.
+
+    Narrow by design: only the comma/semicolon family (``, ; ， ； 、``) triggers
+    a join, and only when the next paragraph does NOT open with a dialogue /
+    quote / italic glyph (`He said,\\n\\n"…"` stays split). This reverses the
+    2026-05-25 removal of the general `enforce_mid_sentence_paragraph_break` for
+    the comma case only. A comma-before-break is categorically invalid English,
+    whereas the dropped helper's lowercase/colon triggers false-positived on
+    standalone labels and dialogue intros.
+
+    Idempotent; returns (rewritten_text, count)."""
+    if not text or "\n\n" not in text:
+        return text, 0
+    parts = text.split("\n\n")
+    out: list[str] = [parts[0]]
+    count = 0
+    for nxt in parts[1:]:
+        prev_stripped = out[-1].rstrip()
+        nxt_stripped = nxt.lstrip()
+        if (
+            prev_stripped
+            and nxt_stripped
+            and prev_stripped[-1] in _JOINABLE_NON_TERMINAL
+            and not nxt_stripped.startswith(_NEXT_PARA_DIALOGUE_OPENERS)
+        ):
+            out[-1] = prev_stripped + " " + nxt_stripped
+            count += 1
+        else:
+            out.append(nxt)
+    return "\n\n".join(out), count
+
+
 # Note: deterministic enforce_double_possessive_carriers /
 # enforce_mid_sentence_paragraph_break helpers were removed during the
-# 2026-05-25 audit cleanup. The single-pass thesis is that noticing has
-# to happen inside the translator's thinking phase, so these failure
-# modes are LOGGED by `detect_double_possessive` /
-# `detect_mid_sentence_paragraph_break` in `text_observers.py` and the
-# observer hits flow into the QA dashboard for review. The
-# `_is_mid_sentence_paragraph_boundary` helper lives in text_observers.py;
-# this module does not import it.
+# 2026-05-25 audit cleanup (single-pass thesis: noticing belongs in the
+# translator's thinking phase). The COMMA case alone was re-added 2026-06-08 as
+# `enforce_mid_sentence_comma_break` above. Live data showed the model leaves a
+# ~0.7% residue of comma-split sentences the prompt rule never fully cleans, and
+# a comma-before-break is a categorically safe, zero-false-positive signature.
+# The remaining lowercase/colon signals stay log-only via
+# `detect_double_possessive` / `detect_mid_sentence_paragraph_break`.

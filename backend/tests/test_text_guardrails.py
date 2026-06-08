@@ -985,9 +985,11 @@ def test_translation_worker_does_not_silently_recast_double_possessive(
     assert "the gaze of True Person Sea's Roar" not in row["translated_text"]
 
 
-def test_translation_worker_does_not_silently_join_mid_sentence_break(
+def test_translation_worker_joins_mid_sentence_comma_break(
     monkeypatch,
 ) -> None:
+    # The comma-only joiner (enforce_mid_sentence_comma_break, re-added
+    # 2026-06-08) merges a sentence the model split across \n\n at a comma.
     _reset_db()
 
     async def _mid_break_translate(
@@ -1023,7 +1025,8 @@ def test_translation_worker_does_not_silently_join_mid_sentence_break(
 
     row = _chapter_row(chapter_id)
     assert row["status"] == "done"
-    assert "paused,\n\nand then" in row["translated_text"]
+    assert "He paused, and then continued toward the hall." in row["translated_text"]
+    assert "paused,\n\nand then" not in row["translated_text"]
 
 
 def test_retranslate_route_runs_guardrails(monkeypatch) -> None:
