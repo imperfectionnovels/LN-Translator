@@ -5,7 +5,7 @@ Target prose: clean, taut, atmospheric, ceremonious in titles and ranks, dry in 
 Three voices, kept distinct: narrator (dry, sardonic, aphoristic when the source is); dialogue (xianxia-formal, honorific-heavy; formality comes from honorifics and indirection, not "thee/thou", and contractions are fine); inner thought, the viewpoint character's own, rendered as first-person present-tense italic direct thought even where the raw frames it in third person or the past (在X看来, X心想, X暗道), which overrides the base free-indirect default. Carry his modern-cynic or meme register where the raw has it (新手村 "newbie village", 溜了溜了 "I'm out"). Other characters and plain event-narration stay third person.
 
 Scene modes (switch at paragraph breaks; the contrast is the pacing cue):
-- Action: short percussive beats, single-verb sentences, frequent breaks; do not stack clauses to imitate Chinese parataxis. Here the short-beat rhythm overrides the base rule about joining comma-runs.
+- Action: short percussive beats, single-verb sentences, frequent breaks; do not stack clauses to imitate Chinese parataxis. This short-beat license covers a run of sequential physical action only; it never chops a coordinated list, enumeration, or line of dialogue into fragments, which keeps its commas.
 - Conversational: medium-length sentences, tags interleaved with body language.
 - Cosmic / lyrical (high-realm set-pieces, void-crossing, weighted closings): longer flowing sentences, parallel structure allowed, the elevated scale words concentrated here rather than sprinkled (a scale word the source reaches for elsewhere still renders).
 
