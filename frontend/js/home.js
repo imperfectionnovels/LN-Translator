@@ -644,6 +644,55 @@ document.getElementById("submit-upload").addEventListener("click", async (e) => 
 const bulkInput = document.getElementById("file-bulk");
 const bulkList = document.getElementById("bulk-file-list");
 const dropBulk = document.getElementById("drop-bulk");
+const bulkSkipReport = document.getElementById("bulk-skip-report");
+
+// Render the per-file skip report for a bulk import response. Returns true when
+// any file was skipped (so the caller suppresses auto-navigation and lets the
+// user read which files were dropped and why). Built with DOM nodes, not
+// innerHTML, so a hostile filename can't inject markup. navHref/navLabel give
+// the user a manual way forward since we no longer auto-navigate on skips.
+function renderSkipReport(r, navHref, navLabel) {
+  const total = (r.skipped_files || 0) + (r.skipped_nonchapter || 0);
+  if (!bulkSkipReport) return total > 0;
+  bulkSkipReport.textContent = "";
+  if (total === 0) { bulkSkipReport.hidden = true; return false; }
+
+  const head = document.createElement("p");
+  head.className = "skip-report-head";
+  head.textContent = `${total} file(s) skipped, not imported:`;
+  bulkSkipReport.appendChild(head);
+
+  const ul = document.createElement("ul");
+  const details = Array.isArray(r.skipped_details) ? r.skipped_details : [];
+  if (details.length) {
+    for (const d of details) {
+      const li = document.createElement("li");
+      const name = document.createElement("strong");
+      name.textContent = d.name || "(unnamed file)";
+      li.appendChild(name);
+      li.appendChild(document.createTextNode(`: ${d.reason || "skipped"}`));
+      ul.appendChild(li);
+    }
+  } else {
+    // Older backend without per-file detail: show the counts so the panel is
+    // still informative rather than empty.
+    const li = document.createElement("li");
+    li.textContent =
+      `${r.skipped_files || 0} empty, ${r.skipped_nonchapter || 0} non-chapter`;
+    ul.appendChild(li);
+  }
+  bulkSkipReport.appendChild(ul);
+
+  if (navHref) {
+    const a = document.createElement("a");
+    a.href = navHref;
+    a.className = "skip-report-go";
+    a.textContent = navLabel || "Continue";
+    bulkSkipReport.appendChild(a);
+  }
+  bulkSkipReport.hidden = false;
+  return true;
+}
 document.getElementById("browse-bulk").addEventListener("click", () => bulkInput.click());
 
 function renderBulkList() {
@@ -683,12 +732,17 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
     showStatus(`Uploading ${files.length} file(s)…`, "info");
     try {
       const r = await api.appendBulk(appendNovelId, files);
-      const skipped = r.skipped_files ? ` (${r.skipped_files} empty file(s) skipped)` : "";
-      showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipped}. Opening reader. Click Translate on a chapter to queue it.`, "ok");
+      const goto = r.first_new_chapter || 1;
+      const href = `/reader?novel=${appendNovelId}&ch=${goto}`;
+      const hadSkips = renderSkipReport(r, href, "Open reader");
+      const total = (r.skipped_files || 0) + (r.skipped_nonchapter || 0);
+      const skipMsg = total ? ` (${total} file(s) skipped, see below)` : "";
+      const tail = hadSkips ? "" : " Opening reader. Click Translate on a chapter to queue it.";
+      showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipMsg}.${tail}`, "ok");
       broadcastNovelChange(appendNovelId);
       renderRecent();
-      const goto = r.first_new_chapter || 1;
-      setTimeout(() => { location.href = `/reader?novel=${appendNovelId}&ch=${goto}`; }, 800);
+      if (hadSkips) { unlockSubmit(btn); }
+      else { setTimeout(() => { location.href = href; }, 800); }
     } catch (err) {
       showStatus(`Failed: ${err.message}`, "err");
       unlockSubmit(btn);
@@ -701,10 +755,14 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
   showStatus(`Uploading ${files.length} file(s)…`, "info");
   try {
     const r = await api.bulkUpload(title, files, _genreValueFor("bulk"));
-    const skipped = r.skipped_files ? ` (${r.skipped_files} empty file(s) skipped)` : "";
-    showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipped}. Open the reader and click Translate on a chapter to queue it.`, "ok");
+    const hadSkips = renderSkipReport(r, "/library", "Go to Library");
+    const total = (r.skipped_files || 0) + (r.skipped_nonchapter || 0);
+    const skipMsg = total ? ` (${total} file(s) skipped, see below)` : "";
+    const tail = hadSkips ? "" : " Open the reader and click Translate on a chapter to queue it.";
+    showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipMsg}.${tail}`, "ok");
     renderRecent();
-    setTimeout(() => { location.href = `/library`; }, 800);
+    if (hadSkips) { unlockSubmit(btn); }
+    else { setTimeout(() => { location.href = `/library`; }, 800); }
   } catch (err) {
     showStatus(`Failed: ${err.message}`, "err");
     unlockSubmit(btn);

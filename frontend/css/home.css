@@ -256,3 +256,39 @@
   margin-top: 2px;
 }
 
+/* Bulk-import skip report: a persistent panel that names each dropped file and
+ * why, so a bulk upload that silently lost a file is no longer a bare count.
+ * Shown only when files were skipped; the import otherwise auto-navigates. */
+.skip-report {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--paper-deep);
+  font-size: 13px;
+}
+.skip-report .skip-report-head {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.skip-report ul {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 220px;
+  overflow-y: auto;
+  color: var(--muted);
+}
+.skip-report li {
+  margin: 2px 0;
+}
+.skip-report li strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.skip-report .skip-report-go {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--jade);
+}
+

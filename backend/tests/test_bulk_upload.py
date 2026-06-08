@@ -202,6 +202,11 @@ def test_bulk_skips_empty_files(client: TestClient) -> None:
     body = r.json()
     assert body["added_chapters"] == 2
     assert body["skipped_files"] == 1
+    # The dropped file is named with a reason, not just counted, so a silent
+    # loss is visible to the user.
+    assert body["skipped_details"] == [
+        {"name": "empty.txt", "reason": "empty or could not be decoded"}
+    ]
     novel_id = body["novel_id"]
 
     rows = _row(
@@ -225,6 +230,9 @@ def test_bulk_skips_author_note_files(client: TestClient) -> None:
     body = r.json()
     assert body["added_chapters"] == 2
     assert body["skipped_nonchapter"] == 1
+    assert body["skipped_details"] == [
+        {"name": "note.txt", "reason": "non-chapter block (author note)"}
+    ]
     rows = _row(
         "SELECT chapter_num FROM chapters WHERE novel_id = ? ORDER BY chapter_num",
         (body["novel_id"],),
@@ -361,6 +369,9 @@ def test_bulk_skips_numberless_heading_author_note(client: TestClient) -> None:
     body = r.json()
     assert body["added_chapters"] == 2
     assert body["skipped_nonchapter"] == 1
+    assert body["skipped_details"] == [
+        {"name": "extra.txt", "reason": "author note (announcement post)"}
+    ]
 
 
 def test_bulk_does_not_skip_numbered_chapter_with_announcement_vocab(

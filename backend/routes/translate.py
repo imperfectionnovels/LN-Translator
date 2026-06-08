@@ -556,8 +556,8 @@ async def translate_bulk(
     title, files, genre_raw = await _parse_bulk_form(request)
     title = normalize_title(title)
     genre = _validate_genre(genre_raw)
-    parsed, skipped, skipped_nonchapter, encodings = await _files_to_chapters(
-        files, start_num=1
+    parsed, skipped, skipped_nonchapter, encodings, skipped_details = (
+        await _files_to_chapters(files, start_num=1)
     )
     if not parsed:
         raise HTTPException(status_code=400, detail="all files were empty")
@@ -584,6 +584,7 @@ async def translate_bulk(
         "added_chapters": len(parsed),
         "skipped_files": skipped,
         "skipped_nonchapter": skipped_nonchapter,
+        "skipped_details": skipped_details,
         "detected_encodings": encodings,
         "translation_queued": False,
     }
@@ -600,8 +601,8 @@ async def append_bulk(
     await ensure_novel_exists(conn, novel_id)
     # Decode files OUTSIDE the write transaction so a many-thousand-file batch
     # doesn't hold the SQLite write lock for the duration of file I/O.
-    parsed, skipped, skipped_nonchapter, encodings = await _files_to_chapters(
-        files, start_num=1
+    parsed, skipped, skipped_nonchapter, encodings, skipped_details = (
+        await _files_to_chapters(files, start_num=1)
     )
     if not parsed:
         raise HTTPException(status_code=400, detail="all files were empty")
@@ -613,6 +614,7 @@ async def append_bulk(
         "first_chapter": first_new,
         "skipped_files": skipped,
         "skipped_nonchapter": skipped_nonchapter,
+        "skipped_details": skipped_details,
         "detected_encodings": encodings,
         "translation_queued": False,
         "chapter_num_collision": collision,
@@ -661,13 +663,15 @@ def _is_numberless_prologue_heading(heading: str) -> bool:
 
 async def _files_to_chapters(
     files: list[UploadFile], start_num: int
-) -> tuple[list[ParsedChapter], int, int, list[str]]:
+) -> tuple[list[ParsedChapter], int, int, list[str], list[dict[str, str]]]:
     """Decode each file and produce ParsedChapter objects in input order. Empty
     files are skipped. Returns (parsed_chapters, skipped_count,
-    skipped_nonchapter_count, encodings) where `encodings` is the distinct
-    sorted set of encodings detected across the batch — surfaces "chardet
-    flagged this batch as half utf-8 half gb18030" in the response so the user
-    can spot mixed-source imports.
+    skipped_nonchapter_count, encodings, skipped_details) where `encodings` is
+    the distinct sorted set of encodings detected across the batch — surfaces
+    "chardet flagged this batch as half utf-8 half gb18030" in the response so
+    the user can spot mixed-source imports. `skipped_details` names each dropped
+    file with a reason ({"name", "reason"}) so a bulk import that silently lost
+    a file is no longer a bare count: the user can see which file and why.
 
     A heading-less file that reads as an author's update post (求月票, 请假 …)
     is dropped from the chapter list — counting it as a chapter would take a
@@ -688,14 +692,19 @@ async def _files_to_chapters(
     parsed: list[ParsedChapter] = []
     skipped = 0
     skipped_nonchapter = 0
+    skipped_details: list[dict[str, str]] = []
     num = start_num
     encodings: set[str] = set()
     total_bytes = 0
     for f in files:
         _assert_txt_filename(f.filename)
+        fname = f.filename or "(unnamed file)"
         result = await read_bulk_file(f)
         if result is None:
             skipped += 1
+            skipped_details.append(
+                {"name": fname, "reason": "empty or could not be decoded"}
+            )
             continue
         text, encoding, raw_size = result
         total_bytes += raw_size
@@ -731,6 +740,9 @@ async def _files_to_chapters(
                 and has_author_note_markers(body)
             ):
                 skipped_nonchapter += 1
+                skipped_details.append(
+                    {"name": fname, "reason": "author note (announcement post)"}
+                )
                 logger.info(
                     "bulk: skipping numberless-heading author-note file '%s' "
                     "(heading=%r)",
@@ -745,6 +757,9 @@ async def _files_to_chapters(
             # chapter — exclude it so it doesn't consume a chapter number.
             if is_non_chapter_block(body):
                 skipped_nonchapter += 1
+                skipped_details.append(
+                    {"name": fname, "reason": "non-chapter block (author note)"}
+                )
                 logger.info("skipped non-chapter file: %s", f.filename)
                 continue
             stem = Path(f.filename).stem if f.filename else ""
@@ -764,4 +779,4 @@ async def _files_to_chapters(
     # One file = one chapter, so a heading number (or numeric filename) is the
     # authoritative chapter number — anchor to it just like parse_chapters does.
     reconcile_chapter_numbers(parsed)
-    return parsed, skipped, skipped_nonchapter, sorted(encodings)
+    return parsed, skipped, skipped_nonchapter, sorted(encodings), skipped_details
