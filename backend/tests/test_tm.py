@@ -157,6 +157,31 @@ def test_align_handles_several_interspersed_insertions():
     ].startswith("When the dust settled")
 
 
+def test_align_drops_implausibly_short_target_anchor():
+    """When the translator moves a long line's real rendering elsewhere and
+    leaves a tiny standalone beat in its slot, equal paragraph counts make
+    the dynamic program match the long source to the tiny target (a 1:1
+    match always beats delete-plus-insert). A length-implausible anchor like
+    a long sentence paired with '"Amitabha."' must be dropped, not stored."""
+    src = (
+        "重光曾经主动向吕阳提出过一桩交易，让他在南天门内驻留，以此来钓出昂霄。\r\n\r\n"
+        "广明双手合十，宏声诵了一声佛号，神色庄严而肃穆。"
+    )
+    tgt = (
+        "Chongguang had once proposed a deal to Lü Yang, asking him to remain "
+        "within the Southern Heaven Gate so as to lure out Angxiao.\n\n"
+        '"Amitabha."'
+    )
+    pairs = tm_svc.align_paragraphs(src, tgt)
+    assert pairs is not None
+    assert all(p.target_text != '"Amitabha."' for p in pairs)
+    # The real pair survives.
+    by_src = {p.source_text: p.target_text for p in pairs}
+    assert by_src[
+        "重光曾经主动向吕阳提出过一桩交易，让他在南天门内驻留，以此来钓出昂霄。"
+    ].startswith("Chongguang had once proposed")
+
+
 # ---- Atomic replace -----------------------------------------------------
 
 

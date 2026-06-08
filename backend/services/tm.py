@@ -80,6 +80,14 @@ class AlignedPair:
     source_hash: str
 
 
+# A 1:1 anchor is dropped as implausible when its target paragraph runs under
+# 1/_OUTLIER_SHORT_FACTOR of the length the source predicts AND the absolute
+# character gap exceeds _OUTLIER_MIN_GAP. The gap floor keeps short paragraphs,
+# where a terse rendering is normal, from ever being dropped on ratio alone.
+_OUTLIER_SHORT_FACTOR = 4
+_OUTLIER_MIN_GAP = 20
+
+
 def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | None:
     """Order-preserving length-based alignment (Gale-Church-lite).
 
@@ -147,6 +155,21 @@ def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | Non
             matches.append((pi, pj))
         i, j = pi, pj
     matches.reverse()
+
+    # Drop length-implausible anchors. The DP always prefers a 1:1 match over
+    # delete-plus-insert, so when a long source paragraph's real rendering was
+    # moved elsewhere and a tiny standalone beat ("Amitabha.") sits in its
+    # slot, the two get matched anyway. An anchor whose target runs far under
+    # its expected length is almost certainly that case, not a genuinely terse
+    # translation, so drop it rather than store a misleading pair.
+    matches = [
+        (i, j)
+        for (i, j) in matches
+        if not (
+            tgt_len[j] * _OUTLIER_SHORT_FACTOR < ratio * src_len[i]
+            and ratio * src_len[i] - tgt_len[j] > _OUTLIER_MIN_GAP
+        )
+    ]
 
     # Confidence guard: if fewer than half the paragraphs on the longer side
     # found a 1:1 anchor, the two texts do not correspond well enough to
