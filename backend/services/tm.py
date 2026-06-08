@@ -4,16 +4,23 @@
 Populated by the queue worker on every successful chapter commit; queried
 by the reader's concordance panel and by inconsistency detection.
 
-**Alignment.** Phase 5.0 empirical check showed source paragraphs use
-`\\r\\n\\r\\n` (CRLF blank lines) while target uses `\\n\\n` (LF). After
-normalizing both and stripping the leading Chinese title line, delta is
-0–1 for every sampled chapter — the off-by-one is the title-on-first-line
-case. The aligner accepts delta ≤ 2; anything more signals a parser
-hiccup and we skip the chapter rather than risk wrong-paragraph TM rows.
+**Alignment.** Source paragraphs use `\\r\\n\\r\\n` (CRLF blank lines)
+while the target uses `\\n\\n` (LF); both are normalized and the leading
+Chinese title line is stripped from the source (the target's title lives
+in `title_en`). A naive positional zip then assumed the two sides had the
+same paragraph count in the same order, which the faithful one-line-per-
+sentence style breaks constantly: the target adds standalone beats (a
+lone "CRACK!"), or splits a paragraph the source kept whole, and every
+later pair silently shifts onto the wrong line. Even equal counts did not
+guarantee correspondence (one insertion plus one merge nets to delta 0).
 
-The plan's `alignment_confidence` column turned out to be unnecessary —
-the empirical bimodal pattern is "well-aligned" or "skip entirely",
-with nothing in between worth surfacing as a confidence score.
+The aligner is now length-based (Gale-Church-lite): a target paragraph is
+expected to run `ratio` times the length of its source paragraph, and a
+short dynamic program finds the minimum-cost order-preserving alignment,
+keeping only its confident 1:1 anchors. Inserted or deleted paragraphs
+are dropped, so a stored pair always describes genuinely corresponding
+text. When too few paragraphs anchor, the chapter is skipped rather than
+populated with doubtful rows.
 """
 
 from __future__ import annotations
@@ -27,13 +34,6 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-
-# Tolerance for the source / target paragraph count delta. delta=0 means
-# exact match; delta=1 is the "source had a Chinese title line, target
-# put title in title_en" case. delta=2 gives a tiny cushion. Anything
-# more probably means the parser or the model dropped a paragraph —
-# better to skip the whole chapter than store wrong-paragraph pairs.
-_MAX_ALIGNMENT_DELTA = 2
 
 # CJK paragraph break: blank line under either CRLF or LF line endings.
 _PARAGRAPH_BREAK_RE = re.compile(r"(?:\r?\n){2,}")
@@ -80,16 +80,96 @@ class AlignedPair:
     source_hash: str
 
 
+def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | None:
+    """Order-preserving length-based alignment (Gale-Church-lite).
+
+    Returns the list of confident 1:1 `(source_index, target_index)`
+    matches, or None when too few paragraphs anchor to trust the result.
+
+    The model: a target paragraph's length is expected to be `ratio` times
+    its source paragraph's length, where `ratio` is the whole-chapter
+    English-to-Chinese character expansion. A 1:1 match costs the absolute
+    length discrepancy; skipping a paragraph (a pure insertion or deletion)
+    costs its length plus a penalty. A dynamic program finds the minimum-
+    cost order-preserving alignment, and we keep only its 1:1 anchors, so an
+    inserted beat the source lacks is dropped instead of mispaired.
+    """
+    m, n = len(src), len(tgt)
+    src_len = [len(s) for s in src]
+    tgt_len = [len(t) for t in tgt]
+    total_src = sum(src_len) or 1
+    total_tgt = sum(tgt_len) or 1
+    ratio = total_tgt / total_src
+    # Skip penalty scales with the mean target paragraph so behavior is the
+    # same regardless of paragraph size. It biases toward keeping a real 1:1
+    # match rather than splitting it into a separate insert and delete.
+    penalty = 0.5 * (total_tgt / n)
+
+    inf = float("inf")
+    # dp[i][j] = min cost to align src[:i] with tgt[:j]; back[i][j] is the
+    # move taken to reach it, as (kind, prev_i, prev_j).
+    dp = [[inf] * (n + 1) for _ in range(m + 1)]
+    back: list[list[tuple[str, int, int] | None]] = [
+        [None] * (n + 1) for _ in range(m + 1)
+    ]
+    dp[0][0] = 0.0
+    for i in range(m + 1):
+        for j in range(n + 1):
+            if i == 0 and j == 0:
+                continue
+            best, move = inf, None
+            # Match src[i-1] with tgt[j-1]. Evaluated first so it wins ties:
+            # when matching and skipping cost the same, keep the pair.
+            if i > 0 and j > 0:
+                c = dp[i - 1][j - 1] + abs(tgt_len[j - 1] - ratio * src_len[i - 1])
+                if c < best:
+                    best, move = c, ("match", i - 1, j - 1)
+            # Delete src[i-1]: a source paragraph with no target counterpart.
+            if i > 0:
+                c = dp[i - 1][j] + ratio * src_len[i - 1] + penalty
+                if c < best:
+                    best, move = c, ("del", i - 1, j)
+            # Insert tgt[j-1]: a target-only paragraph, e.g. an added beat.
+            if j > 0:
+                c = dp[i][j - 1] + tgt_len[j - 1] + penalty
+                if c < best:
+                    best, move = c, ("ins", i, j - 1)
+            dp[i][j] = best
+            back[i][j] = move
+
+    matches: list[tuple[int, int]] = []
+    i, j = m, n
+    while i > 0 or j > 0:
+        move = back[i][j]
+        assert move is not None  # every non-origin cell has a predecessor
+        kind, pi, pj = move
+        if kind == "match":
+            matches.append((pi, pj))
+        i, j = pi, pj
+    matches.reverse()
+
+    # Confidence guard: if fewer than half the paragraphs on the longer side
+    # found a 1:1 anchor, the two texts do not correspond well enough to
+    # trust. Skip rather than store doubtful pairs (the conservative stance
+    # the old delta gate took, now content-aware instead of count-based).
+    if len(matches) < 0.5 * max(m, n):
+        return None
+    return matches
+
+
 def align_paragraphs(
     source_text: str, target_text: str
 ) -> list[AlignedPair] | None:
-    """Return aligned (source, target) pairs, or None when alignment
-    fails (delta > _MAX_ALIGNMENT_DELTA).
+    """Return confident 1:1 (source, target) paragraph pairs, or None when
+    the two texts do not align well enough to trust.
 
-    On delta = 1: the shorter side is treated as the canonical paragraph
-    sequence; the extra paragraph on the longer side is dropped from the
-    tail (a paragraph the model split that the source didn't, or vice
-    versa). Stable: same inputs always produce the same pairs.
+    Splits both sides on blank lines, drops a leading Chinese chapter
+    heading from the source (the target's title lives in `title_en`), then
+    runs a length-based alignment that tolerates the target inserting or
+    splitting paragraphs the source did not. Only the 1:1 anchors are
+    returned; inserted and deleted paragraphs are dropped so a stored pair
+    always describes genuinely corresponding text. Stable: same inputs
+    always produce the same pairs.
     """
     if not source_text or not target_text:
         return None
@@ -97,18 +177,17 @@ def align_paragraphs(
     tgt = _split_paragraphs(target_text)
     if not src or not tgt:
         return None
-    delta = abs(len(src) - len(tgt))
-    if delta > _MAX_ALIGNMENT_DELTA:
+    matches = _length_align(src, tgt)
+    if not matches:
         return None
-    n = min(len(src), len(tgt))
     return [
         AlignedPair(
             paragraph_index=i,
             source_text=src[i],
-            target_text=tgt[i],
+            target_text=tgt[j],
             source_hash=_hash_source(src[i]),
         )
-        for i in range(n)
+        for (i, j) in matches
     ]
 
 

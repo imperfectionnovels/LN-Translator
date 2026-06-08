@@ -104,8 +104,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │       ├── settings.js, queue.js, stats.js, find-replace.js, onboarding.js
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
-│   ├── dash_hook.py, check_em_dashes.py                 # em-dash PostToolUse guard + lint
-│   └── clear_stuck_glossary_errors.py                   # one-off maintenance
+│   └── dash_hook.py, check_em_dashes.py                 # em-dash PostToolUse guard + lint
 ├── tools/                     # dev tooling (not packaged)
 │   └── sqlite_ro_mcp.py       # read-only SQLite MCP server (wired in .mcp.json)
 └── data/                      # dev USER_DATA_ROOT (gitignored)
@@ -235,7 +234,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1435 tests.
+- `pytest backend/tests`. Currently 1437 tests.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

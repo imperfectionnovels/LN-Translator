@@ -93,6 +93,70 @@ def test_align_handles_crlf_source_lf_target():
     assert len(pairs) == 3
 
 
+def test_align_drops_target_insertion_without_misaligning():
+    """The core bug. When the target inserts a standalone beat the source
+    lacks (a dramatic "CRACK!" line), a positional zip pairs every LATER
+    source paragraph with the wrong English. The aligner must keep the
+    real paragraphs correctly paired and drop the insertion entirely."""
+    src = (
+        "林动缓缓睁开双眼，眸中精光一闪而逝，周身灵气微微震荡。\r\n\r\n"
+        "三日之后，他终于一举突破至元婴境界，眼中神光大盛。\r\n\r\n"
+        "他低声自语，嘴角泛起一抹笑意，周身气息渐归平静。"
+    )
+    tgt = (
+        "Lin Dong slowly opened his eyes; a flash of light passed through "
+        "his pupils as the spiritual energy around him trembled faintly.\n\n"
+        "CRACK!\n\n"
+        "Three days later, he finally broke through to the Nascent Soul "
+        "realm in one fell swoop, divine light blazing in his eyes.\n\n"
+        "He murmured softly to himself, a faint smile rising at the corner "
+        "of his lips as his aura settled into calm."
+    )
+    pairs = tm_svc.align_paragraphs(src, tgt)
+    assert pairs is not None
+    # The inserted beat must never become a paired target.
+    assert all(p.target_text != "CRACK!" for p in pairs)
+    by_src = {p.source_text: p.target_text for p in pairs}
+    # The paragraphs after the insertion keep their correct English.
+    assert by_src[
+        "三日之后，他终于一举突破至元婴境界，眼中神光大盛。"
+    ].startswith("Three days later")
+    assert by_src[
+        "他低声自语，嘴角泛起一抹笑意，周身气息渐归平静。"
+    ].startswith("He murmured")
+
+
+def test_align_handles_several_interspersed_insertions():
+    """Equal-ish counts hide the bug: the old delta gate accepts delta ≤ 2,
+    but with two inserted beats a positional zip still misaligns the middle
+    and tail. The aligner must pin each real paragraph to its own English."""
+    src = (
+        "剑光如虹，霎时间撕裂长空，直取敌首。\r\n\r\n"
+        "轰鸣声中，山岳为之崩塌，烟尘弥漫四野。\r\n\r\n"
+        "尘埃落定之后，唯余一道孤影立于原地。"
+    )
+    tgt = (
+        "The sword light arced like a rainbow, tearing through the heavens "
+        "in an instant to strike straight at the enemy's head.\n\n"
+        "CRACK!\n\n"
+        "Amid the thunderous roar, mountains collapsed and dust billowed "
+        "across the wilderness.\n\n"
+        "BOOM!\n\n"
+        "When the dust settled, only a single lonely figure remained "
+        "standing where it had been."
+    )
+    pairs = tm_svc.align_paragraphs(src, tgt)
+    assert pairs is not None
+    assert all(p.target_text not in ("CRACK!", "BOOM!") for p in pairs)
+    by_src = {p.source_text: p.target_text for p in pairs}
+    assert by_src[
+        "轰鸣声中，山岳为之崩塌，烟尘弥漫四野。"
+    ].startswith("Amid the thunderous roar")
+    assert by_src[
+        "尘埃落定之后，唯余一道孤影立于原地。"
+    ].startswith("When the dust settled")
+
+
 # ---- Atomic replace -----------------------------------------------------
 
 
