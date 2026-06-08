@@ -16,4 +16,8 @@ Write-Host "==> python -m compileall backend" -ForegroundColor Cyan
 python -m compileall -q backend
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+Write-Host "==> python scripts/check_em_dashes.py backend/prompts" -ForegroundColor Cyan
+python scripts/check_em_dashes.py backend/prompts
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Write-Host "LINT PASS" -ForegroundColor Green

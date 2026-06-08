@@ -8,7 +8,14 @@ of the dash is assumed to be Chinese text (translated passage, test
 fixture, or a sample using fullwidth dashes) and is skipped.
 
 Run from repo root:
-    python scripts/check-em-dashes.py
+    python scripts/check_em_dashes.py                 # full default scope above
+    python scripts/check_em_dashes.py backend/prompts # narrowed scope (what CI gates)
+
+Optional path arguments narrow the scan to those paths. With no args it scans
+the full default TARGETS. CI and lint gate only `backend/prompts/` (the
+model-facing text, kept clean); the legacy code comments in frontend/ and
+backend/routes/ are out of the gated scope, so the bare invocation stays the
+manual full sweep.
 
 Exits 0 when clean, 1 otherwise (with file:line:col reports).
 """
@@ -90,8 +97,12 @@ def main() -> int:
     except AttributeError:
         pass
 
+    # Optional path args narrow the scan. CI/lint pass `backend/prompts` (the
+    # model-facing surface, kept clean); the bare invocation uses the full
+    # default TARGETS as a manual sweep.
+    targets = [Path(a) for a in sys.argv[1:]] or TARGETS
     all_hits = []
-    for target in TARGETS:
+    for target in targets:
         for path in _gather_files(target):
             all_hits.extend(_scan(path))
 
@@ -100,7 +111,10 @@ def main() -> int:
         return 0
 
     for path, ln, col, ch, line in all_hits:
-        rel = path.relative_to(ROOT).as_posix()
+        try:
+            rel = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
         kind = "em-dash" if ch == EM else "en-dash"
         preview = line.strip()
         if len(preview) > 100:

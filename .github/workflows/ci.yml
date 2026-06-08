@@ -28,5 +28,7 @@ jobs:
           python -m pip install -e .[dev]
       - name: Ruff (lint + import order)
         run: python -m ruff check .
+      - name: Em-dash guard (prompts)
+        run: python scripts/check_em_dashes.py backend/prompts
       - name: Pytest
         run: python -m pytest backend/tests
