@@ -654,7 +654,7 @@ async def _translate_chapter_in_db(
     fallback was used"."""
     cur = await conn.execute(
         "SELECT chapter_num, title_zh, original_text, status, translate_queued, "
-        "force_retranslate, free_draft_text FROM chapters "
+        "force_retranslate, free_draft_text, import_source_url FROM chapters "
         "WHERE id = ? AND novel_id = ?",
         (chapter_id, novel_id),
     )
@@ -666,6 +666,25 @@ async def _translate_chapter_in_db(
         return
     if r["status"] == "done":
         await _clear_translate_queue(conn, chapter_id)
+        return
+    if not (r["original_text"] or "").strip():
+        # Import skeletons (resumable scrapes) sit at original_text='' until
+        # the fill phase commits the fetch. An empty CHAPTER block sent to the
+        # LLM yields an invented chapter that would commit as 'done', so error
+        # the row instead of calling the translator.
+        msg = (
+            "chapter source not yet fetched (import incomplete); "
+            "resume the import, then retranslate"
+            if r["import_source_url"]
+            else "chapter source text is empty"
+        )
+        await conn.execute(
+            "UPDATE chapters SET status = 'error', error_msg = ?, "
+            "translate_queued = 0, force_retranslate = 0 "
+            "WHERE id = ? AND novel_id = ? AND status != 'translating'",
+            (msg, chapter_id, novel_id),
+        )
+        await conn.commit()
         return
     claim = await conn.execute(
         "UPDATE chapters SET status = 'translating' "
