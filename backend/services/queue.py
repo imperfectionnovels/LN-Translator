@@ -599,6 +599,13 @@ def _apply_text_fixups(
     `source_text` (the Chinese original) feeds the source-aware
     sentence-boundary backstop; passing "" disables only that one fixup.
     """
+    # Normalize line endings to LF before the LF-assuming fixup/observer chain.
+    # The source side is normalized in parser.py; the LLM body is not (the
+    # subprocess backends decode bytes without universal-newline translation),
+    # so this establishes the invariant the paragraph-split fixups depend on.
+    result.translated_text = (
+        result.translated_text.replace("\r\n", "\n").replace("\r", "\n")
+    )
     text, ts_n = strip_leading_title_line(result.translated_text, result.title_en)
     text, lt_n = enforce_locked_term_casing(text, glossary)
     text, lc_n = enforce_lowercase_locked_terms(text, glossary)
@@ -615,8 +622,11 @@ def _apply_text_fixups(
     title_en = normalize_title_en(result.title_en, chapter_num)
     cleaned_text, em_count = enforce_em_dash(result.translated_text)
     cleaned_text, sh_count = enforce_spaced_hyphen_dash(cleaned_text)
-    cleaned_text, emph_count = enforce_balanced_emphasis(cleaned_text)
+    # Brackets BEFORE balance: stripping a bold-wrapped span can expose a stray
+    # `**` (whitespace before the closing marker defeats the fixed-offset
+    # check), so emphasis balancing must run last among the `**`-mutating passes.
     cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
+    cleaned_text, emph_count = enforce_balanced_emphasis(cleaned_text)
     cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
     cleaned_text, mc_count = enforce_mid_sentence_comma_break(cleaned_text)
     cleaned_text, sb2_count = enforce_source_sentence_boundaries(
@@ -1105,14 +1115,17 @@ async def _refine_chapter_in_db(
     # through. The refiner's prompt asks it not to introduce em-dashes,
     # mutate locked terms, or break bracket formatting, but LLMs slip;
     # without these the refined body can regress after a clean draft.
+    refined = refined.replace("\r\n", "\n").replace("\r", "\n")
     refined, lt_n = enforce_locked_term_casing(refined, glossary)
     refined, lc_n = enforce_lowercase_locked_terms(refined, glossary)
     refined, sb_n = enforce_stem_branch_casing(refined)
     refined, cm_n = strip_chapter_end_marker(refined)
     refined, em_n = enforce_em_dash(refined)
     refined, sh_n = enforce_spaced_hyphen_dash(refined)
-    refined, emph_n = enforce_balanced_emphasis(refined)
+    # Brackets BEFORE balance (see _apply_text_fixups): balance must run last
+    # among the `**`-mutating passes so a bracket-strip can't leave a stray `**`.
     refined, brk_n = enforce_brackets(refined, glossary=glossary)
+    refined, emph_n = enforce_balanced_emphasis(refined)
     refined, si_n = enforce_sentence_initial_capitalization(refined)
     refined, mc_n = enforce_mid_sentence_comma_break(refined)
     refined, sb2_n = enforce_source_sentence_boundaries(
