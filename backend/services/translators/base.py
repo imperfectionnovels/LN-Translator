@@ -80,8 +80,11 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # Opus under the unanchored "English novelist" frame dressed plain narration in
 # period diction ("talked himself round", "I should think"); the register rule
 # now names that failure and "fix every flat line" no longer treats plainness
-# as a defect.
-PROMPT_TEMPLATE_VERSION = "phase7-novel-voice-webnovel-register-1"
+# as a defect. The -2 bump sweeps the same anchor through the remaining
+# costume vectors: the fantasy overlay/example ("elevated standard English")
+# and the sci-fi cyberpunk example (added image), with the refiner brief
+# reframed in the same commit (its cache key hashes its own prompt).
+PROMPT_TEMPLATE_VERSION = "phase7-novel-voice-webnovel-register-2"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

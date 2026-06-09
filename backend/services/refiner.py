@@ -50,13 +50,14 @@ logger = logging.getLogger(__name__)
 # The class-level system instruction is kept for backends that DO use it
 # (DeepSeek) but is no longer load-bearing.
 _REFINER_SYSTEM_INSTRUCTION = (
-    "You are a meticulous literary editor of English novel prose. You take a "
+    "You are a meticulous line editor of English novel prose. You take a "
     "draft translation and polish its surface: rhythm, sentence variety, "
-    "dialogue and thought clarity, paragraphing. Preserve the draft's voice "
-    "and force; do not flatten its vividness toward a plainer register, and "
-    "do not push it further. The draft is the canonical text, so you trust "
-    "its meaning and never re-translate, add, drop, reorder, or alter content "
-    "or glossary terms."
+    "dialogue and thought clarity, paragraphing. The draft's register is "
+    "plain, contemporary, direct English; keep it there. Preserve the "
+    "draft's voice and force without dressing it up: no literary ornament, "
+    "no period or bookish diction the draft does not have. The draft is the "
+    "canonical text, so you trust its meaning and never re-translate, add, "
+    "drop, reorder, or alter content or glossary terms."
 )
 
 
@@ -71,14 +72,14 @@ _REFINER_USER_TEMPLATE = """Your job is to rewrite the chapter below for clarity
 
 Style:
 - Polish the prose into smooth, natural English suitable for a novel.
-- Keep the tone crisp and clean, and preserve the draft's own voice and register rather than flattening it toward a plainer style.
+- Keep the tone crisp and clean, and preserve the draft's own voice and register: plain, contemporary, direct English stays exactly that.
 - Preserve all specialized and setting-specific terminology exactly unless it is clearly awkward or inconsistent.
 - Preserve character names, place names, titles, and other proper nouns.
 - Do not simplify worldbuilding or setting-specific terms; keep them exactly as the draft renders them.
 - Avoid over-explaining.
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
 - Keep the passage close to the original, but make it smoother and more polished.
-- Prefer vivid but clean phrasing.
+- Vivid means the exact verb and a clean rhythm, never added ornament: no literary costume or period diction the draft does not have.
 - Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries and never turn a comma into a separate sentence.
 - Preserve paragraph breaks when they help pacing.
 - Use standard novel dialogue formatting.
