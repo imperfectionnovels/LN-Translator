@@ -491,6 +491,25 @@ def _parse_new_terms_block(raw: str) -> list[NewTerm]:
     return terms
 
 
+def _looks_like_terms_json(block: str) -> bool:
+    """True when a text block parses as the TERMS array shape: a non-empty
+    JSON list whose entries are dicts carrying zh/en keys. Used to catch a
+    response that emitted its terms without the TERMS delimiter, where the
+    array would otherwise be committed as chapter prose."""
+    block = _strip_code_fence(block.strip())
+    if not (block.startswith("[") and block.endswith("]")):
+        return False
+    try:
+        data = json.loads(block)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return (
+        isinstance(data, list)
+        and len(data) > 0
+        and all(isinstance(t, dict) and "zh" in t and "en" in t for t in data)
+    )
+
+
 def parse_delimited_response(raw: str) -> TranslationResult:
     """Parse the raw-body translator envelope into a TranslationResult."""
     text = _unwrap_outer_fence(raw)
@@ -505,6 +524,16 @@ def parse_delimited_response(raw: str) -> TranslationResult:
         body, _, terms_raw = rest.partition(_DELIMITED_TERMS_DELIMITER)
     else:
         body, terms_raw = rest, ""
+        # An absent TERMS block normally means zero new terms, but a terms
+        # JSON array sitting at the end of the body means the delimiter was
+        # dropped: raising here lets the caller's one-retry path fire instead
+        # of committing the array as prose and silently losing the terms.
+        tail = body.strip().rsplit("\n\n", 1)[-1]
+        if _looks_like_terms_json(tail):
+            raise ValueError(
+                "translation response has a terms JSON tail but no TERMS "
+                "delimiter"
+            )
     body = body.strip()
     if not body:
         raise ValueError("translation response missing body text")
