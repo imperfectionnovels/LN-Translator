@@ -464,6 +464,26 @@ def _build_atomic_targets(
     return [(k, v) for k, v in atomic_en.items() if k not in soft_en]
 
 
+# Leading determiners that read as ordinary English mid-sentence: an atomic
+# term like "The Void" is correct at a sentence head, but inside a sentence the
+# article lowercases ("into the Void"), never "into The Void".
+_LEADING_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def _cased_for_position(canonical: str, sentence_initial: bool) -> str:
+    """`canonical` with a leading article down-cased when used mid-sentence.
+
+    The noun keeps its canonical casing either way; only a leading the/a/an is
+    lowercased away from a sentence head. Length is preserved, so match offsets
+    stay valid."""
+    if sentence_initial:
+        return canonical
+    first, sep, rest = canonical.partition(" ")
+    if rest and first[:1].isupper() and first.lower() in _LEADING_ARTICLES:
+        return first.lower() + sep + rest
+    return canonical
+
+
 def enforce_locked_term_casing(
     text: str, glossary: list[GlossaryEntry] | None
 ) -> tuple[str, int]:
@@ -472,8 +492,11 @@ def enforce_locked_term_casing(
     For each locked entry where `is_atomic_case_locked_term(g)` returns True
     (and no sibling row marks the same `term_en` as soft via a `lowercase`
     note), replace whole-word case-insensitive matches in `text` with the
-    canonical `term_en`. Skips code fences and standalone `**【…】**` system-
-    pane lines; does NOT skip italic spans.
+    canonical `term_en`. A leading article (the/a/an) in the canonical is
+    down-cased mid-sentence and kept at a sentence head, so an article-initial
+    term reads as natural English ("into the Void", "The Void yawned"). Skips
+    code fences and standalone `**【…】**` system-pane lines; does NOT skip
+    italic spans.
 
     Whole-word boundaries on both sides. Idempotent. Returns (text, count)."""
     if not text:
@@ -505,10 +528,13 @@ def enforce_locked_term_casing(
             start = m.start()
             if _in_protected_span(start, protected):
                 continue
+            replacement = _cased_for_position(
+                canonical, _is_sentence_initial(out, start)
+            )
             current = m.group(0)
-            if current == canonical:
+            if current == replacement:
                 continue
-            out = out[:start] + canonical + out[m.end():]
+            out = out[:start] + replacement + out[m.end():]
             count += 1
 
     return out, count

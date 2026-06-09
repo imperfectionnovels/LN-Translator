@@ -676,6 +676,44 @@ def test_locked_term_casing_skips_system_panes() -> None:
     assert n == 1
 
 
+def test_locked_term_casing_lowercases_leading_article_mid_sentence() -> None:
+    # An atomic article-initial term keeps its noun cased, but the leading
+    # article reads as ordinary English mid-sentence ("into the Void"); the
+    # bug was producing "into The Void".
+    g = [_atomic_entry("The Void", category="other")]
+    text = "He fell into the void of despair."
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == "He fell into the Void of despair."
+    assert n == 1
+
+
+def test_locked_term_casing_fixes_over_capitalized_article_mid_sentence() -> None:
+    g = [_atomic_entry("The Void", category="other")]
+    text = "He fell into The Void of despair."
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == "He fell into the Void of despair."
+    assert n == 1
+
+
+def test_locked_term_casing_keeps_article_at_sentence_head() -> None:
+    g = [_atomic_entry("The Void", category="other")]
+    text = "the void swallowed the mountain."
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == "The Void swallowed the mountain."
+    assert n == 1
+
+
+def test_locked_term_casing_article_term_idempotent() -> None:
+    g = [_atomic_entry("The Void", category="other")]
+    text = "The void yawned. He stepped into The Void."
+    once, n1 = enforce_locked_term_casing(text, g)
+    twice, n2 = enforce_locked_term_casing(once, g)
+    assert once == "The Void yawned. He stepped into the Void."
+    assert once == twice
+    assert n1 == 2
+    assert n2 == 0
+
+
 # ---------------------------------------------------------------------------
 # detect_double_possessive
 # ---------------------------------------------------------------------------
