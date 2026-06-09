@@ -1109,10 +1109,19 @@ async def _refine_chapter_in_db(
     await conn.commit()
     if (claim.rowcount or 0) == 0:
         return
-    # Initiative 3: refiner sees the same union as the translator so it
-    # doesn't replace a global term's rendering during the polish pass.
+    # Initiative 3: refiner sees the same chapter-filtered union as the
+    # translator so it doesn't replace a global term's rendering during the
+    # polish pass. Filtering is by chapter relevance only, never by lock
+    # status (the 2026-05-23 locked-AND-auto rule stands): the English draft
+    # is the primary haystack since that is the text being edited, with the
+    # Chinese source as the trad/simp-folded safety net. Without this filter
+    # every refine call shipped the full glossary (2k+ entries, ~63 KB on the
+    # live novel) for a chapter that contains a few dozen of them.
     glossary = await global_glossary_svc.list_for_novel_with_globals(
         conn, novel_id
+    )
+    glossary = glossary_svc.filter_glossary_for_chapter(
+        glossary, draft, r["original_text"] or ""
     )
     refine_t0 = time.perf_counter()
     try:

@@ -315,6 +315,56 @@ async def test_normal_draft_still_refines(monkeypatch):
     assert row["refined_text"].endswith("[refined]")
 
 
+async def test_refiner_glossary_is_chapter_filtered(monkeypatch):
+    """The refiner must receive only chapter-relevant glossary entries, not
+    the whole table: an entry matching the English draft is kept, an entry
+    matching the Chinese source is kept, and an entry absent from both is
+    dropped. Filtering is by relevance only, never by lock status (locked
+    AND auto-detected rows both pass when relevant)."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    draft = (
+        "He raised the Sword Pavilion banner. "
+        + "A" * queue_svc._REFINEMENT_MIN_DRAFT_CHARS
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = ?, "
+            "original_text = '他望向剑阁与原文', refinement_status = 'pending' "
+            "WHERE id = ?",
+            (draft, chapter_id),
+        )
+        for zh, en, locked, auto in (
+            ("剑阁", "Sword Pavilion", 1, 0),     # zh in source, en in draft
+            ("原文", "source text", 0, 1),        # zh in source only
+            ("幽冥殿", "Nether Hall", 1, 0),      # absent from both: dropped
+        ):
+            await conn.execute(
+                "INSERT INTO glossary_entries (novel_id, term_zh, term_en, "
+                "category, locked, auto_detected) VALUES (?, ?, ?, 'place', ?, ?)",
+                (novel_id, zh, en, locked, auto),
+            )
+        await conn.commit()
+
+    captured: dict = {}
+
+    async def _stub_refine(draft, provider, glossary=None, **_kw):
+        captured["glossary"] = glossary or []
+        return draft + " [refined]"
+    monkeypatch.setattr("backend.services.queue.refine_chapter", _stub_refine)
+
+    async with open_conn() as conn:
+        await queue_svc._refine_chapter_in_db(conn, novel_id, chapter_id)
+
+    terms = {g.term_en for g in captured["glossary"]}
+    assert "Sword Pavilion" in terms
+    assert "source text" in terms
+    assert "Nether Hall" not in terms
+
+
 # ----- crash recovery via drain_on_startup -----------------------------------
 
 async def test_drain_resets_stuck_in_progress(monkeypatch):
