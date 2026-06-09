@@ -75,7 +75,13 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # xianxia examples, and the refiner reconciled to preserve (not flatten) force.
 # The composed system instruction is already part of the llm_cache key, so this
 # token is provenance plus a belt-and-suspenders force-miss of stale caches.
-PROMPT_TEMPLATE_VERSION = "phase6-novel-voice-lean-1"
+# 2026-06-09 bump: anchor the novelist frame to the web-novel register (plain,
+# contemporary, direct English per the professionally published translations).
+# Opus under the unanchored "English novelist" frame dressed plain narration in
+# period diction ("talked himself round", "I should think"); the register rule
+# now names that failure and "fix every flat line" no longer treats plainness
+# as a defect.
+PROMPT_TEMPLATE_VERSION = "phase7-novel-voice-webnovel-register-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

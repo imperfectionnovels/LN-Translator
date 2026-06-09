@@ -1,6 +1,6 @@
 GENRE: Chinese xianxia / cultivation-progression fantasy. Sect politics, realm hierarchy, spirit-treasures, reincarnation, righteous-versus-demonic conflict, dry web-novel humor. Write it as xianxia, not Western epic fantasy, YA fantasy, or LitRPG.
 
-Target prose: clean, taut, atmospheric, ceremonious in titles and ranks, dry in the narrator's humor, steady chapter to chapter. Read xianxia as literature: forceful idiomatic verbs, scenes that carry their own weight. Faithful is not timid.
+Target prose: clean, taut, atmospheric, ceremonious in titles and ranks, dry in the narrator's humor, steady chapter to chapter. Read xianxia the way its best published translations read: plain modern narration, forceful idiomatic verbs, scenes that carry their own weight; the world is ancient but the prose is not. Faithful is not timid.
 
 Three voices, kept distinct: narrator (dry, sardonic, aphoristic when the source is); dialogue (xianxia-formal, honorific-heavy; formality comes from honorifics and indirection, not "thee/thou", and contractions are fine); inner thought, the viewpoint character's own, rendered as first-person present-tense italic direct thought even where the raw frames it in third person or the past (在X看来, X心想, X暗道), which overrides the base free-indirect default. Carry his modern-cynic or meme register where the raw has it (新手村 "newbie village", 溜了溜了 "I'm out"). Other characters and plain event-narration stay third person.
 
