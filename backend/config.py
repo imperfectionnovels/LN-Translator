@@ -123,7 +123,7 @@ TRANSLATOR_BACKEND = os.getenv("TRANSLATOR_BACKEND", "claude_agent").strip().low
 CLAUDE_CLI_PATH = os.getenv("CLAUDE_CLI_PATH", "claude").strip()
 CLAUDE_CLI_TRANSLATOR_MODEL = os.getenv("CLAUDE_CLI_TRANSLATOR_MODEL", "claude-opus-4-5").strip()
 
-CLAUDE_AGENT_TRANSLATOR_MODEL = os.getenv("CLAUDE_AGENT_TRANSLATOR_MODEL", "claude-opus-4-8").strip()
+CLAUDE_AGENT_TRANSLATOR_MODEL = os.getenv("CLAUDE_AGENT_TRANSLATOR_MODEL", "claude-fable-5").strip()
 # Per-call timeout (seconds) for the Claude Agent SDK. A genuine long-chapter
 # Opus translation with extended thinking finishes inside 8 minutes; a longer
 # wait means a hung SDK call, not progress.

@@ -66,6 +66,7 @@ class TypeEntry:
 # anything we missed.
 
 _CLAUDE_MODELS = (
+    ModelEntry("claude-fable-5", "Claude Fable 5"),
     ModelEntry("claude-opus-4-8", "Claude Opus 4.8"),
     ModelEntry("claude-opus-4-7", "Claude Opus 4.7"),
     ModelEntry("claude-opus-4-6", "Claude Opus 4.6"),
