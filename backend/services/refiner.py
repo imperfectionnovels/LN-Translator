@@ -79,7 +79,7 @@ Style:
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
 - Keep the passage close to the original, but make it smoother and more polished.
 - Prefer vivid but clean phrasing.
-- Break up long or tangled sentences when needed.
+- Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries and never turn a comma into a separate sentence.
 - Preserve paragraph breaks when they help pacing.
 - Use standard novel dialogue formatting.
 

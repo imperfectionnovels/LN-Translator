@@ -65,6 +65,7 @@ from backend.services.text_fixups import (
     enforce_lowercase_locked_terms,
     enforce_mid_sentence_comma_break,
     enforce_sentence_initial_capitalization,
+    enforce_source_sentence_boundaries,
     enforce_spaced_hyphen_dash,
     enforce_stem_branch_casing,
     strip_chapter_end_marker,
@@ -583,7 +584,9 @@ async def _record_commit_provenance(
         )
 
 
-def _apply_text_fixups(result, glossary, chapter_num: int) -> tuple[str | None, str]:
+def _apply_text_fixups(
+    result, glossary, chapter_num: int, source_text: str = "",
+) -> tuple[str | None, str]:
     """Run the deterministic post-translation text fixups (no LLM) and return
     (title_en, cleaned_text).
 
@@ -592,6 +595,9 @@ def _apply_text_fixups(result, glossary, chapter_num: int) -> tuple[str | None, 
     body. The second group runs BEFORE the observers so detectors see the same
     text the reader will, preserving the QA dashboard's "observers run on the
     final committed body" invariant.
+
+    `source_text` (the Chinese original) feeds the source-aware
+    sentence-boundary backstop; passing "" disables only that one fixup.
     """
     text, ts_n = strip_leading_title_line(result.translated_text, result.title_en)
     text, lt_n = enforce_locked_term_casing(text, glossary)
@@ -613,11 +619,15 @@ def _apply_text_fixups(result, glossary, chapter_num: int) -> tuple[str | None, 
     cleaned_text, brk_count = enforce_brackets(cleaned_text, glossary=glossary)
     cleaned_text, si_count = enforce_sentence_initial_capitalization(cleaned_text)
     cleaned_text, mc_count = enforce_mid_sentence_comma_break(cleaned_text)
-    if em_count or sh_count or emph_count or brk_count or si_count or mc_count:
+    cleaned_text, sb2_count = enforce_source_sentence_boundaries(
+        cleaned_text, source_text, glossary=glossary,
+    )
+    if em_count or sh_count or emph_count or brk_count or si_count or mc_count or sb2_count:
         logger.info(
             "queue: chapter %d translate guardrails: %d em-dash, %d spaced-hyphen, "
-            "%d emphasis, %d bracket, %d sentence-initial, %d comma-break-join fix(es)",
-            chapter_num, em_count, sh_count, emph_count, brk_count, si_count, mc_count,
+            "%d emphasis, %d bracket, %d sentence-initial, %d comma-break-join, "
+            "%d source-boundary fix(es)",
+            chapter_num, em_count, sh_count, emph_count, brk_count, si_count, mc_count, sb2_count,
         )
     return title_en, cleaned_text
 
@@ -710,7 +720,7 @@ async def _translate_chapter_in_db(
         # Pure deterministic text fixups (casing, em-dash, brackets, title
         # normalization). No LLM. Returns the canonical title + committed body.
         title_en, cleaned_text = _apply_text_fixups(
-            result, glossary, r["chapter_num"]
+            result, glossary, r["chapter_num"], source_text=r["original_text"],
         )
 
         # Observations only — no retry, no degraded mark. The single-pass
@@ -1016,7 +1026,7 @@ async def _refine_chapter_in_db(
     refiner configured). Single LLM call via refiner.refine_chapter.
     """
     cur = await conn.execute(
-        "SELECT chapter_num, translated_text, refinement_status "
+        "SELECT chapter_num, translated_text, original_text, refinement_status "
         "FROM chapters WHERE id = ? AND novel_id = ?",
         (chapter_id, novel_id),
     )
@@ -1105,13 +1115,16 @@ async def _refine_chapter_in_db(
     refined, brk_n = enforce_brackets(refined, glossary=glossary)
     refined, si_n = enforce_sentence_initial_capitalization(refined)
     refined, mc_n = enforce_mid_sentence_comma_break(refined)
-    if lt_n + lc_n + sb_n + cm_n + em_n + sh_n + emph_n + brk_n + si_n + mc_n:
+    refined, sb2_n = enforce_source_sentence_boundaries(
+        refined, r["original_text"] or "", glossary=glossary,
+    )
+    if lt_n + lc_n + sb_n + cm_n + em_n + sh_n + emph_n + brk_n + si_n + mc_n + sb2_n:
         logger.info(
             "refine ch %d post-fixes on refined text: %d locked-case, "
             "%d lowercase, %d stem-branch, %d end-marker, %d em-dash, "
             "%d spaced-hyphen, %d emphasis, %d bracket, %d sentence-initial, "
-            "%d comma-break-join",
-            r["chapter_num"], lt_n, lc_n, sb_n, cm_n, em_n, sh_n, emph_n, brk_n, si_n, mc_n,
+            "%d comma-break-join, %d source-boundary",
+            r["chapter_num"], lt_n, lc_n, sb_n, cm_n, em_n, sh_n, emph_n, brk_n, si_n, mc_n, sb2_n,
         )
     logger.info(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",

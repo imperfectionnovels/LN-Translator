@@ -22,6 +22,7 @@ from backend.models import GlossaryEntry
 from backend.services.glossary import is_atomic_case_locked_term
 from backend.services.glossary_casing import GENERIC_LOWERCASE
 from backend.services.text_observers import _NEXT_PARA_DIALOGUE_OPENERS
+from backend.services.tm import align_paragraphs
 
 # ---------------------------------------------------------------------------
 # Em-dash enforcement
@@ -847,3 +848,152 @@ def enforce_mid_sentence_comma_break(text: str) -> tuple[str, int]:
 # a comma-before-break is a categorically safe, zero-false-positive signature.
 # The remaining lowercase/colon signals stay log-only via
 # `detect_double_possessive` / `detect_mid_sentence_paragraph_break`.
+
+
+# ---------------------------------------------------------------------------
+# Source-aware sentence-boundary restoration
+# ---------------------------------------------------------------------------
+#
+# The translator (and, more aggressively, the optional refiner) sometimes
+# promotes a Chinese comma `，` to an English full stop, shattering one source
+# sentence into several short English ones (`没必要，分身…` → "No need. Now
+# that…"). `enforce_mid_sentence_comma_break` only rejoins across `\n\n`
+# paragraph breaks and is blind to the source, so an in-paragraph period split
+# slips past it. This fixup is source-aware: it aligns source↔target paragraphs
+# (reusing the TM aligner) and, ONLY for a target paragraph whose source was a
+# single sentence, rejoins an over-split — a shattered run-on (3+ sentences) or
+# a stranded short opening fragment ("No need."). Multi-sentence source
+# paragraphs (percussive action beats) and defensible 1→2 splits are left alone.
+
+# Only "." is a rejoin candidate. A `?`/`!` in the output almost always maps to
+# a source `？`/`！`, not a comma, so touching them would corrupt real
+# questions/exclamations. Excludes ellipsis (preceded by `.`) and decimals
+# (preceded by a digit).
+_REJOINABLE_BOUNDARY_RE = re.compile(
+    r"(?<![.\d])(\.)([ \t]+)([A-Z][A-Za-zÀ-ɏ'’\-]*)"
+)
+# Source sentence terminals. A source paragraph is "a single sentence" when
+# exactly one run of these appears (typically at the end). `…` is intentionally
+# excluded so a trailing-off source line is treated as ambiguous and skipped.
+_CJK_TERMINAL_RE = re.compile(r"[。！？]+")
+# Capitalized tokens, for harvesting glossary proper nouns to preserve.
+_CAP_TOKEN_RE = re.compile(r"[A-Z][A-Za-zÀ-ɏ'’\-]*")
+# A target paragraph opening with one of these is dialogue or explicit inner
+# thought; its sentence shaping is deliberate, so the backstop leaves it alone.
+_DIALOGUE_OR_THOUGHT_OPENERS = ('"', "“", "”", "‘", "’", "「", "『", "—", "*")
+# A clause at or under this many words MAY be a stranded fragment: joined with a
+# comma rather than a semicolon, and the trigger for a 1-break rejoin.
+_FRAGMENT_MAX_WORDS = 3
+# Words that mark a clause as an independent statement (subject pronoun / there)
+# rather than a verbless fragment. "He left" is short but independent, so it
+# takes a semicolon, not a comma (which would be a splice). "No need" / "A pity"
+# start with neither and read as true fragments.
+_SUBJECT_STARTERS = frozenset(
+    {"He", "She", "It", "They", "I", "We", "You", "There", "Here"}
+)
+
+
+def _is_fragment(clause: str, caps: set[str]) -> bool:
+    """A short clause that is NOT an independent statement: no subject pronoun
+    or proper-noun subject leading it. Such a clause is comma-joined; everything
+    else is semicolon-joined."""
+    words = clause.split()
+    if not words or len(words) > _FRAGMENT_MAX_WORDS:
+        return False
+    first = words[0]
+    return first not in _SUBJECT_STARTERS and first not in caps
+
+
+def _count_cjk_sentences(s: str) -> int:
+    return len(_CJK_TERMINAL_RE.findall(s))
+
+
+def _glossary_caps(glossary) -> set[str]:
+    caps: set[str] = set()
+    for g in glossary or []:
+        for tok in _CAP_TOKEN_RE.findall(getattr(g, "term_en", "") or ""):
+            caps.add(tok)
+    return caps
+
+
+def _keep_capital(word: str, caps: set[str]) -> bool:
+    """True when the word that starts the next clause must stay capitalized:
+    the pronoun I (and its contractions), an all-caps sound effect, or a
+    glossary proper noun."""
+    if word == "I" or word.startswith(("I'", "I’")):
+        return True
+    if len(word) > 1 and word.isupper():
+        return True
+    return word in caps
+
+
+def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
+    """Rejoin a single-source-sentence paragraph the model over-split.
+
+    Fires when there are 2+ period boundaries (shattered run-on) or exactly one
+    whose leading clause is a short fragment. Joins each boundary with `; `
+    (independent clauses) or `, ` (after a short fragment), lowercasing the next
+    word unless it must stay capitalized."""
+    boundaries = list(_REJOINABLE_BOUNDARY_RE.finditer(para))
+    if not boundaries:
+        return para, 0
+    if len(boundaries) == 1:
+        # A lone split is left alone unless the first clause is a true stranded
+        # fragment; a defensible 2-way split of independent clauses stays.
+        if not _is_fragment(para[: boundaries[0].start()].strip(), caps):
+            return para, 0
+    pieces: list[str] = []
+    last = 0
+    clause_start = 0
+    joins = 0
+    for m in boundaries:
+        word = m.group(3)
+        clause = para[clause_start:m.start()]
+        pieces.append(para[last:m.start()])
+        connector = ", " if _is_fragment(clause, caps) else "; "
+        new_word = word if _keep_capital(word, caps) else word[0].lower() + word[1:]
+        pieces.append(connector + new_word)
+        last = m.end()
+        # The next clause begins at this boundary's leading word, so its length
+        # (and fragment test) counts that word.
+        clause_start = m.start(3)
+        joins += 1
+    pieces.append(para[last:])
+    return "".join(pieces), joins
+
+
+def enforce_source_sentence_boundaries(
+    text: str, source_text: str, glossary=None
+) -> tuple[str, int]:
+    """Rejoin English sentences the model split off a Chinese comma.
+
+    Source-aware and conservative: only a target paragraph that aligns 1:1 to a
+    single-sentence source paragraph is eligible, and only an over-split
+    (run-on or stranded fragment) is touched. Dialogue / inner-thought
+    paragraphs and defensible 1→2 splits are left alone. Idempotent; returns
+    (rewritten_text, count)."""
+    if not text or not source_text:
+        return text, 0
+    pairs = align_paragraphs(source_text, text)
+    if not pairs:
+        return text, 0
+    single_sentence_targets = {
+        p.target_text for p in pairs if _count_cjk_sentences(p.source_text) == 1
+    }
+    if not single_sentence_targets:
+        return text, 0
+    caps = _glossary_caps(glossary)
+    total = 0
+    out: list[str] = []
+    for part in text.split("\n\n"):
+        key = part.strip()
+        if (
+            key in single_sentence_targets
+            and not key.startswith(_DIALOGUE_OR_THOUGHT_OPENERS)
+        ):
+            rejoined, n = _restore_paragraph(part, caps)
+            total += n
+            out.append(rejoined)
+        else:
+            out.append(part)
+    return "\n\n".join(out), total
