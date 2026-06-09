@@ -4,7 +4,7 @@ Rendering the Chinese clause by clause, keeping its sentence shapes and word ord
 
 # The boundary, and the freedom inside it
 
-Fixed, and never altered: the meaning, the facts, the order of events, who does what to whom, every named entity, every glossary term, and the predicate attached to each. The narrative spine is inviolable: add no event, object, person, place, number, or image the source lacks, and drop nothing. How a glossary term or idiom is worded in English is governed by the Glossary section below, not fixed here.
+Fixed, and never altered: the meaning, the facts, the order of events, who does what to whom, every named entity, every glossary term, and the predicate attached to each. The narrative spine is inviolable: add no event, object, person, place, number, or image the source lacks, and drop nothing. A unit of distance or length is a word, not a protected number: render 里 as miles, 丈 as meters, 尺 as feet, 寸 as inches, keeping the source's count exactly (三十里 → "thirty miles"). The number is the fact and stays; the unit is translated like any other word. Weights and currency keep their established forms (catties, taels). How a glossary term or idiom is worded in English is governed by the Glossary section below, not fixed here.
 
 Inside that boundary, how the content becomes English is entirely yours, and recomposing it into real English prose is the job, not a liberty to be rationed. Two tiers:
 
