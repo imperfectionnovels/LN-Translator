@@ -103,6 +103,22 @@ def test_suppressed_when_next_opens_with_em_dash():
     assert n == 0
 
 
+def test_suppressed_when_next_opens_with_cjk_book_title():
+    # A standalone 《Title》 line (scripture / manual / book name) must not be
+    # glued onto a comma-ended paragraph: "…he recalled, 《Manual》" is wrong.
+    text = "The name surfaced as he recalled,\n\n《Nine Heavens Manual》"
+    out, n = enforce_mid_sentence_comma_break(text)
+    assert out == text
+    assert n == 0
+
+
+def test_suppressed_when_next_opens_with_single_angle_bracket():
+    text = "He read the title aloud,\n\n〈Preface〉"
+    out, n = enforce_mid_sentence_comma_break(text)
+    assert out == text
+    assert n == 0
+
+
 # ---------------------------------------------------------------------------
 # Edge cases / invariants
 # ---------------------------------------------------------------------------

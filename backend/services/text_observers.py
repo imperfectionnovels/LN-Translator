@@ -328,7 +328,9 @@ _PARA_TERMINAL_CHARS = set(
 _PARA_NON_TERMINAL_CHARS = set(",;:、，；：")
 # If the NEXT paragraph opens with one of these, the prior paragraph
 # legitimately ended without terminal punctuation (e.g. `He said:\n\n"…"`).
-_NEXT_PARA_DIALOGUE_OPENERS = ('"', "“", "”", "「", "『", "—", "*")
+# CJK title brackets (《》 book/scripture/manual titles, 〈〉 sections) open a
+# standalone title line that must not be glued onto a comma-ended paragraph.
+_NEXT_PARA_DIALOGUE_OPENERS = ('"', "“", "”", "「", "『", "《", "〈", "—", "*")
 
 
 def _is_mid_sentence_paragraph_boundary(prev: str, nxt: str) -> bool:
