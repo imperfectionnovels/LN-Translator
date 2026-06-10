@@ -812,6 +812,11 @@ class BaseTranslator(ABC):
                 # rides back to the caller via _attach_usage so the queue
                 # worker can persist it on this specific commit.
                 llm_cache.store_translation(cache_key, result)
+                # Stamp the exact prompt AFTER caching (mirrors _attach_usage):
+                # the attempts log gets a real snapshot for the "Show prompt"
+                # diagnostic and prompt audits, while cache entries stay lean
+                # and cache hits never replay a stale snapshot.
+                result = result.model_copy(update={"prompt_snapshot": prompt})
                 return self._attach_usage(result)
             except (ValueError, ValidationError) as e:
                 logger.warning(
@@ -823,6 +828,9 @@ class BaseTranslator(ABC):
                 # Plain-text fallback intentionally not cached: it drops
                 # `new_terms` and would poison the next proper call.
                 fallback = await self._plain_text_fallback(chapter_zh, title_zh)
+                fallback = fallback.model_copy(
+                    update={"prompt_snapshot": prompt}
+                )
                 return self._attach_usage(fallback)
         # Defensive: the loop always returns (success, or plain-text fallback
         # on the second attempt). If we somehow fall through, surface it as a
