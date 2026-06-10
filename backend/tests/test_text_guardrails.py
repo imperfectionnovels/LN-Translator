@@ -149,6 +149,38 @@ def test_em_dash_idempotent_on_clean_text():
     assert count == 0
 
 
+def test_em_dash_before_exclamation_run_preserved():
+    # 势不两立——！！！ shape: interruption dash carrying its own punctuation
+    # before the closing quote. Deleting the dash strands the !!! ("you, !!!").
+    text = '"I, Mu Changsheng, will never share the same sky as you—!!!"'
+    out, count = enforce_em_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_em_dash_paragraph_final_preserved():
+    # 下一秒—— shape: suspension dash ending its paragraph. Replacing it
+    # leaves a paragraph ending on a comma.
+    text = 'The next instant—\n\n"Hahaha!"'
+    out, count = enforce_em_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_em_dash_text_final_preserved():
+    text = "The next instant—"
+    out, count = enforce_em_dash(text)
+    assert out == text
+    assert count == 0
+
+
+def test_em_dash_before_ellipsis_preserved():
+    text = "He reached out—… and stopped."
+    out, count = enforce_em_dash(text)
+    assert out == text
+    assert count == 0
+
+
 # ---------------------------------------------------------------------------
 # enforce_spaced_hyphen_dash
 # ---------------------------------------------------------------------------
@@ -216,6 +248,15 @@ def test_spaced_hyphen_idempotent_on_clean_text():
 def test_spaced_hyphen_empty_string():
     out, count = enforce_spaced_hyphen_dash("")
     assert out == ""
+    assert count == 0
+
+
+def test_spaced_hyphen_before_punctuation_preserved():
+    # Same protected interruption shape as the em-dash enforcer: a dash
+    # carrying trailing punctuation is the author's mark.
+    text = '"You would dare - !?"'
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert out == text
     assert count == 0
 
 

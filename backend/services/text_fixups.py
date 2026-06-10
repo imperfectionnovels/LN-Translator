@@ -1,10 +1,13 @@
 """Deterministic text fixups — enforce_* transforms that run on every commit.
 
-The translator system prompt forbids em-dashes (except cut-off speech), leaving
-non-system `【…】` brackets in the prose, lowercasing Stem-Phase compounds, and
-the other surface defects this module rewrites. LLMs frequently ignore these
-rules, so this module is the deterministic second pass that fires unconditionally
-in the queue worker (`_translate_chapter_in_db` in `services/queue.py`).
+The dash layer rewrites the model's STYLISTIC clause / parenthetical dashes
+into comma or period, but keeps interruption and suspension dashes (cut-off
+speech before a closing quote, a dash carrying trailing punctuation, a
+paragraph-final dash — the shapes the source writes as ——). Other transforms
+strip non-system `【…】` brackets, fix Stem-Phase casing, and the remaining
+surface defects. LLMs apply these rules inconsistently, so this module is the
+deterministic second pass that fires unconditionally in the queue worker
+(`_translate_chapter_in_db` in `services/queue.py`).
 
 Every function is pure (no I/O, no DB), idempotent (re-running on already-clean
 text is a no-op), and `(rewritten_text, count)` for symmetry.
@@ -41,14 +44,28 @@ _DASH_RUN_RE = re.compile(f"[{_DASH_CHARS}]+")
 # `」` / `』` corner brackets. Optional trailing whitespace tolerated.
 _CUTOFF_FOLLOW = set('"”“」』')
 
+# Sentence punctuation that can sit between an interruption dash and its
+# closing quote (势不两立——！！！ → `you—!!!"`) or follow a suspension dash.
+# Deleting the dash in these shapes strands the punctuation ("you, !!!") or
+# rewrites it into nonsense — the dash here is the author's mark, not the
+# model's stylistic clause dash.
+_PUNCT_FOLLOW = set("!?.…,;:")
 
-def _is_cutoff(text: str, run_end: int) -> bool:
-    """`text[run_end]` is the first char AFTER a dash run. Return True if
-    that char (or the first non-space char) is a closing-quote glyph."""
+
+def _dash_protected(text: str, run_end: int) -> bool:
+    """`text[run_end]` is the first char AFTER a dash run. Return True when
+    the dash is an interruption / suspension mark that must be kept: the next
+    non-space char is a closing quote, sentence punctuation, a line break, or
+    there is nothing after it (paragraph- or text-final dash, 下一秒——).
+    Replacement is only safe when a word follows and the dash is splicing a
+    clause — the comma/period rewrite needs a clause to attach to."""
     i = run_end
     while i < len(text) and text[i] == " ":
         i += 1
-    return i < len(text) and text[i] in _CUTOFF_FOLLOW
+    if i >= len(text):
+        return True
+    ch = text[i]
+    return ch == "\n" or ch in _CUTOFF_FOLLOW or ch in _PUNCT_FOLLOW
 
 
 def _pick_replacement(text: str, run_start: int, run_end: int) -> str:
@@ -68,15 +85,16 @@ def _pick_replacement(text: str, run_start: int, run_end: int) -> str:
 
 
 def enforce_em_dash(text: str) -> tuple[str, int]:
-    """Replace every disallowed em-dash with comma-space or period-space.
+    """Replace every clause-splicing em-dash with comma-space or period-space.
 
+    Interruption / suspension dashes (see `_dash_protected`) are kept.
     Returns (rewritten_text, count)."""
     count = 0
     matches = list(_DASH_RUN_RE.finditer(text))
     out = text
     for m in reversed(matches):
         start, end = m.start(), m.end()
-        if _is_cutoff(out, end):
+        if _dash_protected(out, end):
             continue
         repl = _pick_replacement(out, start, end)
         after = out[end:]
@@ -121,9 +139,10 @@ def enforce_spaced_hyphen_dash(text: str) -> tuple[str, int]:
     owns the long-dash glyphs, this owns the ` - ` the model substitutes for
     them when told to avoid the glyph.
 
-    Skipped: numeric ranges ("1 - 2"), cut-off speech before a closing quote,
-    and (excluded by the regex itself) Markdown bullets and `well-known`
-    compounds. Returns (rewritten_text, count). Idempotent."""
+    Skipped: numeric ranges ("1 - 2"), the protected interruption / suspension
+    shapes (`_dash_protected`), and (excluded by the regex itself) Markdown
+    bullets and `well-known` compounds. Returns (rewritten_text, count).
+    Idempotent."""
     count = 0
     matches = list(_SPACED_HYPHEN_RE.finditer(text))
     out = text
@@ -131,7 +150,7 @@ def enforce_spaced_hyphen_dash(text: str) -> tuple[str, int]:
         start, end = m.start(), m.end()
         if _is_numeric_range(out, start, end):
             continue
-        if _is_cutoff(out, end):
+        if _dash_protected(out, end):
             continue
         repl = _pick_replacement(out, start, end)
         # The match spans the flanking spaces (" - "); replacing the whole span
