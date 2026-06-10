@@ -105,7 +105,12 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # examples modeling "he said, low". All replaced with the
 # webnovel-translation frame, the subject-verb-early construction rule, and
 # WW-architecture example prose. Refiner brief gained the same guards.
-PROMPT_TEMPLATE_VERSION = "phase9-novel-voice-ww-construction-1"
+# -2 (2026-06-10): last-stretch sweep from the user's phase9 read: trailing
+# phrases capped hard (one, then the sentence ends; nothing stacked before
+# the subject), action-naming glossary entries conjugate instead of
+# nominalizing, packed nominals unpack into clauses, and the period words
+# (slew, suffused, beheld, amidst, whilst) moved to the hard avoid-list.
+PROMPT_TEMPLATE_VERSION = "phase9-novel-voice-ww-construction-2"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
