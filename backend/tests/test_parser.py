@@ -9,7 +9,9 @@ from backend.services.parser import (
     parse_chapters,
     reconcile_chapter_numbers,
     sanitize_title_punctuation,
+    strip_heading_update_marker,
     strip_leading_title_line,
+    strip_title_update_marker,
 )
 
 
@@ -228,6 +230,80 @@ def test_normalize_title_dash_only_yields_bare_chapter():
     to the bare chapter form, not 'Chapter 5: '."""
     assert normalize_title_en("—", 5) == "Chapter 5"
     assert normalize_title_en(" — ", 5) == "Chapter 5"
+
+
+# --- author update-count / vote-begging markers ------------------------------
+
+
+def test_strip_title_update_marker_observed_patterns():
+    """Every marker shape observed in live novel 2 strips cleanly."""
+    cases = [
+        ("第392章 惊变！（第四更！）", "第392章 惊变！"),
+        ("第405章 我特么又回来啦！（第五更）", "第405章 我特么又回来啦！"),
+        ("第492章 天下第一真君！（四更）", "第492章 天下第一真君！"),
+        ("第619章 天府之秘，道主尸身！（五更）", "第619章 天府之秘，道主尸身！"),
+        ("第187章 你才是真的畜生啊！（补更！）", "第187章 你才是真的畜生啊！"),
+        ("第522章 干！别怂！（补更）", "第522章 干！别怂！"),
+        ("第1146章 胜利的一小步（下午五点还有两更）", "第1146章 胜利的一小步"),
+        ("第1322章 赌斗（晚上十点还有两更）", "第1322章 赌斗"),
+        ("第10章 标题（求月票！）", "第10章 标题"),
+        ("第11章 标题（求订阅）", "第11章 标题"),
+        ("第12章 标题（求推荐票）", "第12章 标题"),
+        ("第13章 标题（加更）", "第13章 标题"),
+        ("第14章 标题(第3更)", "第14章 标题"),  # halfwidth parens
+    ]
+    for raw, want in cases:
+        assert strip_title_update_marker(raw) == want, raw
+
+
+def test_strip_title_update_marker_keeps_legit_parentheticals():
+    """Part markers, numbering, and prose containing a bare 更 are not noise."""
+    cases = [
+        "第50章 大战（上）",
+        "第51章 大战（一）",
+        "第52章 更上一层楼",
+        "第53章 标题（更上一层楼）",
+        "第54章 平平无奇",
+    ]
+    for raw in cases:
+        assert strip_title_update_marker(raw) == raw, raw
+
+
+def test_strip_title_update_marker_none_and_empty():
+    assert strip_title_update_marker(None) == ""
+    assert strip_title_update_marker("") == ""
+
+
+def test_strip_heading_update_marker_cleans_heading_line():
+    body = "第392章 惊变！（第四更！）\n\n【离恨天】外。\n\n正文继续。"
+    out = strip_heading_update_marker(body)
+    assert out.split("\n")[0] == "第392章 惊变！"
+    assert "【离恨天】外。" in out
+    assert "第四更" not in out
+
+
+def test_strip_heading_update_marker_leaves_prose_first_line():
+    """A body whose first line is prose (no heading) is untouched, even if a
+    marker-like parenthetical appears in it."""
+    body = "他说（第四更！）这句话。\n\n正文。"
+    assert strip_heading_update_marker(body) == body
+
+
+def test_normalize_title_zh_gated_backstop_strips_trailing_parenthetical():
+    out = normalize_title_en(
+        "Sudden Turn! (Fourth Update!)", 392,
+        title_zh="第392章 惊变！（第四更！）",
+    )
+    assert out == "Chapter 392: Sudden Turn!"
+
+
+def test_normalize_title_backstop_inert_without_zh_marker():
+    """No marker in the zh title: a trailing parenthetical is a legitimate
+    subtitle and stays."""
+    out = normalize_title_en("The Duel (Part One)", 392, title_zh="第392章 决斗（上）")
+    assert out == "Chapter 392: The Duel (Part One)"
+    out2 = normalize_title_en("The Duel (Part One)", 392)
+    assert out2 == "Chapter 392: The Duel (Part One)"
 
 
 def test_leading_prologue_keeps_real_chapter_numbers():

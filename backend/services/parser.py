@@ -115,6 +115,57 @@ _TITLE_PREFIX_RE = re.compile(
 )
 
 
+# Author postscript markers web-novel authors append to chapter headings:
+# update-count notes (（第四更！）/（四更）/（补更）/（下午五点还有两更）) and
+# vote-begging asides (求月票 / 求订阅 / 求推荐票). They are upload metadata,
+# not title content — strip them from prompt inputs so the model never
+# translates one into the English title. Anchored to a parenthetical whose
+# content carries one of the marker shapes; a bare 更 in real title prose
+# (更上一层楼) never matches.
+_TITLE_NOISE_INNER = (
+    r"(?:第?[\d一二三四五六七八九十两]+更"  # 第四更 / 四更 / 还有两更
+    r"|[补加]更"                            # 补更 / 加更
+    r"|求[^（）()]{0,6}?(?:票|订阅)"        # 求月票 / 求票 / 求订阅 / 求推荐票
+    r"|月票)"
+)
+_TITLE_NOISE_RE = re.compile(
+    r"[（(][^（）()]*" + _TITLE_NOISE_INNER + r"[^（）()]*[）)]"
+)
+
+
+def strip_title_update_marker(title: str | None) -> str:
+    """Remove author update-count / vote-begging parentheticals from a chapter
+    heading: ``第392章 惊变！（第四更！）`` → ``第392章 惊变！``. Returns ``""``
+    for None. Idempotent; a heading without a marker passes through unchanged."""
+    if not title:
+        return ""
+    out = _TITLE_NOISE_RE.sub("", title)
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def strip_heading_update_marker(body: str) -> str:
+    """Apply ``strip_title_update_marker`` to the leading chapter-heading line
+    of ``body``, if there is one. The model reads the heading from the body
+    too, so cleaning only the CHAPTER TITLE prompt line would leave the marker
+    visible there. Non-heading first lines (ordinary prose) are untouched."""
+    if not body:
+        return body
+    lines = body.split("\n")
+    idx = 0
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    if idx >= len(lines):
+        return body
+    first = lines[idx].strip()
+    if not _TITLE_PREFIX_RE.match(first):
+        return body
+    stripped = strip_title_update_marker(first)
+    if stripped == first:
+        return body
+    lines[idx] = stripped
+    return "\n".join(lines)
+
+
 # Long-dash glyphs the model occasionally emits inside a descriptive chapter
 # title: U+2014 em-dash, U+2013 en-dash, U+2015 horizontal bar. ASCII hyphen
 # (`-`) is deliberately excluded — compound words like "Treasure-Light" and
@@ -152,7 +203,9 @@ def sanitize_title_punctuation(title: str) -> str:
     return result
 
 
-def normalize_title_en(raw: str | None, chapter_num: int) -> str:
+def normalize_title_en(
+    raw: str | None, chapter_num: int, title_zh: str | None = None
+) -> str:
     """Return a canonical ``Chapter {n}: {title}`` string.
 
     The translator is told to emit only the descriptive title, but models
@@ -161,6 +214,12 @@ def normalize_title_en(raw: str | None, chapter_num: int) -> str:
     recomposes the title from the authoritative ``chapter_num`` so every
     chapter in a novel is formatted identically. A title that strips to
     nothing (or "(untitled)") yields the bare ``Chapter {n}``.
+
+    When ``title_zh`` is supplied and carries an author update marker
+    (（第四更！）, 求月票 — see ``_TITLE_NOISE_RE``), a trailing parenthetical
+    in the model's title is dropped: the EN wording of a translated marker
+    varies too much to pattern-match, but the zh gate makes the strip
+    zero-false-positive on legitimate parenthetical subtitles.
 
     Em-dash / en-dash runs that survive into the descriptive title (where
     the body em-dash enforcer never runs) are normalized via
@@ -177,6 +236,8 @@ def normalize_title_en(raw: str | None, chapter_num: int) -> str:
             break
         title = stripped.strip()
     title = title.strip("\"'“”").strip()
+    if title_zh and _TITLE_NOISE_RE.search(title_zh):
+        title = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", title).strip()
     title = sanitize_title_punctuation(title)
     if not title or title.lower() in ("(untitled)", "untitled"):
         return f"Chapter {chapter_num}"

@@ -43,7 +43,12 @@ from backend.services.observations import (
     normalize_observer_outputs,
     parse_disabled_observers,
 )
-from backend.services.parser import normalize_title_en, strip_leading_title_line
+from backend.services.parser import (
+    normalize_title_en,
+    strip_heading_update_marker,
+    strip_leading_title_line,
+    strip_title_update_marker,
+)
 from backend.services.prompt_inputs import (
     NovelGenreBrief,
     fetch_novel_genre_brief,
@@ -584,7 +589,7 @@ async def _record_commit_provenance(
 
 
 def _apply_text_fixups(
-    result, glossary, chapter_num: int,
+    result, glossary, chapter_num: int, title_zh: str | None = None,
 ) -> tuple[str | None, str]:
     """Run the deterministic post-translation text fixups (no LLM) and return
     (title_en, cleaned_text).
@@ -615,7 +620,7 @@ def _apply_text_fixups(
             chapter_num, ts_n, lt_n, lc_n, sb_n, cm_n,
         )
 
-    title_en = normalize_title_en(result.title_en, chapter_num)
+    title_en = normalize_title_en(result.title_en, chapter_num, title_zh=title_zh)
     cleaned_text, em_count = enforce_em_dash(result.translated_text)
     cleaned_text, sh_count = enforce_spaced_hyphen_dash(cleaned_text)
     # Brackets BEFORE balance: stripping a bold-wrapped span can expose a stray
@@ -720,9 +725,16 @@ async def _translate_chapter_in_db(
         # in that case. PROMPT_INCLUDE_FREE_DRAFT=false is the A/B kill-switch
         # for the REFERENCE TRANSLATION block.
         free_draft = r["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
+        # Author update markers (（第四更！）, 求月票) are upload metadata, not
+        # title content: strip them from the prompt inputs (the CHAPTER TITLE
+        # line and the heading echoed at the top of the body) so the model
+        # never translates one into TITLE_EN. Prompt-time only — the stored
+        # title_zh / original_text keep the source verbatim.
+        prompt_title_zh = strip_title_update_marker(r["title_zh"]) or None
+        prompt_source = strip_heading_update_marker(r["original_text"])
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
-            r["original_text"], r["title_zh"], glossary,
+            prompt_source, prompt_title_zh, glossary,
             previous_context=previous_context,
             style_edits=style_edits,
             use_cache=not r["force_retranslate"],
@@ -741,7 +753,7 @@ async def _translate_chapter_in_db(
         # Pure deterministic text fixups (casing, em-dash, brackets, title
         # normalization). No LLM. Returns the canonical title + committed body.
         title_en, cleaned_text = _apply_text_fixups(
-            result, glossary, r["chapter_num"],
+            result, glossary, r["chapter_num"], title_zh=r["title_zh"],
         )
 
         # Observations only — no retry, no degraded mark. The single-pass
