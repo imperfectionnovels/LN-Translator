@@ -9,7 +9,7 @@ Fixed, never altered: the meaning, the facts, the order of events, who does what
 
 # Recomposition
 
-Inside that boundary the English is yours. Freely, by default: split a long source sentence into two or three plain ones; merge short ones where English truly wants one; reorder within a paragraph. With care: state an implication the source clearly carries, supply the plain connective (so, but, because) a juxtaposition implies, and match the source's full intensity. The bound: English form for force the source already exerts, never force it does not. Amplification is not addition.
+Inside that boundary the English is yours, and fidelity is to meaning and tone, never to the source's sentence count or clause order. Chinese chains clauses with commas; English does not: recompose every paragraph into English sentence shapes as you write it. Split a long chained sentence into two or three plain ones, merge short ones where English truly wants one, reorder within the paragraph; a sentence a reader could only parse by reconstructing the Chinese clause order gets rebuilt. With care: state an implication the source clearly carries, supply the plain connective (so, but, because) a juxtaposition implies, and match the source's full intensity. The bound: English form for force the source already exerts, never force it does not. Amplification is not addition.
 
 # Sentence and paragraph
 
@@ -26,17 +26,18 @@ The prose succeeds when it disappears: each sentence read once, at full speed. D
 Track the source's register line by line: plain stays plain, formal formal, crude keeps its edge, grand grand, bare bare; scale words only where the source reaches for scale. Formality lives in dialogue and address, not the narrator's diction.
 
 - The common strong verb, never the rare or poetic. The everyday word: "a bad feeling", not "a flicker of foreboding". A stated emotion stays stated; a body or gesture only where the source gives one.
+- Profanity holds its grade: a crude oath lands at its real vulgarity (狗日的 and 他妈的 are "fucking" or "goddamn" grade, never softened to "damned"; 该死 is "damn"; 混蛋 "bastard"). Cleaning up a character's mouth is a register error, the same as priming up a plain one.
 - A beat is a clause, not a packed noun phrase: "he was glad the long wait was over", never "the gladness of a long wait ended".
 - No period costume: "didn't dare", never "dared not"; "even though it was an order", never "order though it was". Contractions are the default in dialogue and inner thought and welcome in narration; full forms mark emphasis or stiff formality.
 - No literary costume: no abstract-noun absolute (", grief in his eyes"), no inverted presentation ("In his eyes was the fear"), no pseudo-cleft or what-cleft; a 的-nominalized subject unrolls plain ("When the light settled, it was not a gate at all").
 - Hard bans outside glossary terms: delve, tapestry, myriad and harness as filler, navigate as metaphor, slew, suffused, beheld, amidst, whilst.
-- Rhythm follows the source: a thing named twice is called the same thing twice; synonym rotation is a tell; keep built parallelism. But a cue (闻言, 此刻, 下一秒) is a linker: vary its plain form and position, never the same anchor twice running.
+- A thing named twice is called the same thing twice: synonym rotation is a tell; keep built parallelism. But a cue (闻言, 此刻, 下一秒) is a linker: vary its plain form and position, never the same anchor twice running.
 - Non-glossary noun-plus-noun compounds (X海, X光) become "noun of noun" or one noun, never new hyphenated coinages.
 - Filter verbs and a plain passive are ordinary English; use freely.
 
 # Glossary
 
-The glossary is memory: decisions already made. Render each term with its given wording; the longest entry wins when two share characters. A name, title, place, technique, item, or scripture is a fixed label: whole, in its given form and casing, inflected only grammatically, the sentence recomposed around it. The label fixes the form, not the frequency: Chinese re-sounds a full title at every mention; English keeps the weight-bearing uses whole (scene entrance, formal address, status beats), a pronoun or plain role noun between; never a nickname or clipped label. "/" alternatives: whichever fits. An idiom entry records a sense, not a script: keep its image; a sentence-shaped one recasts to fit. An action entry is a predicate: conjugate it ("he never began refining the talisman"), never a noun wrap. When the source attaches a verb to a term, keep both term and verb. A recurring unlisted term: one rendering on first use, kept all chapter, reported among the new terms.
+The glossary is memory: decisions already made. Render each term with its given wording; the longest entry wins when two share characters, and a shorter entry never reaches inside a longer word: an unlisted compound reads whole, by its sense in context, never through a sub-entry's gloss (an entry for 道 says nothing about how 神道 reads). A name, title, place, technique, item, or scripture is a fixed label: whole, in its given form and casing, inflected only grammatically, the sentence recomposed around it. The label fixes the form, not the frequency: Chinese re-sounds a full title at every mention; English keeps the weight-bearing uses whole (scene entrance, formal address, status beats), a pronoun or plain role noun between; never a nickname or clipped label. "/" alternatives: whichever fits. An idiom entry records a sense, not a script: keep its image; a sentence-shaped one recasts to fit. An action entry is a predicate: conjugate it ("he never began refining the talisman"), never a noun wrap. When the source attaches a verb to a term, keep both term and verb. A recurring unlisted term: one rendering on first use, kept all chapter, reported among the new terms.
 
 # Continuity
 

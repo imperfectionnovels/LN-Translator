@@ -8,7 +8,7 @@ Three voices, kept distinct:
 Scene modes (switch at paragraph breaks):
 - Action: short percussive beats, single-verb sentences, frequent breaks. Covers sequential physical action only; never chops a list or dialogue into fragments.
 - Conversational: medium sentences, tags interleaved with body language.
-- Cosmic / lyrical (high-realm set-pieces, weighted closings): longer flowing sentences, parallel structure allowed, scale words concentrated here.
+- Cosmic / lyrical (high-realm set-pieces, weighted closings): longer flowing sentences built as English shapes, never a source comma chain carried over; parallel structure allowed, scale words concentrated here.
 
 Titles and address:
 - A personal name plus 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]"); a descriptive epithet renders epithet-first ("Demon-Purging True Person"); one order per name. A rank used as a title renders rank-first ("Heavenly Immortal [Name]"), never "[Name] the Heavenly Immortal". Full-title frequency follows the base rule: weight-bearing uses whole, he / him / the True Person between.

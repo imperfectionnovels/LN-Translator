@@ -172,7 +172,20 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # connect, scene shifts restart cold, thought lines knit), cut-in bullet
 # merged to allow trailing attachment. Offsets cut redundancy so base.md
 # stays <= 1,400 words.
-PROMPT_TEMPLATE_VERSION = "phase13-novel-voice-cohesion-1"
+# phase14 (2026-06-10): english-cadence pass from the user's live ch392 read
+# (phase11 bundle, Opus 4.8). Faulty rules fixed, not added to: the diction
+# bullet's "Rhythm follows the source" opener read as a blanket mandate to
+# track Chinese sentence rhythm (it governed lexical repetition only) and
+# fought the Recomposition license, so the opener is gone; Recomposition is
+# now the default operation (fidelity to meaning and tone, never to sentence
+# count or clause order; comma chains recompose into English shapes; a
+# sentence parseable only via the Chinese clause order gets rebuilt) with a
+# matching worked example and an English-shapes rider on the xianxia cosmic
+# scene mode. Profanity calibration added (狗日的 grade is fucking/goddamn,
+# never "damned") after ch392 softened a curse line. Glossary section now
+# blocks sub-entry gloss capture of unlisted compounds (道's entry pulled
+# 什么神道 to "no Dao"; the compound reads whole, by context).
+PROMPT_TEMPLATE_VERSION = "phase14-english-cadence-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
