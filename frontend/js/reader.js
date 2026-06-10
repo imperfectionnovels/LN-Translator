@@ -1193,10 +1193,12 @@ function renderEnglishMarkdownWithTerms(text, pattern) {
   }).join("");
 }
 
-/* ---- Edit-mode paragraph-aligned grid (2026-06) ----
+/* ---- Paragraph-aligned grid (2026-06) ----
  * Pairs each source paragraph with its translation paragraph in shared rows so
- * a translator can compare and rewrite line by line. Active only in edit mode
- * (see renderChapterBody).
+ * a translator can compare and rewrite line by line. Active in edit mode and
+ * in bilingual read mode (see renderChapterBody); without it the independent
+ * panes drift wherever the translation merges paragraphs or drops the 本章完
+ * boilerplate, and the reader sees the columns "out of order" by the tail.
  *
  * Both columns are split from the STORED text with one shared rule (_splitParas)
  * so the cell counts reflect real paragraph structure. original_text keeps its
@@ -3225,14 +3227,16 @@ function renderChapterBody(ch) {
   const enSource = _displayedEnglish(ch);
   bodyEn.innerHTML = renderEnglishMarkdownWithTerms(enSource, pattern);
   bodyZh.innerHTML = renderParagraphsWithTerms(ch.original_text || "", "zh", pattern);
-  // Feature B: edit-mode paragraph-aligned grid. Pair source + translation
-  // paragraphs into shared rows so editing lines up against the source. Keep
-  // the legacy bodies populated (above) as the fallback + read-mode surface;
-  // _buildAlignedRows returns null (so we stay on the legacy panes) in read
-  // mode, single column, or when the counts diverge too far to align.
+  // Feature B: paragraph-aligned grid. Pair source + translation paragraphs
+  // into shared rows wherever the ZH pane is visible (edit mode AND bilingual
+  // read mode): the translator merges paragraphs and drops boilerplate, so
+  // independent panes drift visibly off by the chapter tail. Keep the legacy
+  // bodies populated (above) as the fallback + classic-mode surface;
+  // _buildAlignedRows returns null (so we stay on the legacy panes) in single
+  // column or when the counts diverge too far to align.
   const alignedEl = document.getElementById("aligned-body");
   let aligned = false;
-  if (readerMode === "edit" && alignedEl) {
+  if ((readerMode === "edit" || dualMode) && alignedEl) {
     const rows = _buildAlignedRows(ch.original_text || "", enSource, pattern);
     if (rows) {
       alignedEl.innerHTML = rows;

@@ -313,3 +313,14 @@ def test_missing_terms_truly_missing_atomic_still_flagged() -> None:
     trans = "The mysteries of seat attainment."  # wrong rendering
     missing = missing_translator_terms(src, trans, g)
     assert missing == [("果位", "Fruition Attainment")]
+
+
+def test_classifier_all_lowercase_trusted_category_false() -> None:
+    # An all-lowercase term_en has no proper-noun casing to enforce, even in
+    # a trusted category. Live-ch427 defect: 师尊 typed "master" (category
+    # technique) turned the canonical-caser into a global down-caser,
+    # rewriting the model's correct "what Master intends" to "what master".
+    g = _entry("master", category="technique")
+    assert is_atomic_case_locked_term(g) is False
+    g2 = _entry("formation master", category="character")
+    assert is_atomic_case_locked_term(g2) is False

@@ -120,7 +120,11 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # example to "even though"; ambiguity rule extended to possessives and
 # two-man he-runs; frozen idioms gain the no-simile-promotion discriminator;
 # xianxia examples gain topic-comment, idiom-sense, and 意外 pairs.
-PROMPT_TEMPLATE_VERSION = "phase10-novel-voice-sentence-structure-1"
+# -2 (2026-06-10): ch427 live-render follow-up: 心念一动 / 香火断绝 pairs added
+# to the xianxia idiom examples. The bigger awkwardness sources this round
+# were pipeline-side (casing + rejoin fixups rewriting correct model output),
+# fixed in text_fixups.py / glossary_casing.py, not in the prompt.
+PROMPT_TEMPLATE_VERSION = "phase10-novel-voice-sentence-structure-2"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

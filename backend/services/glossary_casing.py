@@ -103,6 +103,15 @@ def is_atomic_case_locked_term(g: GlossaryEntry) -> bool:
         # force-cased, whatever its category or stored casing. Casing-root
         # backstop so generics cannot be pinned Title-Case for any novel.
         return False
+    if en == en.lower():
+        # All-lowercase term_en carries no proper-noun casing to enforce.
+        # Treating it as atomic turns the canonical-caser into a global
+        # down-caser: a 师尊 row typed "master" rewrote the model's correct
+        # name-use capitalization ("what Master intends" -> "what master
+        # intends") in live ch427. Deliberate down-casing stays available
+        # through the explicit `lowercase` note path
+        # (enforce_lowercase_locked_terms), which carries its own guards.
+        return False
     # Slash alternatives are soft by convention (Karma / Karmic Threads).
     if "/" in en or "∕" in en or "／" in en:
         return False

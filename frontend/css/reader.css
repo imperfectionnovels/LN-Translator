@@ -1003,7 +1003,7 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
 }
 
 /* ===== Edit-mode paragraph-aligned grid (2026-06) =====
- * Active only in edit mode, when reader.js sets data-aligned="on" on the stage
+ * Active in edit mode and bilingual read mode, when reader.js sets data-aligned="on" on the stage
  * (see renderChapterBody). It collapses the dual-grid to one full-width column,
  * hides the independent ZH pane and the legacy EN body, and shows #aligned-body
  * whose .prow rows pair each source paragraph (.src) with its editable

@@ -358,3 +358,33 @@ def test_sentence_initial_idempotent() -> None:
 
 def test_sentence_initial_empty() -> None:
     assert enforce_sentence_initial_capitalization("") == ("", 0)
+
+
+def test_lowercase_keeps_vocative_after_ellipsis() -> None:
+    # Direct address keeps the model's capitalization: a title used as a name
+    # is Title Case per the overlay's casing rule. Live-ch427 defect: the
+    # down-caser rewrote the vocative to "great master" because an ellipsis
+    # is deliberately not a sentence head.
+    g = [_lc_entry("great master")]
+    text = '"...Great Master, send someone to take a look."'
+    out, n = enforce_lowercase_locked_terms(text, g)
+    assert out == text
+    assert n == 0
+
+
+def test_lowercase_keeps_vocative_after_comma() -> None:
+    g = [_lc_entry("great master")]
+    text = '"Yes, Great Master."'
+    out, n = enforce_lowercase_locked_terms(text, g)
+    assert out == text
+    assert n == 0
+
+
+def test_lowercase_still_downcases_determiner_led_generic() -> None:
+    # The vocative guard must not shield ordinary generic uses.
+    g = [_lc_entry("great master")]
+    out, n = enforce_lowercase_locked_terms(
+        "He bowed before the Great Master of the temple.", g
+    )
+    assert out == "He bowed before the great master of the temple."
+    assert n == 1

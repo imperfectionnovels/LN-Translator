@@ -580,6 +580,32 @@ def _is_sentence_initial(text: str, idx: int) -> bool:
     return False
 
 
+def _is_vocative_position(text: str, start: int, end: int) -> bool:
+    """True when the match sits in direct-address position, where English
+    capitalizes a title used as a name: the term is immediately followed by
+    `,` `.` `!` `?` AND is entered from a quote opening, an ellipsis, or a
+    comma (walking left over opener glyphs). Catches '"Great Master, ...',
+    '"...Great Master, ...' and 'Yes, Great Master.' while leaving
+    determiner-led generic uses ("the great master of the temple") to the
+    down-caser."""
+    if text[end:end + 1] not in ",.!?":
+        return False
+    j = start - 1
+    while j >= 0 and text[j] in _SENTENCE_OPENERS:
+        j -= 1
+    if j < 0:
+        return True
+    c = text[j]
+    if c in "\n,":
+        return True
+    if c == ".":
+        k = j
+        while k >= 0 and text[k] == ".":
+            k -= 1
+        return ".." in text[k + 1 : j + 1]
+    return False
+
+
 def _next_nonspace_is_upper(text: str, end: int) -> bool:
     """True iff the next non-space char after `end` is an uppercase letter —
     the forward signal of a Title-Case proper-noun compound (`Ghost Mountain`)."""
@@ -695,6 +721,8 @@ def enforce_lowercase_locked_terms(
             if _in_protected_span(start, protected):
                 continue
             if _is_sentence_initial(out, start):
+                continue
+            if _is_vocative_position(out, start, end):
                 continue
             if _next_nonspace_is_upper(out, end):
                 continue
@@ -933,16 +961,44 @@ _SUBJECT_STARTERS = frozenset(
     {"He", "She", "It", "They", "I", "We", "You", "There", "Here"}
 )
 
+# Multi-word clauses are fragments only when they match a closed stub shape.
+# A verbless time/beat stub the genre strands constantly:
+_FRAGMENT_TIME_STUB_RE = re.compile(
+    r"^(?:(?:the|a|an|one)\s+)?"
+    r"(?:(?:next|same|very|last|first|brief|split)\s+)?"
+    r"(?:second|moment|instant|breath|blink|flash|beat|heartbeat)"
+    r"(?:\s+(?:later|after|passed))?$"
+)
+# Fixed evaluative interjections with no subject-verb shape:
+_INTERJECTION_STUBS = frozenset({
+    "no need", "a pity", "what a pity", "too late", "no matter",
+    "no wonder", "not good", "sure enough", "even so", "not only that",
+    "no way", "so be it", "at last",
+})
+# Punctuation stripped from words before the stub lookup.
+_STUB_STRIP = ".,;:!?'\"“”‘’*()[]"
+
 
 def _is_fragment(clause: str, caps: set[str]) -> bool:
-    """A short clause that is NOT an independent statement: no subject pronoun
-    or proper-noun subject leading it. Such a clause is comma-joined; everything
-    else is semicolon-joined."""
+    """A short clause that is NOT an independent statement, safe to comma-join.
+
+    A single word with no subject shape is verbless. A 2-3 word clause must
+    match a closed stub shape (time/beat stub or fixed interjection): an
+    article-led subject-verb clause ("The monk froze") is an independent
+    statement, and comma-joining it manufactures a splice, so anything not
+    positively identified as a stub is treated as independent."""
     words = clause.split()
     if not words or len(words) > _FRAGMENT_MAX_WORDS:
         return False
     first = words[0]
-    return first not in _SUBJECT_STARTERS and first not in caps
+    if first in _SUBJECT_STARTERS or first in caps:
+        return False
+    if len(words) == 1:
+        return True
+    norm = " ".join(w.strip(_STUB_STRIP) for w in words).lower()
+    if norm in _INTERJECTION_STUBS:
+        return True
+    return bool(_FRAGMENT_TIME_STUB_RE.match(norm))
 
 
 def _count_cjk_sentences(s: str) -> int:

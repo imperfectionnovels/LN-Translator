@@ -310,3 +310,41 @@ def test_only_eligible_paragraph_changes_in_multi_para() -> None:
     assert out.startswith("He moved. The sword flashed. Blood sprayed.\n\n")
     # second paragraph rejoined
     assert "No need, now that he is committed" in out
+
+
+def test_short_article_led_clause_not_welded() -> None:
+    # "The monk froze" is article + noun + verb: an independent statement, not
+    # a stranded fragment. Comma-joining it manufactures a splice (live ch427:
+    # "The monk froze, but the Son of Buddha had spoken"; dev render: "The
+    # monk froze, he was a Venerable..."). Surgical mode keeps its period.
+    src = "僧人闻言顿时一愣，然而佛子发话，他一个相当于筑基后期大真人的净土尊者怎么可能有拒绝之权。"
+    tgt = (
+        "The monk froze. But the Son of Buddha had spoken. He was a Venerable "
+        "of the Pure Land, the equal of a late-stage Foundation Establishment "
+        "Great True Person, but what right did he have to refuse?"
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 0
+    assert out == tgt
+
+
+def test_lone_split_article_led_clause_not_spliced() -> None:
+    # The lone-split path treats an article-led subject-verb clause as a
+    # defensible 2-way split, never a comma splice.
+    src = "僧人闻言顿时一愣，他一个净土尊者怎么可能有拒绝之权。"
+    tgt = (
+        "The monk froze. He was a Venerable of the Pure Land, but what right "
+        "did he have to refuse?"
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 0
+    assert out == tgt
+
+
+def test_time_stub_still_rejoined() -> None:
+    # The canonical stranded time-beat stub still comma-joins.
+    src = "下一秒，他动了。"
+    tgt = "The next second. He moved."
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 1
+    assert out == "The next second, he moved."
