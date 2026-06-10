@@ -65,9 +65,9 @@ Key facts:
 - **Glossary-context observers (Phase 3)** flag prose patterns around locked
   terms: double-possessive pileups, intensifier inflation
   (`detect_intensifier_inflation_on_glossary_term`), predicate loss across
-  13 verb groups (`_PREDICATE_GROUPS`), malformed cultivation-noun stacks,
-  mid-sentence paragraph breaks. Observers LOG only; the single-pass thesis
-  is that noticing has to happen inside the translator's thinking phase.
+  13 verb groups (`_PREDICATE_GROUPS`), mid-sentence paragraph breaks.
+  Observers LOG only; the single-pass thesis is that noticing has to happen
+  inside the translator's thinking phase.
 
 Subscription-CLI backends (`codex_cli`, `gemini_cli`, `opencode`) reuse the
 same shape as `claude_cli`: they shell out to a vendor CLI rather than holding
