@@ -151,7 +151,17 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # New coinages now use Object-Verbing hyphenated attributives, no commas,
 # suffix kept; scoped so the base noun-noun anti-hyphenation rule stands.
 # Existing glossary offenders renamed in both DBs with chapter backfill.
-PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-3"
+# phase12 (2026-06-10): compiled v2 stack, ground-up rewrite for the Opus
+# target (base 2,713 -> ~1,400 words, xianxia overlay 1,046 -> ~650,
+# examples 810 -> ~430). Every logged policy survives; one rule, one layer.
+# Driven by the Opus baseline matrix (data/opus_baseline_matrix.md): all
+# examples genericized to invented content because Opus reproduced banned
+# constructions verbatim from negative examples that had been mined from the
+# battery chapters themselves; the brief now explicitly owns thought
+# formatting (overlay's viewpoint-italic rule was beating the brief's
+# protagonist-roman directive via the ladder); new rule against added
+# trail-offs (35 invented ellipses across 3 chapters whose sources have 0).
+PROMPT_TEMPLATE_VERSION = "phase12-novel-voice-compiled-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
