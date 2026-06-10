@@ -136,7 +136,14 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # the same address-form exception; the new incense example pair reordered to
 # lead with plain sense per the frozen-idiom rule. Novel-brief chengyu
 # contradiction (keep-images vs never-image) reconciled in both DBs.
-PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-1"
+# -2 (2026-06-10): pro-drop thought subjects. The model mirrored Chinese
+# subject ellipsis into thought ("Might as well win more benefits");
+# supply-the-subject now explicitly reaches inner thought with a contrastive
+# pair; default is the thinker's "I", a clipped subjectless beat stays an
+# occasional deliberate choice (user decision; watch the next chapters
+# rather than A/B one, supply-subject edits historically resist single-run
+# validation).
+PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-2"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
