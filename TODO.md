@@ -2,14 +2,17 @@
 
 Roadmap for upcoming work on LN-Translator.
 
-## IN PROGRESS: translation workflow review (prompt load + model sustainability)
+## DONE 2026-06-10: translation workflow review (prompt load + model sustainability)
 
-Checkpoint 2026-06-10, saved before a conversation clear. Continue from here.
+Shipped 2026-06-10 (phase12+13 compiled v2 stack + phase14 english-cadence pass,
+EXE rebuilt and release re-uploaded). Phase D's blocked-on-memo-read gate was
+resolved by the user's explicit ship-now decision during the ch392 defect
+session; the A/B memo (data/opus_ab_phase_c_memo.md) remains available to read.
 
 ### Verdicts and directives (binding)
 
 - **Sonnet is a FAILURE** (user ruling 2026-06-10): disqualified on translation latency and failure rate. Full-size calls through the claude_agent SDK timed out at 600s repeatedly (4+ attempts across 3 battery runs) while tiny probes and direct CLI calls passed; best theory is the saturated five-hour subscription window queuing large requests, but even passing runs were too slow. Do NOT re-attempt Sonnet benchmarking.
-- **Target model is now Opus** (`claude-opus-4-8`). NEVER benchmark prompt changes on fable (user directive: "not sustainable"); fable is allowed only as a one-run live-lane regression sanity.
+- **Target model for prompt benchmarking is Opus** (`claude-opus-4-8`). Don't benchmark prompt changes on fable (user directive: "not sustainable" for benchmark batteries). Clarified 2026-06-10: fable is NOT forbidden as a provider; the user may select it per-novel like any other model.
 - **Benchmark method (user-specified)**: score outputs against the PROMPT'S OWN RULE CATEGORIES — violations / checkable opportunities per category, with quoted examples — not just surface register metrics.
 
 ### Findings already established (do not re-derive)
@@ -25,7 +28,16 @@ Checkpoint 2026-06-10, saved before a conversation clear. Continue from here.
 3. ~~Phase A~~ DONE: outputs data/opus_baseline_ch*.txt, memo data/opus_baseline_matrix.md. Headlines: thought-format conflict (overlay italic beat brief roman via ladder), negative-example contamination (4 banned constructions reproduced verbatim from ch427-mined examples), 35 invented ellipses, locked-term misses.
 4. ~~Phase B~~ DONE: phase12-novel-voice-compiled-1 (commit 94f8908). base 1,409 w / overlay 654 / examples 430 (was 4,569 total). Examples genericized; brief owns thought formatting; no-added-trail-off rule.
 5. ~~Phase C~~ DONE: v2 outputs data/opus_v2_ch*.txt + fable sanity data/fable_v2_ch427.txt. A/B memo: data/opus_ab_phase_c_memo.md. v2 equal-or-better on 10/11 mechanical categories (protagonist italics 15->3, archaic/cleft/calque fixed); regressions: "slew" x2 near All-Slaying + 3 judgment-grade idiom/phrase instances on ch427 traced to cut novel-mined examples. Fable live-lane sanity PASS.
-6. **Phase D — ship (BLOCKED ON USER READ of the A/B memo)**: full pytest, EXE rebuild + smoke (close the running EXE first, it locks dist/), `gh release upload v0.1.0-beta.1 ... --clobber` both assets, relaunch EXE, memory updates, restore dev provider wiring (novel 3 translator_provider_id -> NULL). If v2 loses a category, iterate once; if Opus and fable demand conflicting text, surface the fork decision, don't choose silently.
+6. ~~Phase D — ship~~ DONE 2026-06-10: shipped together with the phase14 english-cadence pass after the user's ship-now decision (ch392 defect session). Full pytest (1450+), dev Opus validation retranslate of ch392 (all six checks passed: clean title, dashes preserved, 神道 as "the gods", profanity at force, recomposed cadence, rules_report no-regression), EXE rebuilt + smoked, release assets re-uploaded, dev provider wiring restored.
+
+### Ch392 defect session (2026-06-10, same-day follow-up)
+
+User read of live ch392 surfaced five defects; all fixed and shipped:
+- Dash mangling (fixup damage, the worst): enforce_em_dash deleted source —— interruption/suspension dashes ("you, !!!", orphaned "The next instant," paragraphs, comma-welded BOOM paragraphs). Fixed via _dash_protected (keep before punctuation / closing quote / newline / end-of-text; kept runs collapse to one em-dash). Committed chapters repaired via data/repair_dash_damage.py (segment-anchored splice from raw cache replay): live 38/38 applied + ch392 title SQL fix, 2 live skips were already hand-fixed; dev 1 applied + ch392 spot fix, 10 old-epoch skips left alone. Backups: novels.pre-dash-repair.*.db.gz in each data root.
+- Author update markers in titles (（第四更！）): stripped at prompt time + zh-gated normalize backstop (parser.strip_title_update_marker).
+- 神道 -> "no Dao": missing glossary entry added both DBs with metonymy usage_note + base.md no-sub-entry-capture clause.
+- Profanity softening (狗日的 -> "damned"): base.md calibration bullet.
+- Chinese comma-chain cadence: phase14 (see above).
 
 ### Rescrape (user finding 2026-06-10) — DONE, both DBs applied
 
@@ -36,7 +48,7 @@ Status 2026-06-10: applied wholesale to BOTH DBs (live novel 2: 1451 rows; dev n
 ### Loose ends
 
 - `data/` scratch scripts are local-only by design (gitignored): setup_opus_ab.py, rescrape_twkan.py, save_battery_texts.py, ww_metrics.py, the memos, plus older sonnet probes.
-- Glossary-data cleanup surfaced by the A/B (apply per casing-lock policy, both DBs): 巅峰 "Peak" casing ambiguity, dead traditional-script row 萬眾一心 "One Mind", 香火 "incense" image-pull vs idiom-sense rule.
+- ~~Glossary-data cleanup surfaced by the A/B~~ DONE 2026-06-10 (data/fix_glossary_shendao.py, both DBs): 巅峰 -> "peak" + lowercase note, 萬眾一心 re-pointed to simplified 万众一心, 香火 idiom-sense usage_note, plus the new 神道 entry.
 - Deferred watch items: TERMS-extraction split-out as a future workflow lever; colon density; divergent 正法 renders left alone deliberately; fable invented-ellipsis trait (model-level, not stack).
 
 ## Translation quality
