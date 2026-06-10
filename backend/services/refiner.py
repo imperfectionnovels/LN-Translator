@@ -80,7 +80,8 @@ Style:
 - Avoid over-explaining.
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
 - Keep the passage close to the original, but make it smoother and more polished.
-- Vivid means the exact verb and a clean rhythm, never added ornament: no literary costume, no period diction, no antique syntax the draft does not have.
+- Vivid means the common strong verb and a clean rhythm, never added ornament: no literary costume, no period diction, no antique syntax the draft does not have.
+- Keep each sentence's subject and verb early and together: never re-compress the draft into suspended subjects, stacked trailing phrases, or absolute constructions, and never change a dialogue tag to a bare adjective ("he said, mild").
 - Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries, never turn a comma into a separate sentence, and never join the draft's sentences with a semicolon.
 - Preserve paragraph breaks when they help pacing.
 - Use standard novel dialogue formatting.

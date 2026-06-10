@@ -94,7 +94,18 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # defaults contractions on, stops synonym rotation of repeated stock phrases,
 # and flattens fossil lexicalized idioms to their plain sense (user-approved).
 # Refiner brief swept for the same vectors in this commit.
-PROMPT_TEMPLATE_VERSION = "phase8-novel-voice-wuxiaworld-transparency-1"
+# 2026-06-10 phase9 bump: construction layer. The user's own retranslate of
+# ch427 showed the remaining gap is sentence ARCHITECTURE (suspended
+# subjects, stacked trailing modifiers, absolute phrases, inverted
+# presentation, bare-adjective dialogue tags, poetic verbs), and the audit
+# found base.md manufacturing it: a novelist frame stated four times, a
+# trailing-chain license stated twice, a dialogue rule that taught
+# participial tag-binding while disparaging the two flat sentences WW uses,
+# verb-reaching ("reach for the verb that carries its force"), and worked
+# examples modeling "he said, low". All replaced with the
+# webnovel-translation frame, the subject-verb-early construction rule, and
+# WW-architecture example prose. Refiner brief gained the same guards.
+PROMPT_TEMPLATE_VERSION = "phase9-novel-voice-ww-construction-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

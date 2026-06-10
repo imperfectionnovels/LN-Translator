@@ -41,8 +41,9 @@ def test_build_includes_base_and_overlay_and_examples():
     """The composed instruction must contain markers from all three sources
     so we know the layering actually ran."""
     instruction = build_system_instruction("xianxia")
-    # Base.md signature line (reframed 2026-05-29: "novelist", not "translator").
-    assert "novelist" in instruction.lower()
+    # Base.md signature line (reframed 2026-06-10: the webnovel-translation
+    # frame replaced the novelist frame; phase9 construction layer).
+    assert "english translator of a chinese web novel" in instruction.lower()
     # Genre overlay marker (xianxia overlay's distinctive opening).
     assert "GENRE OVERLAY:" in instruction
     assert "cultivation" in instruction.lower()
