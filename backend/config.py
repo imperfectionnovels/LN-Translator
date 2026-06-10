@@ -28,16 +28,40 @@ logger = logging.getLogger(__name__)
 # DB lives in repo/data/ — matching every iteration before Phase 6.
 IS_FROZEN = bool(getattr(sys, "frozen", False))
 
+def _windows_user_env(name: str) -> str | None:
+    """Read a user-level environment variable from the Windows registry.
+
+    A process inherits its launcher's environment SNAPSHOT, so an EXE started
+    from a shell (or updater) that predates a `setx` never sees the user's
+    setting: the Tailscale host allowlist silently dropped to the localhost
+    default every time the app was relaunched from such a shell, and the
+    phone got "Invalid host header". Falling back to HKCU\\Environment makes
+    the packaged app honor the user's config no matter what launched it."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _kind = winreg.QueryValueEx(key, name)
+            return str(value)
+    except OSError:
+        return None
+
+
 # Host-header allowlist (DNS-rebinding / CSRF hardening). The server binds
 # 127.0.0.1 only, but a Host allowlist also defeats browser-mediated DNS
 # rebinding (a page on evil.com re-pointed to 127.0.0.1 could otherwise make
-# same-origin requests to the local API). Comma-separated env override; the
-# test suite adds "testserver" via conftest. Host check only, no auth added.
-ALLOWED_HOSTS = [
-    h.strip()
-    for h in os.getenv("LN_TRANSLATOR_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
-    if h.strip()
-]
+# same-origin requests to the local API). Comma-separated env override (with
+# the Windows user-registry fallback above, so a stale launcher environment
+# cannot drop the user's Tailscale hosts); the test suite adds "testserver"
+# via conftest. Host check only, no auth added.
+_ALLOWED_HOSTS_RAW = (
+    os.getenv("LN_TRANSLATOR_ALLOWED_HOSTS")
+    or _windows_user_env("LN_TRANSLATOR_ALLOWED_HOSTS")
+    or "127.0.0.1,localhost"
+)
+ALLOWED_HOSTS = [h.strip() for h in _ALLOWED_HOSTS_RAW.split(",") if h.strip()]
 
 
 def _user_data_root() -> Path:
