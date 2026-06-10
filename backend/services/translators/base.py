@@ -143,7 +143,15 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # occasional deliberate choice (user decision; watch the next chapters
 # rather than A/B one, supply-subject edits historically resist single-run
 # validation).
-PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-2"
+# -3 (2026-06-10): technique-name coinage convention in the xianxia overlay.
+# Names are coined once at first encounter then frozen by the glossary, and
+# no layer stated a convention for verb-object names, so the glossary holds
+# both "Breaking Evil and Revealing Righteousness Sword Art" and
+# "Righteousness-Upholding, Karma-Slaying Sword Art" for the same structure.
+# New coinages now use Object-Verbing hyphenated attributives, no commas,
+# suffix kept; scoped so the base noun-noun anti-hyphenation rule stands.
+# Existing glossary offenders renamed in both DBs with chapter backfill.
+PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-3"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
