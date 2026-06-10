@@ -124,7 +124,19 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # to the xianxia idiom examples. The bigger awkwardness sources this round
 # were pipeline-side (casing + rejoin fixups rewriting correct model output),
 # fixed in text_fixups.py / glossary_casing.py, not in the prompt.
-PROMPT_TEMPLATE_VERSION = "phase10-novel-voice-sentence-structure-2"
+# phase11 (2026-06-10): fresh conflict audit of the post-phase10 stack (the
+# 06-04 audit predated phases 7-10). Fixed: precedence ladder now ships
+# unconditionally (it lived inside the brief wrapper, so brief-less novels
+# got no arbitration) + gains "correctness rule beats style preference";
+# craft cut-in ban scoped to backstory (short identifying appositives are
+# legal, resolving the clash with the grammar section's appositive-comma
+# rule); "leave casing to the automatic pass" re-scoped after the post-pass
+# stopped enforcing all-lowercase canonicals (address-form capitalization is
+# the model's job per the overlay); glossary "given form and casing" gains
+# the same address-form exception; the new incense example pair reordered to
+# lead with plain sense per the frozen-idiom rule. Novel-brief chengyu
+# contradiction (keep-images vs never-image) reconciled in both DBs.
+PROMPT_TEMPLATE_VERSION = "phase11-novel-voice-precedence-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
@@ -208,15 +220,24 @@ def _build_system_instruction_cached(
             "that scope. It does NOT change glossary term wordings or the "
             "overlay's structural conventions (forms of address, title order, "
             "realm names, casing, register zones); where it appears to, the "
-            "structural rule wins. Precedence, highest first: (1) the "
-            "deterministic post-pass and glossary term wordings are fixed; "
-            "(2) write natural English novel prose, which is the job itself, "
-            "not a tiebreaker to settle last; (3) the overlay's structural "
-            "conventions; (4) this brief, for voice and word choice; (5) the "
-            "universal base rules; (6) the worked examples (illustrative "
-            "only):",
+            "structural rule wins:",
             custom_brief.strip(),
         ])
+    # The ladder ships unconditionally: collisions between base, overlay, and
+    # examples exist with or without a brief, and the model needs one stated
+    # arbitration order rather than guessing from layer position.
+    parts.append(
+        "PRECEDENCE, highest first, when any two directives collide: (1) the "
+        "deterministic post-pass and glossary term wordings are fixed; (2) "
+        "write natural English novel prose, which is the job itself, not a "
+        "tiebreaker to settle last; (3) the genre overlay's structural "
+        "conventions (forms of address, title order, realm names, casing, "
+        "register zones); (4) the novel's custom brief, for voice and word "
+        "choice; (5) the universal base rules; (6) the worked examples "
+        "(illustrative only). At any level, a correctness rule (no comma "
+        "splices, no ambiguous referents, glossary exactness) beats a style "
+        "preference."
+    )
     return "\n\n".join(parts)
 
 
