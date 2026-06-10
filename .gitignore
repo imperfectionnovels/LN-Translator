@@ -24,6 +24,8 @@ tmp/
 # binary diffs and stale-bundle confusion.
 build/
 dist/
+# Side-channel distpath used when dist/ is locked by the running EXE.
+dist-release/
 # Working directories for parallel agents — never represent committed state.
 .codex-temp/
 # Per-run migration-check scratch dirs (random suffix per run).
