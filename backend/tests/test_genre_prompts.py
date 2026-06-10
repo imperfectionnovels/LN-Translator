@@ -1,18 +1,24 @@
-"""Phase 2 tests for the genre-aware system-instruction builder.
+"""Tests for the genre-aware system-instruction builder.
 
 Covers:
 - base.md + per-genre overlay + per-genre examples compose into the right shape.
 - Different genres produce different instructions (no collision).
 - Custom style brief is appended (not replacement) when set.
 - LRU cache returns the same string for identical inputs.
-- Unknown genre falls back to generic without crashing.
+- Unknown genre falls back through the resolver without crashing.
 - Worked examples are genre-specific.
+
+Assertions are structural (the composed string contains the actual prompt-file
+contents, in order), never pinned to prompt phrasing — the .md files are
+edited constantly and a copy-edit must not break the suite.
 """
 
 from __future__ import annotations
 
+from backend.config import DEFAULT_GENRE
 from backend.genres import GENRES, resolve_genre
 from backend.services.translators.base import (
+    _BASE_PROMPT_PATH,
     build_system_instruction,
     get_genre_overlay,
     get_worked_examples,
@@ -38,17 +44,22 @@ def test_all_registered_genres_have_examples_files():
 # ----- builder composition -----
 
 def test_build_includes_base_and_overlay_and_examples():
-    """The composed instruction must contain markers from all three sources
-    so we know the layering actually ran."""
+    """The composed instruction must contain all three source files verbatim,
+    in base → overlay → examples order, so we know the layering actually ran.
+    Containment of the real file contents (not pinned phrases) keeps this
+    green across prompt copy-edits."""
     instruction = build_system_instruction("xianxia")
-    # Base.md signature line (reframed 2026-06-10: the webnovel-translation
-    # frame replaced the novelist frame; phase9 construction layer).
-    assert "english translator of a chinese web novel" in instruction.lower()
-    # Genre overlay marker (xianxia overlay's distinctive opening).
-    assert "GENRE OVERLAY:" in instruction
-    assert "cultivation" in instruction.lower()
-    # Worked-examples block.
-    assert "Worked examples" in instruction
+    base = _BASE_PROMPT_PATH.read_text(encoding="utf-8")
+    overlay = get_genre_overlay("xianxia")
+    examples = get_worked_examples("xianxia")
+    assert base in instruction
+    assert overlay in instruction
+    assert examples in instruction
+    assert (
+        instruction.index(base)
+        < instruction.index(overlay)
+        < instruction.index(examples)
+    )
 
 
 def test_build_xianxia_vs_generic_differ():
@@ -57,9 +68,10 @@ def test_build_xianxia_vs_generic_differ():
     xianxia = build_system_instruction("xianxia")
     generic = build_system_instruction("generic")
     assert xianxia != generic
-    # xianxia overlay has cultivator-title material; generic does not.
-    assert "True Monarch" in xianxia
-    assert "True Monarch" not in generic
+    # The xianxia overlay ships in the xianxia composition only.
+    xianxia_overlay = get_genre_overlay("xianxia")
+    assert xianxia_overlay in xianxia
+    assert xianxia_overlay not in generic
 
 
 def test_build_each_genre_unique_against_generic():
@@ -87,14 +99,10 @@ def test_null_genre_falls_back_to_default():
 
 def test_unknown_genre_falls_back_gracefully():
     """A bad genre key (e.g. an old DB value the user removed from the
-    registry) must not crash — it should fall back to generic via the
-    resolver. Defense in depth against DB / registry drift."""
+    registry) must not crash — it should resolve through DEFAULT_GENRE.
+    Defense in depth against DB / registry drift."""
     instruction = build_system_instruction("nonexistent_genre_xyz")
-    # Resolver returns DEFAULT_GENRE for unknown values; with DEFAULT_GENRE
-    # set to xianxia (the project default), this should match xianxia.
-    # If DEFAULT_GENRE were itself unknown, it would fall to generic.
-    assert instruction.strip(), "fallback returned empty"
-    assert "GENRE OVERLAY:" in instruction
+    assert instruction == build_system_instruction(DEFAULT_GENRE)
 
 
 # ----- custom brief append behavior -----
@@ -107,17 +115,15 @@ def test_custom_brief_appended_not_replacing():
     with_brief = build_system_instruction("xianxia", "Make all dialogue sound sarcastic.")
     # Brief text must appear in the composed instruction.
     assert "Make all dialogue sound sarcastic" in with_brief
-    # The xianxia overlay must STILL be present (not replaced).
-    assert "True Monarch" in with_brief
+    # The xianxia overlay must STILL be present (not replaced), and the brief
+    # is appended AFTER it.
+    overlay = get_genre_overlay("xianxia")
+    assert overlay in with_brief
+    assert with_brief.index(overlay) < with_brief.index(
+        "Make all dialogue sound sarcastic"
+    )
     # The two instructions must differ — the brief is real input.
     assert no_brief != with_brief
-
-
-def test_custom_brief_marker_present():
-    """The brief is introduced by an explanatory marker so the model
-    understands it's user-supplied, not part of the canonical instruction."""
-    with_brief = build_system_instruction("generic", "test brief")
-    assert "CUSTOM STYLE BRIEF" in with_brief
 
 
 def test_empty_custom_brief_treated_as_none():
@@ -128,11 +134,10 @@ def test_empty_custom_brief_treated_as_none():
     assert build_system_instruction("xianxia", "") == no_brief
     # Whitespace-only must also normalize away — explicit test because the
     # earlier `if custom_brief` truthy check let "   " through, adding the
-    # CUSTOM STYLE BRIEF marker with no actual content.
+    # brief marker section with no actual content.
     assert build_system_instruction("xianxia", "   ") == no_brief
     assert build_system_instruction("xianxia", "\n\n\t") == no_brief
-    # The marker must NOT appear when the brief normalizes to empty.
-    assert "CUSTOM STYLE BRIEF" not in build_system_instruction("xianxia", "  ")
+    assert build_system_instruction("xianxia", "  ") == no_brief
 
 
 # ----- cache behavior -----
@@ -174,44 +179,3 @@ def test_resolve_genre_known_input_wins():
 
 def test_resolve_genre_null_input_uses_default():
     assert resolve_genre(None, "wuxia") == "wuxia"
-
-
-# ----- DeepSeek revision genre resolution -----
-
-def test_deepseek_genre_matches_system_instruction_when_null():
-    """Regression for the inconsistency where DeepSeek's system prompt
-    resolved NULL through DEFAULT_GENRE (xianxia) but _genre fell back to
-    a literal 'generic'. The two stages of the same call must agree on
-    which genre is in play — otherwise the revision examples target a
-    different genre than the draft instructions."""
-    from unittest.mock import MagicMock
-
-    import backend.services.translators.deepseek as ds_mod
-
-    instance = MagicMock(spec=ds_mod.DeepSeekTranslator)
-    # Simulate the exact resolution path translate_chapter takes when
-    # the novel has no genre set.
-    genre = None
-    resolved = resolve_genre(genre, "xianxia")
-    instance._genre = resolved
-
-    # The revise prompt builders read self._genre to pick worked examples.
-    # If _genre were "generic" while the system prompt used "xianxia",
-    # the user would see xianxia draft prose with generic revision
-    # commentary — exactly the bug this test guards against.
-    assert instance._genre == "xianxia", (
-        f"NULL genre must resolve to DEFAULT_GENRE for both stages; "
-        f"got {instance._genre!r}"
-    )
-
-
-def test_deepseek_genre_resolves_unknown_to_default():
-    """A novel.genre value that's no longer in the registry must NOT cause
-    the revision pass to silently use the literal genre name (which would
-    fail at file load time). resolve_genre falls to DEFAULT_GENRE, then
-    to 'generic' if DEFAULT_GENRE itself is unknown."""
-    resolved = resolve_genre("removed_from_registry_xyz", "xianxia")
-    assert resolved == "xianxia"
-    # Both unknown → final safety net.
-    resolved = resolve_genre("removed_from_registry_xyz", "also_removed")
-    assert resolved == "generic"

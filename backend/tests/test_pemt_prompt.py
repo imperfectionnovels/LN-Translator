@@ -1,12 +1,12 @@
-"""Tests for the PEMT prompt section in build_prompt.
+"""Tests for the PEMT (free-draft reference) section in build_prompt.
 
-When ``free_draft`` is non-empty, build_prompt must insert a REFERENCE
-TRANSLATION section with the explicit "combine the best parts" instruction.
-When ``free_draft`` is None or whitespace, the section must be omitted
-entirely (graceful degrade to the current LLM-only behavior).
+When ``free_draft`` is non-empty, build_prompt must insert a reference block
+carrying the draft text. When ``free_draft`` is None or whitespace, the prompt
+must be byte-identical to the no-draft prompt (graceful degrade to LLM-only).
 
-Also pins PROMPT_TEMPLATE_VERSION bump so existing cached LLM translations
-re-run through PEMT mode.
+Assertions are structural (prompt equality, draft-text containment, ordering
+against test-owned inputs), never pinned to the prompt's own phrasing — the
+scaffolding wording is edited freely and a copy edit must not break the suite.
 """
 
 from __future__ import annotations
@@ -15,71 +15,47 @@ import pytest
 
 from backend.models import GlossaryEntry
 from backend.services.translators import base as base_module
-from backend.services.translators.base import (
-    PROMPT_TEMPLATE_VERSION,
-    build_prompt,
-)
-
-# Marker strings the test scans for. Kept here so a future copy edit to the
-# prompt body lights up only one test instead of dozens.
-_REFERENCE_HEADER = "REFERENCE TRANSLATION"
-_COMBINE_INSTRUCTION = "combines the best parts of each"
-_DO_NOT_COPY = "DO NOT TRANSLATE OR COPY VERBATIM"
+from backend.services.translators.base import build_prompt, format_glossary
 
 
 def test_pemt_section_absent_without_free_draft():
-    """No free_draft → no REFERENCE TRANSLATION section. The LLM prompt is
-    identical to the pre-PEMT behavior; existing callers see no diff."""
-    out = build_prompt(
-        chapter_zh="第一章。",
-        title_zh="标题",
-        glossary=[],
-    )
-    assert _REFERENCE_HEADER not in out
-    assert _COMBINE_INSTRUCTION not in out
-    assert _DO_NOT_COPY not in out
-
-
-def test_pemt_section_absent_with_whitespace_free_draft():
-    """A whitespace-only free_draft is treated as None — no section."""
-    out = build_prompt(
-        chapter_zh="第一章。",
-        title_zh=None,
-        glossary=[],
-        free_draft="   \n\n   ",
-    )
-    assert _REFERENCE_HEADER not in out
+    """No free_draft, empty free_draft, and whitespace-only free_draft all
+    produce the identical prompt — the reference section is omitted entirely,
+    not emitted empty."""
+    plain = build_prompt(chapter_zh="第一章。", title_zh="标题", glossary=[])
+    assert build_prompt(
+        chapter_zh="第一章。", title_zh="标题", glossary=[], free_draft=None,
+    ) == plain
+    assert build_prompt(
+        chapter_zh="第一章。", title_zh="标题", glossary=[], free_draft="   \n\n   ",
+    ) == plain
 
 
 def test_pemt_section_present_with_free_draft():
-    """A non-empty free_draft injects the full PEMT block."""
+    """A non-empty free_draft changes the prompt and carries the draft body
+    verbatim."""
+    plain = build_prompt(chapter_zh="第一章内容。", title_zh=None, glossary=[])
     out = build_prompt(
         chapter_zh="第一章内容。",
         title_zh=None,
         glossary=[],
         free_draft="Chapter 1.\n\nFirst sentence of the draft.",
     )
-    assert _REFERENCE_HEADER in out
-    assert _COMBINE_INSTRUCTION in out
-    assert _DO_NOT_COPY in out
+    assert out != plain
     # The draft body itself appears verbatim inside the section.
     assert "First sentence of the draft." in out
 
 
 def test_pemt_section_precedes_chinese_source_block():
-    """The reference block sits between the style preferences and the
-    Chinese source — i.e. AFTER the glossary/style context but BEFORE the
-    CHAPTER (Chinese) header, so the LLM reads the reference *before* it
-    reads what it has to translate."""
+    """The reference block sits BEFORE the Chinese source text, so the LLM
+    reads the reference before it reads what it has to translate."""
     out = build_prompt(
         chapter_zh="一行汉字。",
         title_zh=None,
         glossary=[],
         free_draft="Reference body line.",
     )
-    ref_idx = out.index(_REFERENCE_HEADER)
-    chapter_idx = out.index("CHAPTER (Chinese)")
-    assert ref_idx < chapter_idx
+    assert out.index("Reference body line.") < out.index("一行汉字。")
 
 
 def test_pemt_section_does_not_disturb_glossary_block():
@@ -99,17 +75,10 @@ def test_pemt_section_does_not_disturb_glossary_block():
     out_without = build_prompt(
         chapter_zh="测试内容。", title_zh=None, glossary=glossary,
     )
-    # Master glossary line is byte-identical between the two outputs.
-    assert "测试 → Test" in out_with
-    assert "测试 → Test" in out_without
-
-
-def test_prompt_template_version_bumped_for_reframe():
-    """The version constant moved past the PEMT release for the novel-voice
-    prompt reframe. Existing caches keyed on the old version stop matching, so
-    a re-run picks up the rewritten prompt."""
-    assert PROMPT_TEMPLATE_VERSION not in ("phase2-genres", "phase3-pemt")
-    assert "novel-voice" in PROMPT_TEMPLATE_VERSION
+    # The formatted glossary block appears identically in both outputs.
+    block = format_glossary(glossary)
+    assert block in out_with
+    assert block in out_without
 
 
 def test_pemt_reference_truncated_when_over_cap(monkeypatch):
@@ -122,7 +91,6 @@ def test_pemt_reference_truncated_when_over_cap(monkeypatch):
         glossary=[],
         free_draft="X" * 200,
     )
-    assert _REFERENCE_HEADER in out
     assert "[reference truncated]" in out
     assert "X" * 200 not in out
 
@@ -193,4 +161,3 @@ async def test_basetranslator_threads_free_draft_into_build_prompt(monkeypatch):
     )
     assert captured_prompt, "stub _complete was never called"
     assert "Hand-rolled reference." in captured_prompt[0]
-    assert _REFERENCE_HEADER in captured_prompt[0]

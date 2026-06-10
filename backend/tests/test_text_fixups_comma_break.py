@@ -137,7 +137,7 @@ def test_noop_on_empty_string():
     assert n == 0
 
 
-def test_idempotent():
+def test_comma_break_join_idempotent():
     text = "He paused,\n\nand then continued.\n\nThe hall was dark."
     once, n1 = enforce_mid_sentence_comma_break(text)
     twice, n2 = enforce_mid_sentence_comma_break(once)

@@ -137,7 +137,7 @@ def test_empty_string_is_noop():
     assert n == 0
 
 
-def test_idempotent():
+def test_balanced_emphasis_idempotent():
     src = (
         "Illuminating Clarity!**\n\n"
         "*A real thought.*\n\n"
