@@ -20,18 +20,22 @@ Checkpoint 2026-06-10, saved before a conversation clear. Continue from here.
 
 ### Remaining tasks (in order)
 
-1. **Opus arm**: dev DB provider id=5 "Claude Agent opus-4-5 (scratch AB)" — update model to `claude-opus-4-8` (or add a row), point novel 3 `translator_provider_id` at it (see `data/setup_sonnet_ab.py` pattern; cleanup pattern in `data/cleanup_sonnet_ab.py`).
-2. **Rule-category compliance scorer**: extend `data/ww_metrics.py`. Mechanical categories: glossary exactness/casing/predicates, epithet frequency vs source, thought formatting (brief: protagonist roman, others italic) + thought subjects (no pro-drop chains), splices/stranded stubs/semicolons/exclamations/ellipsis carry, period-word + AI-tell bans, costume constructions (pseudo-cleft/what-cleft/absolute/inversion), S-V backstory cut-ins + stacked openers + trailing pileups, stock-phrase single rendering (下一秒/此刻/不仅如此), formatting/envelope, unit conversion (里→miles). Judgment categories (side-by-side read): fidelity boundary, recomposition quality, intensity/register tracking, genre conventions.
-3. **Phase A — Opus baseline, current stack** (`phase11-novel-voice-precedence-3`): retranslate dev novel 3 ch427/437/414/401 (`python -m backend.scripts.retranslate_chapter 3 <ch> --yes`); fable backups already at `data/pre_sonnet_fable_ch{427,437,414,401}.txt`. Save outputs as `data/opus_baseline_ch*.txt`. Produce the category x chapter compliance matrix memo.
-4. **Phase B — compiled v2 stack** (user chose ground-up rewrite over incremental diet): base.md <=1,400 words, xianxia overlay <=650, examples <=500 (~8 pairs that each isolate one feature). Every logged policy survives: full epithets, casing + address-form exception, idiom-sense policy, WW register bar, pro-drop thought subjects, technique-name coinage convention, unconditional precedence ladder + correctness-beats-style. One rule, one layer. Emphasis guided by which categories Opus actually violates in Phase A. Bump PROMPT_TEMPLATE_VERSION to a phase12 token (must contain "novel-voice", pinned by test_pemt_prompt.py).
-5. **Phase C — A/B on Opus**: same 4 chapters on v2, identical rubric matrix, plus ONE fable ch427 sanity run. THE USER'S READ IS THE ACCEPTANCE GATE.
-6. **Phase D — ship**: commit/push, full pytest, EXE rebuild + smoke (close the running EXE first, it locks dist/), `gh release upload v0.1.0-beta.1 ... --clobber` both assets, relaunch EXE, memory updates, restore dev provider wiring. If v2 loses a category, iterate once; if Opus and fable demand conflicting text, surface the fork decision, don't choose silently.
+1. ~~Opus arm~~ DONE 2026-06-10: provider id=5 -> claude-opus-4-8, novel 3 pointed at it (data/setup_opus_ab.py); scratch sonnet id=6 deleted.
+2. ~~Rule-category compliance scorer~~ DONE: data/ww_metrics.py rules_report (violations/reviews/opportunities + quotes per category; reuses backend body_correctness_observations; respects "lowercase" usage notes).
+3. ~~Phase A~~ DONE: outputs data/opus_baseline_ch*.txt, memo data/opus_baseline_matrix.md. Headlines: thought-format conflict (overlay italic beat brief roman via ladder), negative-example contamination (4 banned constructions reproduced verbatim from ch427-mined examples), 35 invented ellipses, locked-term misses.
+4. ~~Phase B~~ DONE: phase12-novel-voice-compiled-1 (commit 94f8908). base 1,409 w / overlay 654 / examples 430 (was 4,569 total). Examples genericized; brief owns thought formatting; no-added-trail-off rule.
+5. ~~Phase C~~ DONE: v2 outputs data/opus_v2_ch*.txt + fable sanity data/fable_v2_ch427.txt. A/B memo: data/opus_ab_phase_c_memo.md. v2 equal-or-better on 10/11 mechanical categories (protagonist italics 15->3, archaic/cleft/calque fixed); regressions: "slew" x2 near All-Slaying + 3 judgment-grade idiom/phrase instances on ch427 traced to cut novel-mined examples. Fable live-lane sanity PASS.
+6. **Phase D — ship (BLOCKED ON USER READ of the A/B memo)**: full pytest, EXE rebuild + smoke (close the running EXE first, it locks dist/), `gh release upload v0.1.0-beta.1 ... --clobber` both assets, relaunch EXE, memory updates, restore dev provider wiring (novel 3 translator_provider_id -> NULL). If v2 loses a category, iterate once; if Opus and fable demand conflicting text, surface the fork decision, don't choose silently.
+
+### Rescrape (user finding 2026-06-10, in flight)
+
+69shuba scrape left the LIVE DB novel 2 with 23 missing chapters (53,96,187,233,237,249,392,396,405,413,422,426,428,429,492,522,542,546,550,586,614,619,1322) + 5 short ones. Authoritative source now twkan.com/book/78813.html (1,454 numbered chapters + 5 extras beyond DB's 1,449; traditional script converted locally to simplified + 「」->“” to match existing data). Tool: data/rescrape_twkan.py (scrape = resumable cache in data/twkan_cache/; apply = gzip backup then replace original_text/title_zh + insert missing as pending; translations untouched). Scrape running; then apply --db live and apply --db dev (dev was held until the fable sanity finished — done). After dev apply, battery sources change: future scorer runs reflect the twkan edition (it HAS trail-off dots the old edition stripped, so re-measure the invented-ellipsis category).
 
 ### Loose ends
 
-- Dev DB scratch provider id=6 (sonnet) is unused: delete or ignore.
-- `data/` scratch scripts are local-only by design (gitignored): probe_sonnet_sdk.py, probe_sonnet_bisect.py, setup_sonnet_ab.py, cleanup_sonnet_ab.py, save_battery_texts.py, plus the fix_* repair scripts.
-- Deferred watch items: TERMS-extraction split-out as a future workflow lever; colon density; divergent 正法 renders (《三玄钦天正法》 "Art", 天宪正法 "Law of Heavenly Mandate") left alone deliberately.
+- `data/` scratch scripts are local-only by design (gitignored): setup_opus_ab.py, rescrape_twkan.py, save_battery_texts.py, ww_metrics.py, the memos, plus older sonnet probes.
+- Glossary-data cleanup surfaced by the A/B (apply per casing-lock policy, both DBs): 巅峰 "Peak" casing ambiguity, dead traditional-script row 萬眾一心 "One Mind", 香火 "incense" image-pull vs idiom-sense rule.
+- Deferred watch items: TERMS-extraction split-out as a future workflow lever; colon density; divergent 正法 renders left alone deliberately; fable invented-ellipsis trait (model-level, not stack).
 
 ## Translation quality
 
