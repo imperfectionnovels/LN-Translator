@@ -110,7 +110,17 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # the subject), action-naming glossary entries conjugate instead of
 # nominalizing, packed nominals unpack into clauses, and the period words
 # (slew, suffused, beheld, amidst, whilst) moved to the hard avoid-list.
-PROMPT_TEMPLATE_VERSION = "phase9-novel-voice-ww-construction-2"
+# phase10 (2026-06-10): ch427 structural read vs the WW bar. The surviving
+# break was packing one source sentence into one English sentence: relative
+# clauses and appositives cutting in between subject and verb (5x in ch427),
+# what-clefts unrolled from 的-nominalized subjects, dangling topic-comment
+# in inner thought, stacked fronted adverbials. Craft paragraph now bans the
+# mid-sentence cut-in and caps fronted openers at one; the costume list names
+# the 的-cleft unroll and fixes its own faulty "even if it was a request"
+# example to "even though"; ambiguity rule extended to possessives and
+# two-man he-runs; frozen idioms gain the no-simile-promotion discriminator;
+# xianxia examples gain topic-comment, idiom-sense, and 意外 pairs.
+PROMPT_TEMPLATE_VERSION = "phase10-novel-voice-sentence-structure-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
