@@ -234,6 +234,31 @@ def test_shatter_just_below_threshold_still_fully_rejoins() -> None:
     )
 
 
+def test_boundaries_inside_embedded_dialogue_not_joined() -> None:
+    # A narration-led paragraph slips past the paragraph-opener dialogue guard,
+    # but sentence breaks INSIDE the quoted speech are the speaker's cadence,
+    # not shatter (live scratch artifact: "don't listen to your sister-in-law;
+    # load up the goods tomorrow; clan business comes first").
+    src = "铁柱父亲叹息，说道：“老四别听你嫂子的，明儿把货物装好，家族的事儿最重要。”"
+    tgt = (
+        'His father sighed. "Old Four, don\'t listen to her. Load the goods '
+        'tomorrow. Clan business comes first."'
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 0
+    assert out == tgt
+
+
+def test_narration_fragment_joined_but_quoted_breaks_kept() -> None:
+    # The stranded narration fragment still joins; the breaks inside the
+    # quote stay as written.
+    src = "可惜，他压低了声音，说回去好好休息。"
+    tgt = 'A pity. He lowered his voice. "Go back. Rest well."'
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 1
+    assert out == 'A pity, he lowered his voice. "Go back. Rest well."'
+
+
 def test_dialogue_paragraph_skipped() -> None:
     src = "“你来了，那就别走了，留下来陪我喝一杯。”"
     tgt = '"You came. Then do not leave. Stay and drink with me."'

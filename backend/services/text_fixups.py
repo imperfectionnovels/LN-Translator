@@ -974,6 +974,23 @@ def _keep_capital(word: str, caps: set[str]) -> bool:
     return word in caps
 
 
+def _inside_quote(para: str, pos: int) -> bool:
+    """True when `pos` falls inside an open quotation: a straight `"` toggles,
+    curly/CJK pairs open and close. Sentence shaping inside speech is the
+    speaker's cadence, never shatter, so the rejoin leaves it alone (the
+    paragraph-opener guard only catches paragraphs that BEGIN with a quote)."""
+    straight_open = False
+    depth = 0
+    for ch in para[:pos]:
+        if ch == '"':
+            straight_open = not straight_open
+        elif ch in "“「『":
+            depth += 1
+        elif ch in "”」』":
+            depth = max(0, depth - 1)
+    return straight_open or depth > 0
+
+
 def _clause_mean_words(para: str, boundaries: list[re.Match[str]]) -> float:
     """Mean word count across the clauses the boundaries cut `para` into,
     including the tail clause after the last boundary."""
@@ -1015,8 +1032,9 @@ def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
         word = m.group(3)
         clause = para[clause_start:m.start()]
         is_frag = _is_fragment(clause, caps)
-        if surgical and not is_frag:
-            # Deliberate full-bodied split: keep this boundary as written.
+        if (surgical and not is_frag) or _inside_quote(para, m.start()):
+            # Deliberate full-bodied split, or a sentence break inside quoted
+            # speech: keep this boundary as written.
             pieces.append(para[last : m.end()])
             last = m.end()
             clause_start = m.start(3)
