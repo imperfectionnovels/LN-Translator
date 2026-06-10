@@ -890,6 +890,13 @@ def enforce_mid_sentence_comma_break(text: str) -> tuple[str, int]:
 # single sentence, rejoins an over-split — a shattered run-on (3+ sentences) or
 # a stranded short opening fragment ("No need."). Multi-sentence source
 # paragraphs (percussive action beats) and defensible 1→2 splits are left alone.
+#
+# Since the prompt now licenses unspooling a long source sentence into two or
+# three full-bodied English sentences (the wuxiaworld-register change), the
+# rejoin is gated on clause length: clauses averaging
+# `_SHATTER_MEAN_MAX_WORDS`+ words mark a deliberate split, and only a true
+# stranded fragment is still joined. The shatter signature this fixup targets
+# is short clipped clauses, and those always stay below the gate.
 
 # Only "." is a rejoin candidate. A `?`/`!` in the output almost always maps to
 # a source `？`/`！`, not a comma, so touching them would corrupt real
@@ -910,6 +917,14 @@ _DIALOGUE_OR_THOUGHT_OPENERS = ('"', "“", "”", "‘", "’", "「", "『", "
 # A clause at or under this many words MAY be a stranded fragment: joined with a
 # comma rather than a semicolon, and the trigger for a 1-break rejoin.
 _FRAGMENT_MAX_WORDS = 3
+# The shatter this fixup exists for reads as clipped stubs; a deliberate
+# 1-to-N unspooling of a long source sentence (which the prompt licenses)
+# produces full-bodied sentences. Clauses averaging at or above this many
+# words mark the paragraph as a deliberate split: only a true stranded
+# fragment is still joined, surgically. Below it, every boundary rejoins as
+# before. Coupling: the canonical orphan-fragment case has a clause mean of
+# 22/3 (~7.3) and must stay below this value (pinned by test).
+_SHATTER_MEAN_MAX_WORDS = 8
 # Words that mark a clause as an independent statement (subject pronoun / there)
 # rather than a verbless fragment. "He left" is short but independent, so it
 # takes a semicolon, not a comma (which would be a splice). "No need" / "A pity"
@@ -959,13 +974,27 @@ def _keep_capital(word: str, caps: set[str]) -> bool:
     return word in caps
 
 
+def _clause_mean_words(para: str, boundaries: list[re.Match[str]]) -> float:
+    """Mean word count across the clauses the boundaries cut `para` into,
+    including the tail clause after the last boundary."""
+    starts = [0] + [m.start(3) for m in boundaries]
+    ends = [m.start() for m in boundaries] + [len(para)]
+    total = sum(len(para[s:e].split()) for s, e in zip(starts, ends))
+    return total / len(starts)
+
+
 def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
     """Rejoin a single-source-sentence paragraph the model over-split.
 
     Fires when there are 2+ period boundaries (shattered run-on) or exactly one
     whose leading clause is a short fragment. Joins each boundary with `; `
     (independent clauses) or `, ` (after a short fragment), lowercasing the next
-    word unless it must stay capitalized."""
+    word unless it must stay capitalized.
+
+    Gate: when the clauses average `_SHATTER_MEAN_MAX_WORDS` or more, the
+    paragraph is a deliberate full-bodied split (which the prompt licenses),
+    not shatter; only a true stranded fragment is joined, and everything else
+    is left as written."""
     boundaries = list(_REJOINABLE_BOUNDARY_RE.finditer(para))
     if not boundaries:
         return para, 0
@@ -974,6 +1003,10 @@ def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
         # fragment; a defensible 2-way split of independent clauses stays.
         if not _is_fragment(para[: boundaries[0].start()].strip(), caps):
             return para, 0
+    surgical = (
+        len(boundaries) >= 2
+        and _clause_mean_words(para, boundaries) >= _SHATTER_MEAN_MAX_WORDS
+    )
     pieces: list[str] = []
     last = 0
     clause_start = 0
@@ -981,8 +1014,15 @@ def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
     for m in boundaries:
         word = m.group(3)
         clause = para[clause_start:m.start()]
-        pieces.append(para[last:m.start()])
-        connector = ", " if _is_fragment(clause, caps) else "; "
+        is_frag = _is_fragment(clause, caps)
+        if surgical and not is_frag:
+            # Deliberate full-bodied split: keep this boundary as written.
+            pieces.append(para[last : m.end()])
+            last = m.end()
+            clause_start = m.start(3)
+            continue
+        pieces.append(para[last : m.start()])
+        connector = ", " if is_frag else "; "
         new_word = word if _keep_capital(word, caps) else word[0].lower() + word[1:]
         pieces.append(connector + new_word)
         last = m.end()
@@ -990,6 +1030,8 @@ def _restore_paragraph(para: str, caps: set[str]) -> tuple[str, int]:
         # (and fragment test) counts that word.
         clause_start = m.start(3)
         joins += 1
+    if not joins:
+        return para, 0
     pieces.append(para[last:])
     return "".join(pieces), joins
 
@@ -1002,8 +1044,9 @@ def enforce_source_sentence_boundaries(
     Source-aware and conservative: only a target paragraph that aligns 1:1 to a
     single-sentence source paragraph is eligible, and only an over-split
     (run-on or stranded fragment) is touched. Dialogue / inner-thought
-    paragraphs and defensible 1→2 splits are left alone. Idempotent; returns
-    (rewritten_text, count)."""
+    paragraphs, defensible 1→2 splits, and deliberate full-bodied splits
+    (clauses averaging `_SHATTER_MEAN_MAX_WORDS`+ words) are left alone.
+    Idempotent; returns (rewritten_text, count)."""
     if not text or not source_text:
         return text, 0
     pairs = align_paragraphs(source_text, text)

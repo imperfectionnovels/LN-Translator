@@ -155,6 +155,85 @@ def test_glossary_term_after_join_keeps_inner_capitals() -> None:
     assert "; he read it slowly" in out
 
 
+def test_full_bodied_multi_split_left_alone() -> None:
+    # The prompt licenses unspooling one long source sentence into several
+    # full-bodied English sentences. Clauses this long are a deliberate split,
+    # not shatter: the gate leaves the paragraph untouched.
+    src = "陈平安沿着溪边的小路慢慢走着，心里盘算着明天要做的事情，远处的山影在暮色里渐渐模糊了。"
+    tgt = (
+        "Chen Pingan walked slowly along the path beside the stream while the "
+        "dusk settled. He turned over tomorrow's plans in his mind as he went "
+        "on walking. The mountains in the distance slowly blurred into the "
+        "failing evening light."
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 0
+    assert out == tgt
+
+
+def test_full_bodied_split_with_short_punch_left_alone() -> None:
+    # A deliberate short subject-led punch after two long sentences is style,
+    # not shatter: surgical mode only joins true verbless fragments.
+    src = "老者打量了他半晌没有说话，少年沉稳的目光似乎终于让他满意，他笑了。"
+    tgt = (
+        "The old man studied him for a long moment without saying a word. "
+        "Something in the young man's steady gaze seemed to satisfy him at "
+        "last. He smiled."
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 0
+    assert out == tgt
+
+
+def test_full_bodied_split_leading_fragment_joined_surgically() -> None:
+    # Long clauses put the paragraph in surgical mode, but a stranded verbless
+    # opener is still a defect: that one boundary joins, the rest stay.
+    src = "没必要，分身既然已经入了剑阁，就完全没有理由留下线索，还是干脆利落地切割干净为好。"
+    tgt = (
+        "No need. Now that his avatar has entered the Sword Pavilion, there is "
+        "no reason at all to leave a trace behind. Better to sever the "
+        "connection cleanly and walk away without any hesitation."
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 1
+    assert out == (
+        "No need, now that his avatar has entered the Sword Pavilion, there is "
+        "no reason at all to leave a trace behind. Better to sever the "
+        "connection cleanly and walk away without any hesitation."
+    )
+
+
+def test_surgical_path_idempotent() -> None:
+    src = "没必要，分身既然已经入了剑阁，就完全没有理由留下线索，还是干脆利落地切割干净为好。"
+    tgt = (
+        "No need. Now that his avatar has entered the Sword Pavilion, there is "
+        "no reason at all to leave a trace behind. Better to sever the "
+        "connection cleanly and walk away without any hesitation."
+    )
+    once, _ = enforce_source_sentence_boundaries(tgt, src)
+    twice, n2 = enforce_source_sentence_boundaries(once, src)
+    assert n2 == 0
+    assert twice == once
+
+
+def test_shatter_just_below_threshold_still_fully_rejoins() -> None:
+    # Threshold pin: clauses averaging just under the gate (here 23/3, ~7.7)
+    # are still shatter and rejoin fully. The canonical orphan-fragment case
+    # above sits at 22/3, so the gate constant must stay above that; if a
+    # future tweak lowers it, this test fails loudly.
+    src = "剑光一闪而过，院中弟子纷纷回头看去，竟没有一个人敢先开口说话。"
+    tgt = (
+        "The sword light flashed across the courtyard. Every disciple in the "
+        "yard turned to look. Nobody dared to say a single word first."
+    )
+    out, n = enforce_source_sentence_boundaries(tgt, src)
+    assert n == 2
+    assert out == (
+        "The sword light flashed across the courtyard; every disciple in the "
+        "yard turned to look; nobody dared to say a single word first."
+    )
+
+
 def test_dialogue_paragraph_skipped() -> None:
     src = "“你来了，那就别走了，留下来陪我喝一杯。”"
     tgt = '"You came. Then do not leave. Stay and drink with me."'
