@@ -123,6 +123,38 @@ def test_pronoun_I_keeps_capital() -> None:
     )
 
 
+def test_glossary_article_not_kept_capital_after_join() -> None:
+    # A glossary entry beginning with "The" must not leak the bare article into
+    # the keep-capital set: a rejoin landing before an unrelated "The ..."
+    # clause lowercases it (live ch427 artifact: "once more; The severed").
+    src = "只这一剑，他重新稳定了气机，气运也在恢复，他终究是又多出了一段时间。"
+    tgt = (
+        "He steadied his aura once more. The severed destiny was regrowing. "
+        "He had bought time."
+    )
+    glossary = [_entry("德充符", "The Symbol of Virtue Fulfilled")]
+    out, n = enforce_source_sentence_boundaries(tgt, src, glossary=glossary)
+    assert n == 2
+    assert "; the severed destiny was regrowing" in out
+    assert "; he had bought time" in out
+
+
+def test_glossary_term_after_join_keeps_inner_capitals() -> None:
+    # A rejoin landing exactly before a The-leading glossary term lowercases
+    # only the article (the mid-sentence form enforce_locked_term_casing
+    # enforces); the term's inner capitals survive untouched.
+    src = "他打开卷轴，德充符就在其中，他慢慢读了起来。"
+    tgt = (
+        "He opened the scroll. The Symbol of Virtue Fulfilled lay within. "
+        "He read it slowly."
+    )
+    glossary = [_entry("德充符", "The Symbol of Virtue Fulfilled")]
+    out, n = enforce_source_sentence_boundaries(tgt, src, glossary=glossary)
+    assert n == 2
+    assert "; the Symbol of Virtue Fulfilled lay within" in out
+    assert "; he read it slowly" in out
+
+
 def test_dialogue_paragraph_skipped() -> None:
     src = "“你来了，那就别走了，留下来陪我喝一杯。”"
     tgt = '"You came. Then do not leave. Stay and drink with me."'

@@ -938,6 +938,12 @@ def _glossary_caps(glossary) -> set[str]:
     caps: set[str] = set()
     for g in glossary or []:
         for tok in _CAP_TOKEN_RE.findall(getattr(g, "term_en", "") or ""):
+            # A term like "The Symbol of Virtue Fulfilled" must not leak the
+            # bare article: keeping "The" capitalized after a join produces
+            # "once more; The severed". Mid-sentence, a term-leading article
+            # lowercases anyway (see _cased_for_position).
+            if tok.lower() in _LEADING_ARTICLES:
+                continue
             caps.add(tok)
     return caps
 
