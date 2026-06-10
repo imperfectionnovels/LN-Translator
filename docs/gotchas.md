@@ -3,6 +3,17 @@
 Things the project keeps tripping on. Read once when something feels off; the
 fix below probably matches.
 
+## `Path.write_text` / `read_text` newline translation on Windows
+
+Text-mode I/O silently rewrites line endings. Writing a string that already
+contains `\r\n` through `write_text` translates the inner `\n` again and puts
+`\r\r\n` on disk; reading it back with `read_text` (universal newlines)
+collapses `\r\r\n` to `\n\n`, so every line break doubles and any
+`split("\r\n")` finds nothing. This corrupted the 2026-06-10 twkan rescrape
+(whole chapter bodies landed in `title_zh`, paragraph gaps became quadruple
+newlines). When a file must round-trip exact bytes: write with `newline=""`,
+read via `read_bytes().decode()`, and treat `\r` as stripping noise.
+
 ## Encoding detection for uploaded `.txt`
 
 Don't assume UTF-8. Many CN raws arrive as **GBK or GB18030**. Detect via
