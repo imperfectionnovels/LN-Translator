@@ -84,7 +84,17 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # costume vectors: the fantasy overlay/example ("elevated standard English")
 # and the sci-fi cyberpunk example (added image), with the refiner brief
 # reframed in the same commit (its cache key hashes its own prompt).
-PROMPT_TEMPLATE_VERSION = "phase7-novel-voice-webnovel-register-2"
+# 2026-06-09 -3 bump: close the gap to the professional wuxiaworld register,
+# diagnosed against Unsheathed/Renegade Immortal/A Will Eternal source-target
+# pairs. base.md now unspools long sentences into plain linear ones (semicolon
+# demoted to rare), extends the register rule to antique SYNTAX (inversion,
+# subjunctive, archaic quantifiers), makes glossary labels fix form not
+# frequency (pronouns between weight-bearing title uses), keeps stated
+# emotions stated, allows filter verbs, bands the lexicon to everyday words,
+# defaults contractions on, stops synonym rotation of repeated stock phrases,
+# and flattens fossil lexicalized idioms to their plain sense (user-approved).
+# Refiner brief swept for the same vectors in this commit.
+PROMPT_TEMPLATE_VERSION = "phase8-novel-voice-wuxiaworld-transparency-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

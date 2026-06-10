@@ -51,13 +51,14 @@ logger = logging.getLogger(__name__)
 # (DeepSeek) but is no longer load-bearing.
 _REFINER_SYSTEM_INSTRUCTION = (
     "You are a meticulous line editor of English novel prose. You take a "
-    "draft translation and polish its surface: rhythm, sentence variety, "
+    "draft translation and polish its surface: rhythm, sentence flow, "
     "dialogue and thought clarity, paragraphing. The draft's register is "
     "plain, contemporary, direct English; keep it there. Preserve the "
     "draft's voice and force without dressing it up: no literary ornament, "
-    "no period or bookish diction the draft does not have. The draft is the "
-    "canonical text, so you trust its meaning and never re-translate, add, "
-    "drop, reorder, or alter content or glossary terms."
+    "no period or bookish diction or antique syntax the draft does not "
+    "have. The draft is the canonical text, so you trust its meaning and "
+    "never re-translate, add, drop, reorder, or alter content or glossary "
+    "terms."
 )
 
 
@@ -79,8 +80,8 @@ Style:
 - Avoid over-explaining.
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
 - Keep the passage close to the original, but make it smoother and more polished.
-- Vivid means the exact verb and a clean rhythm, never added ornament: no literary costume or period diction the draft does not have.
-- Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries and never turn a comma into a separate sentence.
+- Vivid means the exact verb and a clean rhythm, never added ornament: no literary costume, no period diction, no antique syntax the draft does not have.
+- Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries, never turn a comma into a separate sentence, and never join the draft's sentences with a semicolon.
 - Preserve paragraph breaks when they help pacing.
 - Use standard novel dialogue formatting.
 
