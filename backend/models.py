@@ -411,11 +411,10 @@ class Observation(BaseModel):
     kind: str
     severity: Literal["info", "warn"]
     # F26 (2026-05-25): 'semantic' (meaning-loss signal: missing terms,
-    # malformed compounds, predicate loss, translation_degraded,
-    # glossary_merge_error, tm_inconsistency) vs 'stylistic' (prose
-    # advisory: MT-texture, double possessive, mid-sentence breaks,
-    # intensifier inflation, locked-idiom grammar). Drives the split
-    # library badge "⚠ N semantic / ⓘ N stylistic".
+    # predicate loss, translation_degraded, glossary_merge_error,
+    # tm_inconsistency) vs 'stylistic' (prose advisory: MT-texture,
+    # double possessive, mid-sentence breaks, intensifier inflation).
+    # Drives the split library badge "⚠ N semantic / ⓘ N stylistic".
     severity_tier: Literal["semantic", "stylistic"] = "stylistic"
     paragraph_index: int | None
     excerpt: str

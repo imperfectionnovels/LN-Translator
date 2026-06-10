@@ -4268,10 +4268,8 @@ const observationsCloseBtn = document.getElementById("observations-close");
 const _OBSERVATION_KIND_LABELS = {
   missing_glossary_term: "Missing glossary term",
   missing_title_glossary_term: "Missing glossary term (title)",
-  malformed_compound: "Malformed compound",
   mt_texture: "MT texture",
   double_possessive: "Double possessive",
-  locked_idiom_grammar: "Locked idiom grammar",
   mid_sentence_paragraph_break: "Mid-sentence paragraph break",
   intensifier_inflation: "Intensifier inflation",
   glossary_predicate_loss: "Glossary predicate loss",

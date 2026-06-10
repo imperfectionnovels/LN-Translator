@@ -32,100 +32,11 @@ from backend.services.text_fixups import _is_numeric_range
 from backend.services.text_observers import (
     detect_double_possessive,
     detect_glossary_predicate_loss,
-    detect_locked_idiom_grammar,
-    detect_malformed_compounds,
     detect_mid_sentence_paragraph_break,
     detect_mt_texture,
 )
 
 DB_PATH = Path(os.environ["DB_PATH"])
-
-
-def _malformed_glossary_entry(en: str) -> GlossaryEntry:
-    return GlossaryEntry(
-        id=0, novel_id=1, term_zh="筑基", term_en=en, category="place",
-        notes=None, auto_detected=False, locked=True,
-    )
-
-
-def test_malformed_compound_flagged_with_glossary() -> None:
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    flagged = detect_malformed_compounds(
-        "It was a small early Foundation Establishment clan in the valley.", g
-    )
-    assert flagged == ["early Foundation Establishment clan"]
-
-
-def test_malformed_compound_cultivator_is_fine() -> None:
-    # A cultivator can hold a stage; only collective nouns are malformed.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    assert detect_malformed_compounds(
-        "He was an early Foundation Establishment cultivator.", g
-    ) == []
-
-
-def test_malformed_compound_unknown_realm_not_flagged_with_glossary() -> None:
-    # With a glossary, the middle phrase must be a known term — keeps it precise.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    assert detect_malformed_compounds("a late Golden Core sect appeared", g) == []
-
-
-def test_malformed_compound_no_glossary_fallback() -> None:
-    # Without a glossary, a two-word capitalized realm still trips the check.
-    assert detect_malformed_compounds("a late Golden Core sect appeared") == [
-        "late Golden Core sect"
-    ]
-
-
-def test_malformed_compound_indirect_form_flagged() -> None:
-    # The indirect prepositional form ("clan at … the early stage of X") is the
-    # same defect as the direct stack — a stage attributed to the group.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    flagged = detect_malformed_compounds(
-        "It was a small clan at only the early stage of Foundation Establishment.",
-        g,
-    )
-    assert flagged == [
-        "clan at only the early stage of Foundation Establishment"
-    ]
-
-
-def test_malformed_compound_indirect_non_group_subject_not_flagged() -> None:
-    # No collective noun before "the early stage of …" — a plain progress
-    # phrase must not trip the indirect check.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    assert detect_malformed_compounds(
-        "For the early stage of Foundation Establishment, this was top-tier "
-        "equipment.",
-        g,
-    ) == []
-
-
-def test_malformed_compound_indirect_verb_object_not_flagged() -> None:
-    # A transitive verb governs the collective noun, so "at the early stage of
-    # …" describes the subject, not the group — not a malformed compound.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    for sentence in (
-        "He left the sect at the early stage of Foundation Establishment.",
-        "He joined the clan at the late stage of Foundation Establishment.",
-        "She founded the family at the early stage of Foundation Establishment.",
-    ):
-        assert detect_malformed_compounds(sentence, g) == [], sentence
-
-
-def test_malformed_compound_indirect_subject_position_still_flagged() -> None:
-    # With no governing verb, the group itself is characterized by the stage —
-    # the indirect defect must still be caught.
-    g = [_malformed_glossary_entry("Foundation Establishment")]
-    flagged = detect_malformed_compounds(
-        "The clan at the early stage of Foundation Establishment had no elders.",
-        g,
-    )
-    assert flagged == ["clan at the early stage of Foundation Establishment"]
-
-
-def test_malformed_compound_empty() -> None:
-    assert detect_malformed_compounds("") == []
 
 
 def test_mt_texture_flags_heavy_chapter() -> None:
@@ -164,19 +75,6 @@ def _entry(term_en: str, locked: bool = True, term_zh: str = "") -> GlossaryEntr
         category="character",
         notes=None,
         auto_detected=False,
-        locked=locked,
-    )
-
-
-def _idiom_entry(term_en: str, locked: bool = True) -> GlossaryEntry:
-    return GlossaryEntry(
-        id=2,
-        novel_id=1,
-        term_zh="找死",
-        term_en=term_en,
-        category="idiom",
-        notes=None,
-        auto_detected=not locked,
         locked=locked,
     )
 
@@ -758,34 +656,6 @@ def test_double_possessive_dedup() -> None:
 
 def test_double_possessive_empty() -> None:
     assert detect_double_possessive("") == []
-
-
-# ---------------------------------------------------------------------------
-# detect_locked_idiom_grammar
-# ---------------------------------------------------------------------------
-
-
-def test_locked_idiom_grammar_flags_prepositional_context() -> None:
-    issues = detect_locked_idiom_grammar(
-        "How was that different from you court death?",
-        [_idiom_entry("you court death")],
-    )
-    assert len(issues) == 1
-    assert "courting death" in issues[0]
-
-
-def test_locked_idiom_grammar_allows_standalone_insult() -> None:
-    assert detect_locked_idiom_grammar(
-        "You court death!",
-        [_idiom_entry("you court death")],
-    ) == []
-
-
-def test_locked_idiom_grammar_ignores_unlocked_or_other_idioms() -> None:
-    assert detect_locked_idiom_grammar(
-        "How was that different from you court death?",
-        [_idiom_entry("you court death", locked=False)],
-    ) == []
 
 
 # ---------------------------------------------------------------------------

@@ -27,10 +27,8 @@ from backend.services.observations import (
     [
         ("missing locked glossary term '昂霄' → 'Soaring Firmament'", "missing_glossary_term"),
         ("missing title glossary term '青云' → 'Azure Cloud'", "missing_title_glossary_term"),
-        ("malformed compound 'early Foundation Establishment clan'", "malformed_compound"),
         ("mt-texture tics: 'couldn't help but'", "mt_texture"),
         ("Double possessive on a name: 'Li Ming's's'", "double_possessive"),
-        ("Locked idiom grammar issue: subject-verb mismatch", "locked_idiom_grammar"),
         ("Mid-sentence paragraph break after 'and then'", "mid_sentence_paragraph_break"),
         ("Intensifier inflation on 'Heaven': 'extremely Heaven'", "intensifier_inflation"),
         ("Predicate loss near '元婴': dropped verb", "glossary_predicate_loss"),
@@ -67,9 +65,9 @@ def test_normalize_maps_kinds_and_sets_warn_severity() -> None:
 
 def test_normalize_skips_blank_and_whitespace_messages() -> None:
     """Empty / whitespace-only entries are dropped, not turned into rows."""
-    out = normalize_observer_outputs(["", "   ", "malformed compound 'x'"])
+    out = normalize_observer_outputs(["", "   ", "Predicate loss near '元婴': dropped verb"])
     assert len(out) == 1
-    assert out[0].kind == "malformed_compound"
+    assert out[0].kind == "glossary_predicate_loss"
 
 
 def test_severity_tier_for_semantic_vs_stylistic() -> None:

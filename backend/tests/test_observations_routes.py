@@ -207,7 +207,7 @@ def test_library_summary_groups_by_novel(client: TestClient) -> None:
         ch_b = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.execute(
             "INSERT INTO chapter_observations (chapter_id, kind, excerpt) "
-            "VALUES (?, 'malformed_compound', 'bad compound')",
+            "VALUES (?, 'mt_texture', 'dense tics')",
             (ch_b,),
         )
         conn.commit()

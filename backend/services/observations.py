@@ -68,18 +68,17 @@ class NormalizedObservation:
 
 
 # F26 (2026-05-25): observation severity tiering. Semantic observers
-# (missing locked glossary terms, malformed compounds, predicate loss,
-# implicit translation_degraded + glossary_merge_error) are signals of
+# (missing locked glossary terms, predicate loss, implicit
+# translation_degraded + glossary_merge_error) are signals of
 # possible meaning loss; the user usually wants to act on them. Stylistic
 # observers (MT-texture tics, double possessives, mid-sentence breaks,
-# intensifier inflation, locked-idiom grammar) are surface-prose
+# intensifier inflation) are surface-prose
 # advisories — often false positives and lower priority. The library
 # badge splits into '⚠ N semantic / ⓘ N stylistic' so high-priority
 # issues don't get drowned in stylistic noise.
 SEMANTIC_KINDS = frozenset({
     "missing_glossary_term",
     "missing_title_glossary_term",
-    "malformed_compound",
     "glossary_predicate_loss",
     "translation_degraded",
     "glossary_merge_error",
@@ -88,7 +87,6 @@ SEMANTIC_KINDS = frozenset({
 STYLISTIC_KINDS = frozenset({
     "mt_texture",
     "double_possessive",
-    "locked_idiom_grammar",
     "mid_sentence_paragraph_break",
     "intensifier_inflation",
 })
@@ -106,15 +104,12 @@ def severity_tier_for(kind: str) -> str:
 
 # Map from the queue worker's observation-string prefix to a structured
 # kind name. The worker builds strings like "missing locked glossary term
-# '昂霄' → 'Soaring Firmament'" or "malformed compound 'early Foundation
-# Establishment clan'" — we recover the kind from the prefix.
+# '昂霄' → 'Soaring Firmament'" — we recover the kind from the prefix.
 _KIND_PREFIXES: tuple[tuple[str, str], ...] = (
     ("missing locked glossary term", "missing_glossary_term"),
     ("missing title glossary term", "missing_title_glossary_term"),
-    ("malformed compound", "malformed_compound"),
     ("mt-texture tics:", "mt_texture"),
     ("Double possessive on a name:", "double_possessive"),
-    ("Locked idiom grammar issue:", "locked_idiom_grammar"),
     ("Mid-sentence paragraph break", "mid_sentence_paragraph_break"),
     ("Intensifier inflation", "intensifier_inflation"),
     ("Predicate loss near", "glossary_predicate_loss"),

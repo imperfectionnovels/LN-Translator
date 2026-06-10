@@ -6,7 +6,7 @@ logs any hits at INFO, and **does not retry**. The single-pass thesis is
 that noticing has to happen inside the translator's thinking phase; a
 follow-up retry is the same shallow pass twice. The detectors stay around
 because the log line is the only telemetry the project has for surface-tic
-drift across chapters — a sudden spike in mt-texture or malformed-compound
+drift across chapters — a sudden spike in mt-texture or predicate-loss
 hits is the signal that the prompt or model needs attention.
 
 Every function is pure (no I/O, no DB) so they're trivially testable.
@@ -24,120 +24,6 @@ import re
 
 from backend.models import GlossaryEntry
 from backend.services.glossary import missing_translator_terms, split_aliases
-
-# ---------------------------------------------------------------------------
-# Malformed cultivation-compound detection
-# ---------------------------------------------------------------------------
-
-# A cultivation stage word stacked directly onto a collective noun reads
-# wrong: a clan/sect/family cannot itself be "early Foundation Establishment"
-# — only its members hold a stage. "early Foundation Establishment cultivator"
-# is fine (a cultivator has a stage), so the head-noun set is restricted to
-# collective / organization nouns that cannot carry one. `(?i:...)` keeps the
-# stage and head-noun alternations case-insensitive while the middle realm
-# phrase must stay genuinely Capitalized (a proper noun).
-_MALFORMED_STAGE = "early|mid|middle|late|peak|perfect|initial|preliminary"
-_MALFORMED_COLLECTIVE = (
-    "clans?|sects?|families|family|houses?|tribes?|"
-    "kingdoms?|empires?|cities|city|villages?|factions?|races?"
-)
-_MALFORMED_COMPOUND_RE = re.compile(
-    r"\b(?i:" + _MALFORMED_STAGE + r")\s+"
-    r"([A-Z][A-Za-z]+(?:[ -][A-Z][A-Za-z]+)*)\s+"
-    r"(?i:" + _MALFORMED_COLLECTIVE + r")\b"
-)
-
-# The indirect form: a collective noun given a cultivation stage through a
-# prepositional phrase — "a small clan at the early stage of Foundation
-# Establishment". Same defect as the direct stack (only people hold a stage),
-# just phrased with "at … the … stage of …".
-#
-# Kept tight to avoid false positives:
-#  - the collective noun must sit directly before "at", on the same line
-#    (`[^\S\n]+` is whitespace-but-not-newline, so a match cannot straddle a
-#    paragraph break);
-#  - the realm must follow "stage of" with no intervening "the", so an
-#    unrelated temporal "at the early stage of the Foundation Establishment
-#    trial" does not match;
-#  - the connective words are case-insensitive (`(?i:…)`) while the realm
-#    capture stays case-sensitive — a realm is a Capitalized proper noun.
-# A governing transitive verb is handled separately — see _INDIRECT_SUPPRESS_RE.
-_MALFORMED_INDIRECT_RE = re.compile(
-    r"\b(?i:" + _MALFORMED_COLLECTIVE + r")[^\S\n]+"
-    r"(?i:at)\s+(?:(?i:only|merely)\s+)?(?i:the)\s+"
-    r"(?i:" + _MALFORMED_STAGE + r")\s+(?i:stage)\s+(?i:of)\s+"
-    r"([A-Z][A-Za-z]+(?:[ -][A-Z][A-Za-z]+)*)"
-)
-
-# A transitive verb governing the collective noun ("left the sect", "joined
-# the clan", "founded the family") makes the trailing "at … the … stage of …"
-# an adverbial of the verb's subject, not a property of the group — so the
-# indirect match is a false positive and is dropped. Bare "found" is left out
-# on purpose: it is also the past tense of "find", and "he found the clan at
-# the early stage of X" genuinely characterizes the clan, so it is a real
-# defect rather than a false positive.
-_INDIRECT_FALSE_POSITIVE_VERB = (
-    "leave|leaves|left|leaving|"
-    "join|joins|joined|joining|"
-    "rejoin|rejoins|rejoined|rejoining|"
-    "enter|enters|entered|entering|"
-    "return|returns|returned|returning|"
-    "founded|founding|founds|"
-    "establish|establishes|established|establishing|"
-    "quit|quits|quitting|"
-    "abandon|abandons|abandoned|abandoning"
-)
-# Matches a verb + determiner (+ up to three intervening words) ending exactly
-# where the collective noun begins, so it is tested against text[:match.start].
-_INDIRECT_SUPPRESS_RE = re.compile(
-    r"\b(?i:" + _INDIRECT_FALSE_POSITIVE_VERB + r")\s+(?:(?i:to)\s+)?"
-    r"(?i:the|a|an|this|that|his|her|its|their|our|my)\s+"
-    r"(?:[A-Za-z]+\s+){0,3}$"
-)
-
-
-def detect_malformed_compounds(
-    text: str,
-    glossary: list[GlossaryEntry] | None = None,
-) -> list[str]:
-    """Flag broken cultivation noun-stacks — a cultivation stage attributed to a
-    collective noun (clan / sect / family) that cannot itself hold a stage.
-
-    Two forms are caught: the direct stack ("early Foundation Establishment
-    clan") and the indirect prepositional form ("a small clan at the early
-    stage of Foundation Establishment"). "early Foundation Establishment
-    cultivator" stays fine — a cultivator does hold a stage; and an indirect
-    match governed by a transitive verb ("he left the sect at the early stage
-    of …") is dropped, since the stage there describes the verb's subject.
-
-    When a glossary is supplied, the realm phrase must be a known term_en so
-    the flag stays precise. Returns the distinct flagged phrases; never
-    rewrites — the caller logs them as observations."""
-    if not text:
-        return []
-    realm_terms = {
-        (g.term_en or "").strip().lower() for g in (glossary or []) if g.term_en
-    }
-    flagged: list[str] = []
-    seen: set[str] = set()
-    for pattern in (_MALFORMED_COMPOUND_RE, _MALFORMED_INDIRECT_RE):
-        for m in pattern.finditer(text):
-            realm = m.group(1).strip()
-            if realm_terms and realm.lower() not in realm_terms:
-                continue
-            # Indirect match governed by a transitive verb → the stage modifies
-            # the verb's subject, not the group. Drop it.
-            if pattern is _MALFORMED_INDIRECT_RE and _INDIRECT_SUPPRESS_RE.search(
-                text[: m.start()]
-            ):
-                continue
-            phrase = m.group(0).strip()
-            key = phrase.lower()
-            if key not in seen:
-                seen.add(key)
-                flagged.append(phrase)
-    return flagged
-
 
 # ---------------------------------------------------------------------------
 # Machine-translation texture detection
@@ -253,64 +139,6 @@ def detect_double_possessive(
         f"'s (Sea's Roar, Heaven's Will) must not take another 's — rewrite to "
         f"'of [Name]' or recast the sentence so the locked term is preserved "
         f"and the English grammar around it is fixed."
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Locked idiom grammar detection
-# ---------------------------------------------------------------------------
-
-_LOCKED_IDIOM_BAD_GRAMMAR_RE = re.compile(
-    r"\b(?:from|than|of|like|as)\s+you\s+court\s+death\b",
-    re.IGNORECASE,
-)
-
-
-def detect_locked_idiom_grammar(
-    text: str,
-    glossary: list[GlossaryEntry] | None = None,
-) -> list[str]:
-    """Flag locked idiom renderings forced into ungrammatical contexts.
-
-    Narrow by design: only the locked idiom `you court death` gets this
-    treatment, and only after prepositions/comparatives where the standalone
-    sentence-like form cannot fit. This complements `missing_translator_terms`,
-    which accepts `courting death` as a grammatical inflection.
-    """
-    if not text or not glossary:
-        return []
-    has_target = False
-    for g in glossary:
-        if not g.locked or g.category != "idiom":
-            continue
-        for _, en in split_aliases(g.term_zh or "", g.term_en or ""):
-            if (en or "").strip().lower() == "you court death":
-                has_target = True
-                break
-        if has_target:
-            break
-    if not has_target:
-        return []
-
-    flagged: list[str] = []
-    seen: set[str] = set()
-    for m in _LOCKED_IDIOM_BAD_GRAMMAR_RE.finditer(text):
-        span = m.group(0)
-        key = span.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        flagged.append(span)
-        if len(flagged) >= 5:
-            break
-    if not flagged:
-        return []
-    quoted = ", ".join(f'"{s}"' for s in flagged)
-    return [
-        f"Locked idiom grammar issue: {quoted} forces the standalone idiom "
-        f'"you court death" into a prepositional/comparative phrase. Inflect '
-        f'the idiom to fit the sentence, e.g. "courting death", while '
-        f"preserving the glossary's intended wording."
     ]
 
 
@@ -933,9 +761,6 @@ def body_correctness_observations(
     found: list[str] = []
     for zh, en in missing_translator_terms(source_zh, en_text, glossary):
         found.append(f'missing locked glossary term {zh!r} → {en!r}')
-    found.extend(detect_locked_idiom_grammar(en_text, glossary))
-    for phrase in detect_malformed_compounds(en_text, glossary):
-        found.append(f"malformed compound {phrase!r}")
     mt_tells = detect_mt_texture(en_text)
     if mt_tells:
         found.append("mt-texture tics: " + "; ".join(mt_tells))
