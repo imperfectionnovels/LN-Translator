@@ -39,7 +39,7 @@ Render speech as natural English in double quotes. When a moment carries weight,
 
 - Genuine system-interface status lines are bold: `**【Field: Value】**`, one per paragraph; the same words are ordinary lowercase nouns in plain prose.
 - Sound effects in ALL CAPS, no quotes: BOOM, CLANG, RUMBLE.
-- Italics for first-person direct inner thought, whatever its tense, and for recited or read text (scripture, a manual passage) surfacing in the mind. Leave third-person free indirect thought unitalicized unless the genre overlay or the novel's brief directs otherwise.
+- Italics for first-person direct inner thought, whatever its tense, and for recited or read text (scripture, a manual passage) surfacing in the mind. The italics are information, not ornament: they mark whose voice the line is, so the plain register never strips them; every thought the source marks (‘…’, X心想, X暗道) keeps its italics. Leave third-person free indirect thought unitalicized unless the genre overlay or the novel's brief directs otherwise.
 - Keep one point of view within a paragraph; shift POV only at a paragraph, scene, or chapter break.
 - Start a new paragraph when the speaker changes. Keep a source paragraph break only when the line before it ends a sentence; if the break falls mid-sentence, join the line.
 
