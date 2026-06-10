@@ -161,7 +161,18 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # formatting (overlay's viewpoint-italic rule was beating the brief's
 # protagonist-roman directive via the ladder); new rule against added
 # trail-offs (35 invented ellipses across 3 chapters whose sources have 0).
-PROMPT_TEMPLATE_VERSION = "phase12-novel-voice-compiled-1"
+# phase13 (2026-06-10): cohesion pass, user directive "make it all flow
+# seamlessly" scoped to between- and within-paragraph seams. The faulty
+# rules were ours: "flatness is never a defect / consecutive sentences may
+# open alike" licensed the monotone one-line restarts, and the stock-phrase
+# single-rendering rule mandated the same fronted anchor forever ("At these
+# words" x3 per chapter). Rewrites: words-repeat-shapes-vary (given-to-new
+# chaining, and/but/so joins), cue phrases reclassified as linkers that vary
+# form and position, new paragraph-seam rule (open on the given where beats
+# connect, scene shifts restart cold, thought lines knit), cut-in bullet
+# merged to allow trailing attachment. Offsets cut redundancy so base.md
+# stays <= 1,400 words.
+PROMPT_TEMPLATE_VERSION = "phase13-novel-voice-cohesion-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
