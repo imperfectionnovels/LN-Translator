@@ -87,14 +87,19 @@ def _pick_replacement(text: str, run_start: int, run_end: int) -> str:
 def enforce_em_dash(text: str) -> tuple[str, int]:
     """Replace every clause-splicing em-dash with comma-space or period-space.
 
-    Interruption / suspension dashes (see `_dash_protected`) are kept.
-    Returns (rewritten_text, count)."""
+    Interruption / suspension dashes (see `_dash_protected`) are kept, but a
+    kept run normalizes to one canonical em-dash: the CJK source writes the
+    mark as a double ——, which is not English typography ("you—!!!", never
+    "you——!!!"). Returns (rewritten_text, count)."""
     count = 0
     matches = list(_DASH_RUN_RE.finditer(text))
     out = text
     for m in reversed(matches):
         start, end = m.start(), m.end()
         if _dash_protected(out, end):
+            if m.group(0) != "—":
+                out = out[:start] + "—" + out[end:]
+                count += 1
             continue
         repl = _pick_replacement(out, start, end)
         after = out[end:]

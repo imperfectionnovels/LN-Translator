@@ -181,6 +181,17 @@ def test_em_dash_before_ellipsis_preserved():
     assert count == 0
 
 
+def test_em_dash_protected_run_collapses_to_single_dash():
+    # The CJK source writes the interruption mark as a double ——; a kept run
+    # normalizes to one canonical em-dash.
+    text = '"I will not share the same sky as you——!!!"\n\nThe next instant——\n\nBOOM.'
+    out, count = enforce_em_dash(text)
+    assert 'you—!!!"' in out
+    assert "The next instant—\n\n" in out
+    assert "——" not in out
+    assert count == 2
+
+
 # ---------------------------------------------------------------------------
 # enforce_spaced_hyphen_dash
 # ---------------------------------------------------------------------------
