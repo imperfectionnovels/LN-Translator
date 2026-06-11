@@ -39,6 +39,41 @@ User read of live ch392 surfaced five defects; all fixed and shipped:
 - Profanity softening (狗日的 -> "damned"): base.md calibration bullet.
 - Chinese comma-chain cadence: phase14 (see above).
 
+### Phase14 residue session (2026-06-10 late evening, same-day follow-up) — DONE
+
+User read tonight's 15 fresh chapters (phase14-english-cadence-1, claude_agent /
+claude-opus-4-8) and reported both the cadence pass and the title-marker strip
+"didn't totally pass". Full-replay attribution (_apply_text_fixups re-run on raw
+llm_cache bodies) reproduced committed text byte-for-byte for 14/15 chapters:
+the PROMPT WORKED (raw prose recomposed, fluent); every visible defect was the
+deterministic layer or glossary data. Findings and fixes, all shipped:
+
+- Title residue = ONE chapter (ch426): twkan rescrape truncated the source title
+  mid-marker (（晚上还有三更, no closing paren), defeating both the closed-paren
+  strip and its zh-gate. Fixed: end-anchored _TITLE_NOISE_OPEN_RE (ad982d3);
+  title repaired in DB. The 21 pending marker titles are closed-paren shapes the
+  existing regex already handles.
+- Fixup defects (ad982d3 + 063eb86, all test-first): dash before closing `*`
+  now protected ("*This man is, *"); dash after copula joins without dash
+  ("Its name was, the X"); one-word beat paragraphs no longer comma-weld
+  ("fantasy, BOOM." now period + standalone BOOM); up-caser skips rewrites that
+  would down-case inside Title-Case neighborhoods ("...Peak-Moving righteous
+  Dharma"); sentence-head capital wins over lowercase-lead canonicals.
+- Glossary data class (the volume leader): generic nouns locked Title-Case in
+  trusted categories stamped caps mid-sentence ("the Devil is vicious", "every
+  Sect", "icy Abyss", "all Creation dimmed", "spiritual Qi of Heaven and
+  Earth"). Hatched (lowercase term_en + lowercase note) in BOTH DBs:
+  魔/宗门/门派/深渊/造化/昭顯/邪祀/天地之气 + 天人 (term_en only, context-cased), then
+  audit-approved 神光(太乙)/地狱/紅塵/天意. Audit method: fire-scan all 1,387
+  atomic targets over 40 recent texts; only ~10 real offenders, the single-word
+  suspects (Academy/Elder/Faction/...) never fire. data/fix_glossary_generic_casing.py.
+- Out-of-band edit found: ch396 carried 3 phrase rewrites no fixup can produce
+  ("fruition attainment embryo" -> canonical, leaving "a Embryonic"); a parallel
+  glossary-session propagation, not the pipeline. Article fixed.
+- Repairs: data/repair_phase14_fixup_damage.py full-replay splice (valid because
+  replay==committed held) rewrote 13 live chapters + ch426 title; dev ch392
+  repaired the same way; gzip backup novels.pre-phase14-repair.db.gz; idempotent.
+
 ### Rescrape (user finding 2026-06-10) — DONE, both DBs applied
 
 69shuba scrape left the LIVE DB novel 2 with 23 missing chapters (53,96,187,233,237,249,392,396,405,413,422,426,428,429,492,522,542,546,550,586,614,619,1322) + 5 short ones. Authoritative source now twkan.com/book/78813.html (1,454 numbered chapters; traditional script converted locally to simplified + 「」->“” to match existing data). Tool: data/rescrape_twkan.py (scrape = resumable cache in data/twkan_cache/; apply = gzip backup then replace original_text/title_zh + insert missing as pending; translations untouched).
