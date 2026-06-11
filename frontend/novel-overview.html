@@ -26,8 +26,15 @@
 
   <section id="overview" hidden>
     <header class="no-header">
-      <div class="no-cover" id="no-cover" aria-hidden="true">
-        <span class="no-cover-placeholder" id="no-cover-placeholder">書</span>
+      <div class="no-cover-col">
+        <div class="no-cover" id="no-cover" aria-hidden="true">
+          <span class="no-cover-placeholder" id="no-cover-placeholder">書</span>
+        </div>
+        <div class="no-cover-actions">
+          <button type="button" class="btn-ghost" id="no-cover-change">Change cover</button>
+          <button type="button" class="btn-ghost" id="no-cover-remove" hidden>Remove</button>
+          <input type="file" id="no-cover-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+        </div>
       </div>
       <div class="no-header-body">
         <h1 class="no-title" id="no-title">…</h1>

@@ -10,6 +10,24 @@
   align-items: start;
 }
 
+.no-cover-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.no-cover-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.no-cover-actions .btn-ghost {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .no-cover {
   width: 140px;
   height: 200px;
@@ -199,6 +217,7 @@
   .no-header-body { min-width: 0; }
   .no-cta { flex-wrap: wrap; }
   .no-cover { width: 100px; height: 142px; }
+  .no-cover-actions { gap: 4px; }
   .no-pipeline-grid, .no-meta-grid, .no-summary-grid {
     grid-template-columns: 1fr;
   }
@@ -246,6 +265,13 @@
 .no-danger-zone .btn-danger:hover { filter: brightness(1.06); }
 .no-danger-zone .btn-danger:disabled { opacity: 0.55; cursor: default; }
 .no-danger-zone #no-archive-status { margin-left: 12px; }
+
+/* Interactive cover: pointer cursor + drag-over highlight. */
+.no-cover.is-interactive { cursor: pointer; }
+.no-cover.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+/* Dirty-state save button ring (Fix C). */
+.is-dirty { box-shadow: 0 0 0 1px var(--signal-stale); }
 
 /* Local archive confirmation dialog (replaces what used to live in
  * the library page's confirm-dialog for this action). */

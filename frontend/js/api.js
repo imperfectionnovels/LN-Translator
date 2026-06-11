@@ -300,6 +300,18 @@ const api = {
   diagnostics: () => apiFetch("/api/diagnostics"),
   diagnosticsLogFolder: () => apiFetch("/api/diagnostics/log-folder"),
 
+  // ----- Covers -----
+  uploadCover: (novelId, file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return fetch(`/api/novels/${novelId}/cover`, { method: "POST", body: fd })
+      .then(async r => {
+        if (!r.ok) throw await _extractError(r);
+        return r.json();
+      });
+  },
+  deleteCover: (novelId) => apiFetch(`/api/novels/${novelId}/cover`, { method: "DELETE" }),
+
   // ----- Genres (static list served by the backend genre registry) -----
   genres: () => apiFetch("/api/genres"),
 
