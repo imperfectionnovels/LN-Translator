@@ -202,16 +202,19 @@ undoBtn.addEventListener("click", async () => {
   try {
     let restored = 0;
     const failures = [];
+    const failedIds = [];
     for (const id of ids) {
       try { await api.restoreFrSnapshot(id); restored++; }
-      catch (e) { failures.push(e.message); }
+      catch (e) { failures.push(e.message); failedIds.push(id); }
     }
     if (failures.length) {
+      // Keep the bar alive holding only the failed ids so Undo can be retried.
       showToast(`Reverted ${restored} snapshot(s). Error on ${failures.length}: ${failures[0]}`, "err");
+      _undoSnapshotIds = failedIds;
     } else {
       showToast(`Reverted ${restored} snapshot(s).`, "ok");
+      _hideUndoBar();
     }
-    _hideUndoBar();
     loadHistory();
   } finally {
     undoBtn.disabled = false;
