@@ -333,7 +333,7 @@ function renderPlate(e) {
     : `<div class="usage empty" data-id="${e.id}" title="Add a usage note — injected into every translation prompt">No usage note · <em>click to add</em></div>`;
   return `
     <div class="plate ${isSel ? "selected" : ""} ${isEditing ? "editing" : ""}" data-id="${e.id}">
-      <div class="sel" data-act="toggle-select" title="Select for bulk actions"></div>
+      <div class="sel" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeAttr(e.term_en || e.term_zh)}" title="Select for bulk actions"></div>
       <div class="head">
         <div class="han-block">${escapeHtml(e.term_zh)}</div>
         <div class="badges">${badges.join("")}</div>
@@ -351,10 +351,10 @@ function renderPlate(e) {
         <span class="meta-text"></span>
         <span class="spacer"></span>
         <span class="row-acts">
-          <span class="ico ${e.locked ? "cin on" : ""}" data-act="toggle-lock" title="${e.locked ? "Unlock this term" : "Lock this term (won't be auto-overwritten)"}">鎖</span>
-          <span class="ico jade" data-act="retranslate" title="Re-translate every chapter that uses this term">↻</span>
-          <span class="ico" data-act="edit" title="Edit term">✎</span>
-          <span class="ico" data-act="menu" title="More actions">⋯</span>
+          <button type="button" class="ico ${e.locked ? "cin on" : ""}" data-act="toggle-lock" title="${e.locked ? "Unlock this term" : "Lock this term (won't be auto-overwritten)"}" aria-label="${e.locked ? "Unlock" : "Lock"} ${escapeAttr(e.term_en || e.term_zh)}">鎖</button>
+          <button type="button" class="ico jade" data-act="retranslate" title="Re-translate every chapter that uses this term" aria-label="Retranslate chapters using ${escapeAttr(e.term_en || e.term_zh)}">↻</button>
+          <button type="button" class="ico" data-act="edit" title="Edit term" aria-label="Edit ${escapeAttr(e.term_en || e.term_zh)}">✎</button>
+          <button type="button" class="ico" data-act="menu" title="More actions" aria-label="More actions for ${escapeAttr(e.term_en || e.term_zh)}">⋯</button>
         </span>
       </div>
     </div>
@@ -478,7 +478,7 @@ function renderListRow(e) {
     </div>` : "";
   return `
     <div class="list-row ${isSel ? "selected" : ""} ${isEditing ? "editing" : ""}" data-id="${e.id}">
-      <div class="sel-cell" data-act="toggle-select" role="checkbox" aria-checked="${isSel}"></div>
+      <div class="sel-cell" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeAttr(e.term_en || e.term_zh)}"></div>
       <div class="han-cell"><div class="zh">${escapeHtml(e.term_zh)}</div></div>
       ${enCell}
       ${catCell}
@@ -566,6 +566,13 @@ function wireRows() {
       ev.stopPropagation();
       toggleSelect(id);
     });
+    card.querySelector("[data-act='toggle-select']")?.addEventListener("keydown", (ev) => {
+      if (ev.key === " " || ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.currentTarget.click();
+      }
+    });
     card.querySelector("[data-act='toggle-lock']")?.addEventListener("click", async (ev) => {
       ev.stopPropagation();
       const entry = entries.find(x => x.id === id);
@@ -599,6 +606,13 @@ function wireRows() {
     row.querySelector("[data-act='toggle-select']")?.addEventListener("click", (ev) => {
       ev.stopPropagation();
       toggleSelect(id);
+    });
+    row.querySelector("[data-act='toggle-select']")?.addEventListener("keydown", (ev) => {
+      if (ev.key === " " || ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.currentTarget.click();
+      }
     });
     row.querySelector("[data-act='edit-usage']")?.addEventListener("click", (ev) => {
       ev.stopPropagation();
