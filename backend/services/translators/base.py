@@ -198,7 +198,15 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # conviction flip reversing phase15's roman default ("Internal thoughts should
 # still be italics for all characters"). User preference outranks the WW-corpus
 # evidence here. The brief's contradicting roman line was removed in both DBs.
-PROMPT_TEMPLATE_VERSION = "phase16-thought-italics-1"
+# phase17 (2026-06-11): sentence-seam flow pass from the 53-item awkwardness
+# inventory (data/flow_awkward_inventory.md; aggregate flow metrics were
+# already inside the pro band, the gap was seam-level). Marked logical turns
+# (然而/所以/毕竟) are content and land as connectives (COLD-ABUT, 18 items);
+# relative-clause cut-ins fold into the subject; fronted participials re-seat
+# after subject and verb; dependent clauses never strand as stubs; name
+# re-opens runs only under ambiguity; gnomic exposition frames unroll as plain
+# reasoning; one new marked-turn worked example.
+PROMPT_TEMPLATE_VERSION = "phase17-flow-seams-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

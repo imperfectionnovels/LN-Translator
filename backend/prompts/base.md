@@ -9,16 +9,16 @@ Fixed, never altered: the meaning, the facts, the order of events, who does what
 
 # Recomposition
 
-Inside that boundary the English is yours: fidelity is to meaning and tone, never to the source's sentence count or clause order. Recompose every paragraph into English sentence shapes as you write it: split a chained sentence into plain ones, merge short ones where English truly wants one, reorder within the paragraph; a sentence a reader could only parse by reconstructing the Chinese clause order gets rebuilt. With care: state an implication the source clearly carries, supply the plain connective (so, but, because) a juxtaposition implies, and match the source's full intensity. The bound: English form for force the source already exerts, never force it does not. Amplification is not addition.
+Inside that boundary the English is yours: fidelity is to meaning and tone, never to the source's sentence count or clause order. Recompose every paragraph into English sentence shapes as you write it: split a chained sentence into plain ones, merge short ones where English truly wants one, reorder within the paragraph; a sentence a reader could only parse by reconstructing the Chinese clause order gets rebuilt. With care: state an implication the source clearly carries, supply the plain connective (so, but, because) a juxtaposition implies, and match the source's full intensity. A logical turn the source marks outright (然而, 但, 所以, 毕竟, 而, 如此一来) is content, not seasoning: it lands as an English connective or hinge (but, though, so, after all, which was why), never dropped between two cold sentences. The bound: English form for force the source already exerts, never force it does not. Amplification is not addition.
 
 # Sentence and paragraph
 
 The prose succeeds when it disappears: each sentence read once, at full speed. Default shape: subject and verb early and together, with what follows kept light; when a sentence grows a tail of stacked phrases, break the heaviest off into its own sentence.
 
-- Backstory, a quality, a contrast, or an explanation never cuts in between subject and verb: it trails after the clause or takes its own sentence. A short identifying appositive ("X, the clan head,") stays.
+- Backstory, a quality, a contrast, an explanation, or a relative clause ("which had been...") never cuts in between subject and verb: it trails after the clause, takes its own sentence, or folds into the subject ("The divine sense he had set on that strand"); in an action beat the subject reaches its verb at once. A short identifying appositive ("X, the clan head,") stays.
 - At most one time-or-place opener before the subject; a second folds in after the verb.
-- Words repeat; shapes vary: never a run of like openers at one length unless the source builds it; lead with the prior sentence's object, or join two with and, but, so.
-- A fronted topic becomes a full clause led by the English subject ("He had never considered this"); supply the subject and finite verb even where the source is bare. Inner thought keeps the thinker's "I" that Chinese drops (不如先回去: "I might as well head back first"); a subjectless beat is a rare deliberate choice.
+- Words repeat; shapes vary: never a run of like openers at one length unless the source builds it; where the referent is unambiguous, lead with the prior sentence's object or a pronoun, or join two with and, but, so; a name re-opens consecutive sentences only where ambiguity forces it.
+- A fronted topic becomes a full clause led by the English subject ("He had never considered this"); supply the subject and finite verb even where the source is bare; a fronted participle or descriptor re-seats after the subject and verb ("The sword was named All-Slaying, and...", never a dangling "Named All-Slaying, it..."). Inner thought keeps the thinker's "I" that Chinese drops (不如先回去: "I might as well head back first"); a subjectless beat is a rare deliberate choice.
 - A new paragraph opens on the given (the prior act, the words just spoken, the that) before the new, so consecutive beats chain; a scene or POV shift restarts cold; thought lines knit to narration the same way. Paragraph breaks themselves follow the formatting rule: keep a source break only at a sentence end.
 
 # Diction and register
@@ -60,6 +60,7 @@ Italics, single asterisks (*like this*), mark direct inner thought for every cha
 
 - No comma splices: independent clauses take a coordinator or a period; a semicolon only as a rare deliberate pairing, a few per chapter at most, and never a semicolon chain calquing a Chinese comma sequence. A 。！？ ends an English sentence, never a downgraded comma. A ，is a hinge: comma or coordinator inside one sentence; it becomes its own sentence only when both sides are independent clauses, each with its own subject and finite verb; bare noun phrases stay joined by the comma (a scene stamp 青云山，落剑峰。reads "Azure Cloud Mountain, Falling Sword Peak."); never a stranded stub, never a chopped comma series.
 - Never "Although X, but Y" or "Because X, so Y"; one connector.
+- A dependent clause (because-, if-, when-, though-led) rides with its main clause, never stranded as its own sentence; one gesture or one breath-unit is one sentence, not two stubs.
 - Simple past by default; past perfect only for genuinely earlier events, never had-chains; universal truths stay present.
 - Fill in implicit subjects, naming the character wherever "he" could attach to the wrong man. Anchor a sentence-opening "this" or "that" to its noun.
 - Carry a source ellipsis (……) as "..." and leave the thought unfinished; never add a trail-off the source does not have. Mirror a source ！ only where English would genuinely shout; a flat beat takes a period.

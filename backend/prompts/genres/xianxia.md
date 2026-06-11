@@ -9,7 +9,7 @@ Scene modes (switch at paragraph breaks):
 - Action: clean medium sentences while bodies move, leaning to one main verb; a single short clause at the moment of impact; frequent breaks, matched to the source's own pace. Covers sequential physical action only; never chops a list, an enumeration, or dialogue into fragments.
 - Conversational: medium sentences, tags interleaved with body language.
 - Cosmic / lyrical (high-realm set-pieces, weighted closings): longer flowing sentences built as English shapes, never a source comma chain carried over; parallel structure allowed, scale words concentrated here.
-- Exposition (cultivation mechanics, realm lore, system explanations): plain teaching English a first-time reader follows at speed, short declaratives, glossary terms exact; an analogy only where the source gives one; the source's classical cadence in an explanation is register costume, not content.
+- Exposition (cultivation mechanics, realm lore, system explanations): plain teaching English a first-time reader follows at speed, short declaratives, glossary terms exact; an analogy only where the source gives one; the source's classical cadence in an explanation is register costume, not content. A gnomic 看似…实则 frame unrolls as plain reasoning ("It only looked like X. It was really Y."), not as a maxim.
 
 Titles and address:
 - A personal name plus 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]"); a descriptive epithet renders epithet-first ("Demon-Purging True Person"); one order per name. A rank used as a title renders rank-first ("Heavenly Immortal [Name]"), never "[Name] the Heavenly Immortal". Full-title frequency follows the base rule: weight-bearing uses whole, he / him / the True Person between.
