@@ -80,15 +80,21 @@
     </div>
   </form>
 
-  <!-- F1: post-commit undo. Visible after a single-novel commit succeeds.
-       Hidden after the 10-minute window or after the undo runs. Cross-
-       novel commits write one snapshot per novel; there isn't a single
-       "this batch" to roll back, so the button stays hidden for them. -->
+  <!-- F1: post-commit undo bar. Shown after any commit that produced at least
+       one snapshot (single-novel or all-novels). snapshot_ids are taken directly
+       from the commit response, so no extra fetch is needed. Hidden after the
+       10-minute window expires or after the Undo runs. -->
   <div id="fr-undo-bar" class="fr-undo-bar" hidden role="status" aria-live="polite">
     <span class="fr-undo-msg" id="fr-undo-msg"></span>
     <button type="button" class="btn-ghost" id="fr-undo-btn">↺ Undo this batch</button>
     <span class="muted" id="fr-undo-timer"></span>
   </div>
+
+  <section class="fr-history" id="fr-history" hidden>
+    <h3>Recent replacements</h3>
+    <p class="muted">Per-novel commit log, newest first. Restore reverts the chapters that commit touched.</p>
+    <div id="fr-history-rows"></div>
+  </section>
 
   <section class="fr-preview" id="fr-preview" hidden>
     <h3>Preview</h3>

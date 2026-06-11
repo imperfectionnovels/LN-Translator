@@ -60,9 +60,8 @@
   border-color: var(--warn-fg, #b56a16);
 }
 
-/* F1: post-commit undo bar. Surfaces the existing restoreFrSnapshot
- * endpoint as a 10-minute "Undo this batch" affordance, hidden by
- * default and shown only after a single-novel commit succeeds. */
+/* F1: post-commit undo bar. Shown after any commit that produced snapshots
+ * (single-novel or all-novels). Expires after 10 minutes. */
 .fr-undo-bar {
   display: flex;
   align-items: center;
@@ -74,5 +73,38 @@
   margin: 12px 0 24px;
   font-size: 13px;
 }
+/* display:flex above would otherwise defeat the hidden attribute (author
+   styles beat the UA [hidden] rule), leaving a phantom bar always visible. */
+.fr-undo-bar[hidden] { display: none; }
 .fr-undo-bar .fr-undo-msg { flex: 1; min-width: 0; }
 .fr-undo-bar .btn-ghost { font-size: 12.5px; }
+
+/* Fix B: commit history panel */
+.fr-history {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px;
+  margin: 18px 0;
+}
+.fr-history h3 { margin: 0 0 4px; font-size: 15px; }
+.fr-history > .muted { font-size: 13px; margin: 0 0 12px; display: block; }
+
+.fr-history-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  font-size: 13px;
+}
+.fr-history-row:first-of-type { border-top: none; }
+.fr-history-pair { font-family: var(--font-family-mono, monospace); word-break: break-all; }
+.fr-history-meta { font-size: 12px; flex: 1; min-width: 0; }
+.fr-history-restored { font-size: 12px; }
+.fr-history-restore-btn { font-size: 12px; padding: 2px 8px; }
+
+/* Fix C: responsive collapse for narrow viewports */
+@media (max-width: 560px) {
+  .fr-form .row { grid-template-columns: 1fr; }
+}
