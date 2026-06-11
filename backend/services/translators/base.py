@@ -194,7 +194,11 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # worked example, fidelity drop-clause scoped to facts, example English
 # genericized against phrase-leak, refiner softening clauses removed, em
 # dashes stripped from model-facing strings.
-PROMPT_TEMPLATE_VERSION = "phase15-ww-adversarial-1"
+# phase16 (2026-06-11): thought-italics restoration, an explicit user-directed
+# conviction flip reversing phase15's roman default ("Internal thoughts should
+# still be italics for all characters"). User preference outranks the WW-corpus
+# evidence here. The brief's contradicting roman line was removed in both DBs.
+PROMPT_TEMPLATE_VERSION = "phase16-thought-italics-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while

@@ -47,7 +47,7 @@ One installment of a long serial: each character's voice held, one rendering per
 
 Speech: natural English in double quotes. Tags are "said" or "asked", alone or with a plain adverb or phrase ("he said calmly"); never a bare adjective ("he said, mild"), never a manner the source does not mark (说道 "said"; 喊道 "shouted", 嘀咕 "muttered"). A gesture takes its own short sentence. Attribution drops when the speaker is obvious.
 
-Inner thought is plain roman prose. A thought the source marks (‘…’, X心想, X暗道) renders as first-person direct thought with the thinker's "I", tagged plainly ("..., he thought") or run unmarked; free indirect thought reads as narration. No asterisks or italics for thought unless the novel's brief asks for them; recited text or scripture surfacing in the mind still takes single asterisks. The brief owns thought formatting: follow it for every thought in a voice it covers.
+Italics, single asterisks (*like this*), mark direct inner thought for every character, and recited text surfacing in the mind. Every thought the source marks (‘…’, X心想, X暗道) comes out wrapped, keeping the thinker's "I" that Chinese drops. Free indirect thought woven into narration stays roman. The brief may adjust thought formatting; follow it where it speaks.
 
 # Formatting
 
