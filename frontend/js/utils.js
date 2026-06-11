@@ -181,6 +181,43 @@ function confirmDialog({
 }
 window.confirmDialog = confirmDialog;
 
+// Audit 6.6: single canonical toast. Replaces six per-page copies that had
+// drifted (durations 4s to 6s, three different element ids). Fixed position
+// (bottom center), fixed 5s duration, optional Undo slot.
+let _appToastTimer = null;
+function _ensureToastEl() {
+  let el = document.getElementById("app-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "app-toast";
+    el.className = "app-toast";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    el.hidden = true;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function showToast(message, kind = "info", undoAction = null) {
+  const el = _ensureToastEl();
+  el.dataset.kind = kind;
+  el.innerHTML = `<span>${escapeHtml(message)}</span>` +
+    (undoAction ? `<button type="button" data-toast-undo>Undo</button>` : "");
+  el.hidden = false;
+  if (_appToastTimer) clearTimeout(_appToastTimer);
+  _appToastTimer = setTimeout(() => { el.hidden = true; _appToastTimer = null; }, 5000);
+  if (undoAction) {
+    el.querySelector("[data-toast-undo]")?.addEventListener("click", () => {
+      try { undoAction(); } finally {
+        if (_appToastTimer) clearTimeout(_appToastTimer);
+        el.hidden = true;
+        _appToastTimer = null;
+      }
+    }, { once: true });
+  }
+}
+window.showToast = showToast;
+
 // C8: <details>-as-menu (reader's util-menu, glossary's download-menu, etc.)
 // didn't close when the user clicked outside the menu. The [open] state
 // persisted indefinitely, and the bfcache could leave the menu open after a

@@ -8,7 +8,6 @@
  */
 
 const rowsEl = document.getElementById("gloss-rows");
-const toastEl = document.getElementById("toast");
 const addBtn = document.getElementById("add-entry-btn");
 const addForm = document.getElementById("add-entry-form");
 const newZh = document.getElementById("new-zh");
@@ -22,11 +21,7 @@ let entries = [];
 
 /* Confirm dialog lives in frontend/js/utils.js (C7). */
 
-function showToast(msg, kind = "info") {
-  toastEl.className = "status " + kind;
-  toastEl.textContent = msg;
-  setTimeout(() => { toastEl.textContent = ""; toastEl.className = "status"; }, 4500);
-}
+// showToast is window.showToast from utils.js (audit 6.6).
 
 /* Initiative 4 — global-glossary apply-choice dialog. Same shape as the
  * per-novel page but with only 2 buttons (no retranslate-affected route

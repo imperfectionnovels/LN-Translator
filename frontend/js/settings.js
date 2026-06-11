@@ -48,7 +48,6 @@ const els = {
   secretProviderId: document.getElementById("secret-provider-id"),
   secretValue: document.getElementById("secret-value"),
   secretExplainer: document.getElementById("secret-explainer"),
-  toast: document.getElementById("settings-toast"),
   tocList: document.getElementById("settings-toc-list"),
 };
 
@@ -258,27 +257,7 @@ function fmtRel(iso) {
   return `${days}d ago`;
 }
 
-let _toastTimer = null;
-function showToast(message, undoAction) {
-  if (!els.toast) return;
-  els.toast.innerHTML = `<span>${escapeHtml(message)}</span>` +
-    (undoAction ? `<button type="button" data-toast-undo>Undo</button>` : "");
-  els.toast.hidden = false;
-  if (_toastTimer) clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => {
-    els.toast.hidden = true;
-    _toastTimer = null;
-  }, 5000);
-  if (undoAction) {
-    const btn = els.toast.querySelector("[data-toast-undo]");
-    btn?.addEventListener("click", () => {
-      try { undoAction(); } finally {
-        clearTimeout(_toastTimer);
-        els.toast.hidden = true;
-      }
-    }, { once: true });
-  }
-}
+// showToast is window.showToast from utils.js (audit 6.6).
 
 async function openSecretDialog(providerId, secretRef) {
   els.secretProviderId.value = providerId;
@@ -299,7 +278,7 @@ async function openSecretDialog(providerId, secretRef) {
         showToast("API key stored in OS keychain.");
         resolve(true);
       } catch (err) {
-        alert(`Failed to store: ${err.message}`);
+        await confirmDialog({ title: "Couldn't store the key", body: `<p>${escapeHtml(err.message)}</p>`, okText: "OK", cancelText: "" });
       }
     };
     const onCancel = (e) => { e?.preventDefault?.(); cleanup(); els.secretDialog.close(); resolve(false); };
@@ -656,14 +635,14 @@ async function handleListClick(e) {
     try {
       await api.setDefaultProvider(id);
       await refresh();
-    } catch (err) { alert(`Failed to set default: ${err.message}`); }
+    } catch (err) { await confirmDialog({ title: "Couldn't set default", body: `<p>${escapeHtml(err.message)}</p>`, okText: "OK", cancelText: "" }); }
     return;
   }
   if (act === "edit") {
     try {
       const provider = await api.provider(id);
       openEditDialog(provider);
-    } catch (err) { alert(`Failed to load provider: ${err.message}`); }
+    } catch (err) { await confirmDialog({ title: "Couldn't load provider", body: `<p>${escapeHtml(err.message)}</p>`, okText: "OK", cancelText: "" }); }
     return;
   }
   if (act === "delete") {
@@ -678,7 +657,7 @@ async function handleListClick(e) {
     try {
       await api.deleteProvider(id);
       await refresh();
-    } catch (err) { alert(`Failed to delete: ${err.message}`); }
+    } catch (err) { await confirmDialog({ title: "Couldn't delete provider", body: `<p>${escapeHtml(err.message)}</p>`, okText: "OK", cancelText: "" }); }
     return;
   }
 }
@@ -709,7 +688,7 @@ async function handleFormSubmit(e) {
       if (keyVal && created && created.id != null) {
         try { await api.setProviderSecret(created.id, keyVal); }
         catch (secretErr) {
-          alert(`Provider created, but storing the API key failed: ${secretErr.message}\nUse the per-row "Set API key" button to retry.`);
+          await confirmDialog({ title: "Provider created, key not stored", body: `<p>${escapeHtml(secretErr.message)}</p><p>Use the per-row "Set API key" button to retry.</p>`, okText: "OK", cancelText: "" });
         }
       }
     } else {
@@ -719,7 +698,7 @@ async function handleFormSubmit(e) {
     els.fSecretValue.value = "";
     await refresh();
   } catch (err) {
-    alert(`Save failed: ${err.message}`);
+    await confirmDialog({ title: "Save failed", body: `<p>${escapeHtml(err.message)}</p>`, okText: "OK", cancelText: "" });
   }
 }
 

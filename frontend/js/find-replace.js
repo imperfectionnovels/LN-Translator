@@ -23,15 +23,9 @@ const previewSection = document.getElementById("fr-preview");
 const previewSummary = document.getElementById("fr-preview-summary");
 const previewTruncated = document.getElementById("fr-preview-truncated");
 const previewRows = document.getElementById("fr-preview-rows");
-const toastEl = document.getElementById("toast");
-
 let currentToken = null;
 
-function showToast(msg, kind = "info") {
-  toastEl.className = "status " + kind;
-  toastEl.textContent = msg;
-  setTimeout(() => { toastEl.textContent = ""; toastEl.className = "status"; }, 6000);
-}
+// showToast is window.showToast from utils.js (audit 6.6).
 
 /* ---- I4: client-side regex validation ---- */
 const regexErrorEl = document.createElement("div");

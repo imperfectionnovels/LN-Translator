@@ -980,3 +980,38 @@ a:focus-visible {
      full row and shrink instead of overflowing. */
   .screen-head .h-actions select { flex: 1 1 100%; min-width: 0; max-width: 100%; }
 }
+
+/* ===== Shared toast (audit 6.6), replaces per-page .status toasts ===== */
+.app-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  background: var(--topbar-bg);
+  color: var(--topbar-fg);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px -6px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+}
+/* display:flex above would otherwise defeat the hidden attribute (author
+   styles beat the UA [hidden] rule), so restore it explicitly. */
+.app-toast[hidden] { display: none; }
+.app-toast[data-kind="err"] { box-shadow: 0 6px 18px -6px rgba(0,0,0,0.4), inset 0 0 0 1px var(--signal-error); }
+.app-toast[data-kind="ok"]  { box-shadow: 0 6px 18px -6px rgba(0,0,0,0.4), inset 0 0 0 1px var(--signal-ok); }
+.app-toast button {
+  background: transparent;
+  border: none;
+  color: var(--topbar-fg);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+.app-toast button:hover { background: rgba(255,255,255,0.08); }

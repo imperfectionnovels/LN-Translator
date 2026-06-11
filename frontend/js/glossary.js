@@ -10,7 +10,6 @@ const searchEl = document.getElementById("search");
 const sortByEl = document.getElementById("sort-by");
 const filterModeEl = document.getElementById("filter-mode");
 const catRailEl = document.getElementById("cat-rail");
-const toastEl = document.getElementById("toast");
 const addBtn = document.getElementById("add-entry-btn");
 const headTitle = document.getElementById("head-title");
 const headSub = document.getElementById("head-sub");
@@ -51,13 +50,7 @@ const CAT_GLYPH = Object.fromEntries(CATS.map(c => [c.id, c.glyph]));
 
 function escapeAttr(s) { return String(s || "").replace(/"/g, "&quot;"); }
 
-let toastTimer = null;
-function showToast(msg, kind = "info") {
-  toastEl.className = `status ${kind}`;
-  toastEl.textContent = msg;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toastEl.textContent = ""; toastEl.className = "status"; }, 4000);
-}
+// showToast is window.showToast from utils.js (audit 6.6).
 
 /* ============================================================
    Export menu. Direct hrefs to streaming endpoints.

@@ -19,7 +19,6 @@ const els = {
   overview: document.getElementById("overview"),
   noIdMsg: document.getElementById("no-id-msg"),
   crumb: document.getElementById("crumb-title"),
-  toast: document.getElementById("toast"),
 
   cover: document.getElementById("no-cover"),
   coverPlaceholder: document.getElementById("no-cover-placeholder"),
@@ -77,12 +76,7 @@ function flash(target, msg, kind = "ok") {
   setTimeout(() => { if (target.textContent === msg) target.textContent = ""; }, 4000);
 }
 
-function showToast(msg, kind = "info") {
-  if (!els.toast) return;
-  els.toast.className = `status ${kind}`;
-  els.toast.textContent = msg;
-  setTimeout(() => { els.toast.textContent = ""; els.toast.className = "status"; }, 5000);
-}
+// showToast is window.showToast from utils.js (audit 6.6).
 
 if (!novelId) {
   els.noIdMsg.hidden = false;

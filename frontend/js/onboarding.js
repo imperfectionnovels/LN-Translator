@@ -189,7 +189,7 @@
         // The most common failure is the UNIQUE(name) constraint —
         // probably a returning user re-running the wizard. Surface
         // gracefully instead of stranding them.
-        alert(`Couldn't create the provider: ${err.message}\nIf you've already configured this provider, use Settings to make changes.`);
+        await confirmDialog({ title: "Couldn't create the provider", body: `<p>${escapeHtml(err.message)}</p><p>If you've already configured this provider, use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
         return;
       }
     } else if (createdSignature !== sig) {
@@ -206,7 +206,7 @@
         });
         createdSignature = sig;
       } catch (err) {
-        alert(`Couldn't update the provider: ${err.message}\nUse Settings to make changes.`);
+        await confirmDialog({ title: "Couldn't update the provider", body: `<p>${escapeHtml(err.message)}</p><p>Use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
         return;
       }
     }

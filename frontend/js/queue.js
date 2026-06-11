@@ -16,7 +16,6 @@
   const nextCount   = document.getElementById("qs-next-count");
   const recentCount = document.getElementById("qs-recent-count");
   const sumEl   = document.getElementById("queue-summary");
-  const toastEl = document.getElementById("qs-toast");
   const refreshBtn = document.getElementById("queue-refresh-btn");
   const cancelAllBtn = document.getElementById("queue-cancel-all");
   // Signature of the last rendered snapshot. Re-rendering identical data on
@@ -41,13 +40,7 @@
     const m = String(s || "").match(/[㐀-鿿]/);
     return m ? m[0] : "·";
   }
-  function showToast(msg, kind = "info") {
-    if (!toastEl) return;
-    toastEl.textContent = msg;
-    toastEl.className = `status ${kind}`;
-    setTimeout(() => { toastEl.textContent = ""; toastEl.className = "status"; }, 5000);
-  }
-
+  // showToast is window.showToast from utils.js (audit 6.6).
   // confirmDialog lives in frontend/js/utils.js (C7).
 
   function renderActiveCard(item) {
