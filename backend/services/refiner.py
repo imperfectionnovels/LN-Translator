@@ -74,17 +74,16 @@ _REFINER_USER_TEMPLATE = """Your job is to rewrite the chapter below for clarity
 Style:
 - Polish the prose into smooth, natural English suitable for a novel.
 - Keep the tone crisp and clean, and preserve the draft's own voice and register: plain, contemporary, direct English stays exactly that.
-- Preserve all specialized and setting-specific terminology exactly unless it is clearly awkward or inconsistent.
+- Preserve all specialized and setting-specific terminology exactly as written.
 - Preserve character names, place names, titles, and other proper nouns.
 - Do not simplify worldbuilding or setting-specific terms; keep them exactly as the draft renders them.
 - Avoid over-explaining.
 - Avoid adding new information, new imagery, or new actions unless needed for grammar or clarity.
-- Keep the passage close to the original, but make it smoother and more polished.
 - Vivid means the common strong verb and a clean rhythm, never added ornament: no literary costume, no period diction, no antique syntax the draft does not have.
 - Keep each sentence's subject and verb early and together: never re-compress the draft into suspended subjects, stacked trailing phrases, or absolute constructions, and never change a dialogue tag to a bare adjective ("he said, mild").
 - Split a sentence only when it is a genuine run-on; keep the draft's sentence boundaries, never turn a comma into a separate sentence, and never join the draft's sentences with a semicolon.
-- Preserve paragraph breaks when they help pacing.
-- Use standard novel dialogue formatting.
+- Preserve all paragraph breaks from the draft.
+- Preserve the draft's dialogue formatting: do not change quote characters, tag placement, or attribution style.
 
 Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
 

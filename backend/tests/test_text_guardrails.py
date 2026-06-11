@@ -739,6 +739,49 @@ def test_locked_term_casing_article_term_idempotent() -> None:
     assert n2 == 0
 
 
+def test_locked_term_casing_possessive_ascii_apostrophe() -> None:
+    # "Yun family's elder" must become "Yun Family's elder".
+    # The right-boundary negative lookahead was blocking the match when the
+    # apostrophe sat immediately after the term; the possessive pattern fixes it.
+    g = [_atomic_entry("Yun Family", category="character")]
+    out, n = enforce_locked_term_casing("the Yun family's elder came", g)
+    assert out == "the Yun Family's elder came"
+    assert n == 1
+
+
+def test_locked_term_casing_possessive_curly_apostrophe() -> None:
+    g = [_atomic_entry("Yun Family", category="character")]
+    out, n = enforce_locked_term_casing("the Yun family’s estate", g)
+    assert out == "the Yun Family’s estate"
+    assert n == 1
+
+
+def test_locked_term_casing_possessive_already_correct() -> None:
+    # Already-correct possessive must not double-count.
+    g = [_atomic_entry("Yun Family", category="character")]
+    out, n = enforce_locked_term_casing("the Yun Family's estate", g)
+    assert out == "the Yun Family's estate"
+    assert n == 0
+
+
+def test_locked_term_casing_possessive_idempotent() -> None:
+    g = [_atomic_entry("Yun Family", category="character")]
+    once, n1 = enforce_locked_term_casing("the Yun family's elder", g)
+    twice, n2 = enforce_locked_term_casing(once, g)
+    assert once == "the Yun Family's elder"
+    assert n1 == 1
+    assert n2 == 0
+
+
+def test_locked_term_casing_possessive_non_glossary_untouched() -> None:
+    # A possessive that does NOT match any glossary term must not be changed.
+    g = [_atomic_entry("Yun Family", category="character")]
+    text = "the Chen family's elder came"
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == text
+    assert n == 0
+
+
 # ---------------------------------------------------------------------------
 # detect_double_possessive
 # ---------------------------------------------------------------------------

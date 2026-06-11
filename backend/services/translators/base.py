@@ -185,7 +185,16 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # never "damned") after ch392 softened a curse line. Glossary section now
 # blocks sub-entry gloss capture of unlisted compounds (道's entry pulled
 # 什么神道 to "no Dao"; the compound reads whole, by context).
-PROMPT_TEMPLATE_VERSION = "phase14-english-cadence-1"
+# phase15 (2026-06-11): adversarial WW-corpus audit (143-rule trial vs 7 pro
+# translators, data/rules_ledger.md + data/rule_trials/). Comma-hinge hatch
+# closed (noun-phrase scene stamps stay comma-joined), inner thought defaults
+# to plain roman (asterisk italics are a brief-only opt-in; zero italic thought
+# across the pro corpus), action mode rebalanced (medium sentences, short
+# clause at impact), new exposition scene mode, title-economy tell plus action
+# worked example, fidelity drop-clause scoped to facts, example English
+# genericized against phrase-leak, refiner softening clauses removed, em
+# dashes stripped from model-facing strings.
+PROMPT_TEMPLATE_VERSION = "phase15-ww-adversarial-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
@@ -281,8 +290,9 @@ def _build_system_instruction_cached(
         "write natural English novel prose, which is the job itself, not a "
         "tiebreaker to settle last; (3) the genre overlay's structural "
         "conventions (forms of address, title order, realm names, casing, "
-        "register zones); (4) the novel's custom brief, for voice and word "
-        "choice; (5) the universal base rules; (6) the worked examples "
+        "register zones); (4) the novel's custom brief, for voice, word choice, "
+        "and any formatting choice it names, thought formatting included; "
+        "(5) the universal base rules; (6) the worked examples "
         "(illustrative only). At any level, a correctness rule (no comma "
         "splices, no ambiguous referents, glossary exactness) beats a style "
         "preference."
@@ -466,13 +476,13 @@ def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
 # array because it is machine-readable shape, not literary prose.
 _DELIMITED_BODY_DELIMITER = "=====BODY====="
 _DELIMITED_TERMS_DELIMITER = "=====TERMS====="
-DELIMITED_OUTPUT_INSTRUCTION = f"""Return the translation in EXACTLY this delimited format and nothing else — no JSON wrapper, no markdown code fences, no commentary:
+DELIMITED_OUTPUT_INSTRUCTION = f"""Return the translation in EXACTLY this delimited format and nothing else: no JSON wrapper, no markdown code fences, no commentary:
 
 TITLE_EN: <the English chapter title on one line>
 {_DELIMITED_BODY_DELIMITER}
 <the full English translation of the chapter body, with normal paragraph breaks>
 {_DELIMITED_TERMS_DELIMITER}
-<a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...] — categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
+<a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...]; categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
 
 
 def build_prompt(
@@ -519,7 +529,7 @@ def build_prompt(
     style_note_block = ""
     if style_note and style_note.strip():
         style_note_block = (
-            "STYLE NOTE — this novel's English voice (read as a voice instruction, "
+            "STYLE NOTE (this novel's English voice: read as a voice instruction, "
             "match this prose):\n"
             f"{style_note.strip()}\n\n"
         )
@@ -538,7 +548,7 @@ def build_prompt(
         if FREE_DRAFT_REF_MAX_CHARS > 0 and len(ref) > FREE_DRAFT_REF_MAX_CHARS:
             ref = ref[:FREE_DRAFT_REF_MAX_CHARS].rstrip() + "\n[reference truncated]"
         free_draft_block = (
-            "REFERENCE TRANSLATION (mechanical NMT — for fidelity comparison only, "
+            "REFERENCE TRANSLATION (mechanical NMT, for fidelity comparison only, "
             "DO NOT TRANSLATE OR COPY VERBATIM):\n"
             f"{ref}\n\n"
             "This reference was produced by a machine-translation model. "
@@ -548,17 +558,17 @@ def build_prompt(
             "its phrasing is more accurate than yours, prefer its meaning; where "
             "its phrasing is awkward, use your own. Produce a single, fluent, "
             "faithful English translation that combines the best parts of each. "
-            "The output is YOUR translation — not a copy of the reference, not a "
+            "The output is YOUR translation, not a copy of the reference, not a "
             "simple polish of the reference.\n\n"
         )
     instruction = (
         output_instruction if output_instruction is not None
         else DELIMITED_OUTPUT_INSTRUCTION
     )
-    return f"""{style_note_block}GLOSSARY — MASTER (locked terms, preserve exactly across all chapters):
+    return f"""{style_note_block}GLOSSARY MASTER (locked terms, preserve exactly across all chapters):
 {master_block}
 
-GLOSSARY — THIS CHAPTER (auto-detected terms appearing here):
+GLOSSARY THIS CHAPTER (auto-detected terms appearing here):
 {chapter_block}
 
 {style_block}{context_block}{free_draft_block}{title_line}CHAPTER (Chinese):

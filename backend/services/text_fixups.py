@@ -564,42 +564,53 @@ def enforce_locked_term_casing(
 
     for canonical, _ in targets:
         pat = re.compile(
-            r"(?<![A-Za-z0-9_'’])"
+            r"(?<![A-Za-z0-9_’’])"
             + re.escape(canonical)
-            + r"(?![A-Za-z0-9_'’])",
+            + r"(?![A-Za-z0-9_’’])",
             re.IGNORECASE,
         )
-        matches = list(pat.finditer(out))
-        for m in reversed(matches):
-            start = m.start()
-            if _in_protected_span(start, protected):
-                continue
-            replacement = _cased_for_position(
-                canonical, _is_sentence_initial(out, start)
-            )
-            current = m.group(0)
-            if current == replacement:
-                continue
-            if any(
-                a.isupper() and b.islower() for a, b in zip(current, replacement)
-            ):
-                # The rewrite would DOWN-case letters the model capitalized.
-                # Inside a longer Title-Case name that is damage, not
-                # normalization (a "righteous Dharma" canonical must not
-                # rewrite "...Peak-Moving Righteous Dharma"), so the match is
-                # skipped when its neighborhood reads as a proper-noun
-                # compound: a capitalized word follows, a hyphen joins it to a
-                # capitalized word, or a capitalized non-function word
-                # precedes it.
-                if _next_nonspace_is_upper(out, m.end()):
+        # Possessive form: same left boundary, but followed by ‘s or ’s
+        # (the apostrophe chars that the right boundary was blocking). Match
+        # only the term portion; the possessive suffix is captured separately
+        # so the replacement splices in the canonical casing and re-attaches it.
+        pat_possessive = re.compile(
+            r"(?<![A-Za-z0-9_’’])"
+            + re.escape(canonical)
+            + r"(?=’s|’s)",
+            re.IGNORECASE,
+        )
+        for pat_used, possessive in ((pat, False), (pat_possessive, True)):
+            matches = list(pat_used.finditer(out))
+            for m in reversed(matches):
+                start = m.start()
+                if _in_protected_span(start, protected):
                     continue
-                if _hyphen_joined_to_capital(out, start, m.end()):
+                replacement = _cased_for_position(
+                    canonical, _is_sentence_initial(out, start)
+                )
+                current = m.group(0)
+                if current == replacement:
                     continue
-                prev = _preceding_word(out, start)
-                if prev and prev[0].isupper() and prev.lower() not in _FUNCTION_WORDS:
-                    continue
-            out = out[:start] + replacement + out[m.end():]
-            count += 1
+                if any(
+                    a.isupper() and b.islower() for a, b in zip(current, replacement)
+                ):
+                    # The rewrite would DOWN-case letters the model capitalized.
+                    # Inside a longer Title-Case name that is damage, not
+                    # normalization (a "righteous Dharma" canonical must not
+                    # rewrite "...Peak-Moving Righteous Dharma"), so the match is
+                    # skipped when its neighborhood reads as a proper-noun
+                    # compound: a capitalized word follows, a hyphen joins it to a
+                    # capitalized word, or a capitalized non-function word
+                    # precedes it.
+                    if not possessive and _next_nonspace_is_upper(out, m.end()):
+                        continue
+                    if _hyphen_joined_to_capital(out, start, m.end()):
+                        continue
+                    prev = _preceding_word(out, start)
+                    if prev and prev[0].isupper() and prev.lower() not in _FUNCTION_WORDS:
+                        continue
+                out = out[:start] + replacement + out[m.end():]
+                count += 1
 
     return out, count
 

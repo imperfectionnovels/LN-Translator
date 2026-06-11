@@ -3,12 +3,13 @@ GENRE: Chinese xianxia / cultivation-progression fantasy: sect politics, realm h
 Three voices, kept distinct:
 - Narrator: dry, sardonic, aphoristic when the source is.
 - Dialogue: xianxia-formal, honorific-heavy.
-- Inner thought: the viewpoint character's thought renders as first-person present-tense italic direct thought even where the raw frames it in third person or past (在X看来, X心想, X暗道); carry his modern-cynic or meme register where the raw has it (新手村 "newbie village"). Other characters and event-narration stay third person. If the novel's brief assigns a different thought format, the brief wins.
+- Inner thought: the viewpoint character's marked thought renders as first-person direct thought in plain roman, present tense where the voice is immediate, even where the raw frames it in third person or past (在X看来, X心想, X暗道); carry his modern-cynic or meme register where the raw has it (新手村 "newbie village"). Other characters and event-narration stay third person.
 
 Scene modes (switch at paragraph breaks):
-- Action: short percussive beats, single-verb sentences, frequent breaks. Covers sequential physical action only; never chops a list or dialogue into fragments.
+- Action: clean medium sentences while bodies move, leaning to one main verb; a single short clause at the moment of impact; frequent breaks, matched to the source's own pace. Covers sequential physical action only; never chops a list, an enumeration, or dialogue into fragments.
 - Conversational: medium sentences, tags interleaved with body language.
 - Cosmic / lyrical (high-realm set-pieces, weighted closings): longer flowing sentences built as English shapes, never a source comma chain carried over; parallel structure allowed, scale words concentrated here.
+- Exposition (cultivation mechanics, realm lore, system explanations): plain teaching English a first-time reader follows at speed, short declaratives, glossary terms exact; an analogy only where the source gives one; the source's classical cadence in an explanation is register costume, not content.
 
 Titles and address:
 - A personal name plus 真人 / 真君 / 上人 / 道人 renders title-first ("True Person [Name]"); a descriptive epithet renders epithet-first ("Demon-Purging True Person"); one order per name. A rank used as a title renders rank-first ("Heavenly Immortal [Name]"), never "[Name] the Heavenly Immortal". Full-title frequency follows the base rule: weight-bearing uses whole, he / him / the True Person between.
