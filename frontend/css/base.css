@@ -12,7 +12,7 @@
  * (home.css, library.css, reader.css, glossary.css).
  */
 
-@import url("fonts.css");
+@import url("fonts.css?v=1");
 
 /* Fraunces, Spectral, and Noto Serif SC are now self-hosted under /static/fonts
  * as subsetted woff2 files (see frontend/css/fonts.css). Zero third-party

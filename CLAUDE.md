@@ -94,9 +94,11 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, find-replace.html, novel-overview.html, onboarding.html
 │   ├── css/
-│   │   ├── base.css           # shared
+│   │   ├── base.css           # shared (imports fonts.css first)
+│   │   ├── fonts.css          # @font-face for the self-hosted faces (audit 6.1)
 │   │   └── home.css, library.css, reader.css, glossary.css, queue.css, settings.css,
 │   │       stats.css, find-replace.css, novel-overview.css, onboarding.css
+│   ├── fonts/                 # self-hosted subsetted woff2: fraunces/, spectral/, noto-serif-sc/ (+ OFL.txt each; regenerate via scripts/fetch_fonts.py)
 │   └── js/
 │       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
 │       ├── reader.js          # the big one (~2k lines): TOC, polling, terms, dialogs
@@ -104,6 +106,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │       ├── settings.js, queue.js, stats.js, find-replace.js, onboarding.js
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
+│   ├── fetch_fonts.py                                   # download + subset the self-hosted fonts
 │   └── dash_hook.py, check_em_dashes.py                 # em-dash PostToolUse guard + lint
 ├── tools/                     # dev tooling (not packaged)
 │   └── sqlite_ro_mcp.py       # read-only SQLite MCP server (wired in .mcp.json)
@@ -142,6 +145,8 @@ EXE-style local app (also useful in dev to exercise the first-run wizard):
 ## Pipeline
 
 A chapter moves through one state machine: `status: pending → translating → done | error`. The user explicitly clicks Translate (or Retranslate); nothing auto-translates on import. The queue flag `translate_queued` is durable, so the user's picks survive a server restart (`queue.drain_on_startup` re-spawns workers for any row still flagged).
+
+**Queue ordering (audit 3.2, 2026-06-11)**: each translate task, once it holds the serial lock, claims the best-ranked queued pending chapter (`queue_priority DESC, novel_id, chapter_num`) rather than the one it was spawned for; one task per queued chapter is unchanged. `POST /api/novels/{id}/chapters/{n}/translate-next` bumps `queue_priority` to MAX+1 ("Translate next" on the Queue page). Every `translate_queued = 0` write also zeroes `queue_priority`. Do not reuse the stale dead `queue_position` column that older user DBs still carry.
 
 **Free-tier free-draft lane**: `chapters.free_draft_status` tracks an independent `none → pending → in_progress → done | error` state machine for the mechanical NMT draft (`services/free_draft_queue.py`, owns its own `FREE_DRAFT_LOCK`). Triggered on-demand — opening a chapter via `GET /api/chapters/{n}` queues a Google-Translate draft (via `deep-translator`, no API key needed; requires internet). The draft text lands in `chapters.free_draft_text` and, when `PROMPT_INCLUDE_FREE_DRAFT` is enabled, is read by the LLM translator as a `REFERENCE TRANSLATION` block in the prompt (PEMT — see `backend/services/translators/base.py::build_prompt`). That flag now defaults `false` (the mechanical reference pulled the prose toward literal phrasing), so the generation lane still runs on chapter open but the block is not injected by default. The LLM lane and the free-draft lane have independent locks so they run in parallel for different chapters; the LLM call reads `free_draft_text` from the row at translate time, no inter-task coordination required.
 
@@ -234,7 +239,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1437 tests.
+- `pytest backend/tests`. Currently 1484 tests.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

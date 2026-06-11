@@ -257,3 +257,26 @@ desktop value wins even on a phone and the override silently does nothing. Put
 narrow-viewport overrides at the **end** of the sheet (or raise their
 specificity deliberately), not next to the breakpoint they conceptually belong
 with. This bit the first attempt at the phone-gutter fix in `base.css`.
+
+## A `display:` rule defeats the `hidden` attribute
+
+The UA default `[hidden] { display: none }` loses to ANY author `display`
+declaration on the same element, regardless of specificity (author origin beats
+UA origin). So an element styled `display: flex` (or grid) stays visible even
+with the `hidden` attribute set, and `el.hidden = true` toggles silently do
+nothing. The element renders as a phantom: empty-looking chrome that is still
+clickable (Playwright happily clicks it while `el.hidden` reads `true`, which
+makes test results look impossible).
+
+Whenever a styled container is toggled via the `hidden` property or attribute,
+pair the display rule with an explicit restore:
+
+```css
+.thing { display: flex; }
+.thing[hidden] { display: none; }
+```
+
+Found 2026-06-11 on `.app-toast` (caught in review) and `.fr-undo-bar` (latent
+since the undo bar shipped: it rendered a permanently visible phantom Undo
+strip). Grep candidates: any class with `display:` that JS toggles with
+`.hidden =` or `setAttribute("hidden", ...)`.
