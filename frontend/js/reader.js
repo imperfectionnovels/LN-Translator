@@ -221,6 +221,12 @@ let _errorBannerDismissedCount = -1;
 // Providers cache for the bilingual pane label + refinement badge. Lazily
 // populated by loadProviders(); falls back to null IDs if the call fails.
 let _providersCache = null;
+// Failed paragraph-edit saves, keyed by `${chapterNum}:${paragraphIndex}`.
+// Cleared on success or on confirmed chapter navigation away from the chapter.
+const _failedEdits = new Map();
+// Draft stash for the insert-chapter dialog. Preserved across Esc/cancel so
+// the user can reopen and continue without losing their pasted text.
+let _insertDraft = null;
 // Single re-poll handle for loadChapter. Replaces the prior two separate
 // pollTimer / loaderPollTimer variables — those carried two bugs:
 //   1. Neither was cleared on chapter navigation. The setTimeout closure
@@ -2627,6 +2633,19 @@ function _prefetchNext(currentDoneChapter) {
 }
 
 async function loadChapter(num) {
+  // Navigation guard: if there are unsaved paragraph edits on the current
+  // chapter and the user is navigating away, confirm before discarding them.
+  // Must run before any DOM rewrite so the failed paragraphs are still visible.
+  if (currentCh !== num && _failedEdits.size > 0) {
+    const ok = await confirmDialog({
+      title: "Unsaved edit",
+      body: "<p>A paragraph edit failed to save and will be lost if you leave this chapter.</p>",
+      okText: "Leave anyway", cancelText: "Stay", danger: true,
+    });
+    if (!ok) return;
+    _failedEdits.clear();
+  }
+
   // Cancel any prior poll handle unconditionally. This is the single guard
   // that prevents a stale timer captured against an old `num` from firing
   // loadChapter(oldNum), snapping the URL back via history.replaceState,
@@ -3019,7 +3038,7 @@ function applyRefinementBanner(ch) {
         loadChapter(ch.chapter_num);
       } catch (e) {
         retryBtn.disabled = false;
-        alert(`Retry failed: ${e.message}`);
+        void confirmDialog({ title: "Retry failed", body: `<p>${escapeHtml(e.message)}</p>`, okText: "OK", cancelText: "" });
       }
     });
   }
@@ -3378,7 +3397,7 @@ function _wireQualityRecover(card, ch) {
         const body = await resp.json().catch(() => ({ detail: resp.statusText }));
         btn.disabled = false;
         btn.textContent = "↻ Retranslate";
-        alert(`Retranslate refused: ${body.detail || resp.statusText}`);
+        void confirmDialog({ title: "Retranslate refused", body: `<p>${escapeHtml(body.detail || resp.statusText)}</p>`, okText: "OK", cancelText: "" });
         return;
       }
       // Worker is queued. loadChapter re-fetches the row; the existing poll
@@ -3388,7 +3407,7 @@ function _wireQualityRecover(card, ch) {
     } catch (err) {
       btn.disabled = false;
       btn.textContent = "↻ Retry recovery";
-      alert(`Recovery request failed: ${err}`);
+      void confirmDialog({ title: "Recovery request failed", body: `<p>${escapeHtml(String(err))}</p>`, okText: "OK", cancelText: "" });
     }
   });
 }
@@ -3605,7 +3624,31 @@ if (styleNoteBtn && styleNoteDialog) {
     styleNoteStatus.textContent = "";
     styleNoteDialog.showModal();
   });
-  styleNoteCancel.addEventListener("click", () => styleNoteDialog.close());
+  function _styleNoteDirty() {
+    const orig = ((novelMeta && novelMeta.style_note) || "").trim();
+    return styleNoteText.value.trim() !== orig;
+  }
+  styleNoteCancel.addEventListener("click", () => {
+    if (_styleNoteDirty()) {
+      confirmDialog({
+        title: "Discard changes?",
+        body: "<p>Your style note edits have not been saved.</p>",
+        okText: "Discard", cancelText: "Keep editing", danger: true,
+      }).then(ok => { if (ok) styleNoteDialog.close(); });
+    } else {
+      styleNoteDialog.close();
+    }
+  });
+  styleNoteDialog.addEventListener("cancel", (e) => {
+    if (_styleNoteDirty()) {
+      e.preventDefault();
+      confirmDialog({
+        title: "Discard changes?",
+        body: "<p>Your style note edits have not been saved.</p>",
+        okText: "Discard", cancelText: "Keep editing", danger: true,
+      }).then(ok => { if (ok) styleNoteDialog.close(); });
+    }
+  });
   styleNoteSave.addEventListener("click", async () => {
     styleNoteSave.disabled = true;
     styleNoteStatus.textContent = "Saving…";
@@ -3636,17 +3679,44 @@ const insertTextArea = document.getElementById("insert-text");
 const insertStatus = document.getElementById("insert-status");
 const insertSave = document.getElementById("insert-save");
 const insertCancel = document.getElementById("insert-cancel");
+function _stashInsertDraft() {
+  const text = insertTextArea ? (insertTextArea.value || "") : "";
+  if (text.trim()) {
+    _insertDraft = {
+      after: insertAfterNum ? insertAfterNum.value : "",
+      title: insertTitleInput ? insertTitleInput.value : "",
+      text,
+    };
+  }
+}
 if (insertChapterBtn && insertChapterDialog) {
   insertChapterBtn.addEventListener("click", () => {
-    // Default to "after the chapter you're reading"; the common case is
-    // noticing a gap right where you are.
-    insertAfterNum.value = String(Number.isInteger(currentCh) ? currentCh : 0);
-    insertTitleInput.value = "";
-    insertTextArea.value = "";
-    insertStatus.textContent = "";
+    if (_insertDraft) {
+      // Restore the stashed draft so the user can continue where they left off.
+      insertAfterNum.value = _insertDraft.after;
+      insertTitleInput.value = _insertDraft.title;
+      insertTextArea.value = _insertDraft.text;
+      insertStatus.textContent = "Draft restored from this session.";
+    } else {
+      // Default to "after the chapter you're reading"; the common case is
+      // noticing a gap right where you are.
+      insertAfterNum.value = String(Number.isInteger(currentCh) ? currentCh : 0);
+      insertTitleInput.value = "";
+      insertTextArea.value = "";
+      insertStatus.textContent = "";
+    }
     insertChapterDialog.showModal();
   });
-  insertCancel.addEventListener("click", () => insertChapterDialog.close());
+  insertCancel.addEventListener("click", () => {
+    _stashInsertDraft();
+    insertChapterDialog.close();
+    if (_insertDraft) showToast("Draft kept. Reopen Insert chapter to continue.", "info");
+  });
+  insertChapterDialog.addEventListener("cancel", () => {
+    _stashInsertDraft();
+    if (_insertDraft) showToast("Draft kept. Reopen Insert chapter to continue.", "info");
+    // The dialog still closes; no preventDefault.
+  });
   insertSave.addEventListener("click", async () => {
     const after = parseInt(insertAfterNum.value, 10);
     const text = (insertTextArea.value || "").trim();
@@ -3662,6 +3732,7 @@ if (insertChapterBtn && insertChapterDialog) {
     insertStatus.textContent = "Inserting…";
     try {
       const r = await api.insertChapter(novelId, after, text, insertTitleInput.value.trim() || null);
+      _insertDraft = null; // Clear the draft on successful insert.
       insertStatus.textContent = `Inserted ${r.added_chapters} chapter(s) at ${r.first_new_chapter}. Opening…`;
       // Nudge any other open tab for this novel to refresh its TOC.
       try {
@@ -3871,37 +3942,22 @@ _editHost.addEventListener("focusin", (e) => {
   if (!p.dataset.beforeMd) _captureParagraphMeta(p);
 });
 
-_editHost.addEventListener("blur", async (e) => {
-  // Intentionally NOT gated on `editMode`. When the user exits edit mode or
-  // navigates away mid-edit, the focused paragraph loses focus and we still
-  // want to flush the pending edit. The presence of data-before-md is the
-  // authoritative "this <p> was being edited" signal.
-  const p = e.target.closest("p");
-  if (!p || !p.dataset.beforeMd) return;
-  const beforeMd = p.dataset.beforeMd;
-  const after = p.textContent.trim();
-  // Use the chapter/index captured AT FOCUS, not the current globals — the
-  // user may have navigated chapters while typing.
-  const chapterNumAtFocus = parseInt(p.dataset.chapterNum || "", 10);
-  const paragraphIndex = parseInt(p.dataset.paragraphIndex || "", 10);
-  if (!Number.isFinite(chapterNumAtFocus) || !Number.isFinite(paragraphIndex)) return;
-  if (!beforeMd || beforeMd.trim() === after) return;
-  // Disable editing on this paragraph during the save to prevent re-fires.
+// Core save logic extracted so the blur handler and the retry chip can share
+// it. `ctx` carries all values captured at focus time so the save is always
+// anchored to the original chapter, even if the user navigated away.
+async function _commitParagraphSave(p, ctx) {
+  const { beforeMd, after, variant, chapterNumAtFocus, paragraphIndex } = ctx;
+  const column = variant === "refined" ? "refined_text" : "translated_text";
+  const key = `${chapterNumAtFocus}:${paragraphIndex}`;
   p.setAttribute("contenteditable", "false");
   p.classList.add("saving");
-  // Variant was captured at focus time (paragraph metadata). It tells us
-  // which column the backend should mutate AND which column to splice in
-  // the local cache. Defaults to 'draft' so a paragraph that somehow lost
-  // its dataset still works.
-  const variant = p.dataset.variant || "draft";
-  const column = variant === "refined" ? "refined_text" : "translated_text";
   try {
     await api.editParagraph(
       novelId, chapterNumAtFocus, paragraphIndex, beforeMd, after, variant,
     );
     // Update local cache the same way the backend did: split, replace index,
-    // rejoin. Only when we're still on the chapter we edited — otherwise
-    // lastChapter is for a different chapter now and we shouldn't touch it.
+    // rejoin. Only when we're still on the chapter we edited; otherwise
+    // lastChapter is for a different chapter and we shouldn't touch it.
     if (lastChapter && currentCh === chapterNumAtFocus) {
       if (lastChapter[column]) {
         const chunks = lastChapter[column].split("\n\n");
@@ -3914,13 +3970,33 @@ _editHost.addEventListener("blur", async (e) => {
       // before_md (the just-saved `after`).
       p.dataset.beforeMd = after;
     }
-    p.classList.remove("saving");
+    // Clear any failed-edit state for this paragraph.
+    _failedEdits.delete(key);
+    const existingChip = p.nextElementSibling;
+    if (existingChip && existingChip.classList.contains("p-save-retry")) {
+      existingChip.remove();
+    }
+    p.classList.remove("saving", "save-failed");
+    p.removeAttribute("title");
     p.classList.add("saved-flash");
     setTimeout(() => p.classList.remove("saved-flash"), 1200);
   } catch (err) {
     p.classList.remove("saving");
     p.classList.add("save-failed");
     p.title = `Save failed: ${err.message}`;
+    // Stash the ctx so the retry chip and the nav guard can find it.
+    _failedEdits.set(key, ctx);
+    // Insert a visible retry chip directly after the paragraph (idempotent).
+    let chip = p.nextElementSibling;
+    if (!chip || !chip.classList.contains("p-save-retry")) {
+      chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "p-save-retry";
+      p.insertAdjacentElement("afterend", chip);
+    }
+    chip.textContent = "Save failed. Retry";
+    chip.onclick = () => _retryFailedEdit(key, chip, p);
+    throw err;
   } finally {
     // Re-enable editing only when we're still in edit mode AND still on the
     // chapter this paragraph belongs to. If the user navigated, the <p> is
@@ -3928,6 +4004,49 @@ _editHost.addEventListener("blur", async (e) => {
     if (editMode && currentCh === chapterNumAtFocus) {
       p.setAttribute("contenteditable", "true");
     }
+  }
+}
+
+async function _retryFailedEdit(key, chip, p) {
+  const ctx = _failedEdits.get(key);
+  if (!ctx) return;
+  chip.disabled = true;
+  chip.textContent = "Retrying…";
+  try {
+    await _commitParagraphSave(p, ctx);
+    // Success: chip and map entry were already cleaned up inside _commitParagraphSave.
+  } catch (err) {
+    chip.disabled = false;
+    chip.textContent = "Save failed. Retry";
+    showToast("Save failed again: " + err.message, "err");
+  }
+}
+
+_editHost.addEventListener("blur", async (e) => {
+  // Intentionally NOT gated on `editMode`. When the user exits edit mode or
+  // navigates away mid-edit, the focused paragraph loses focus and we still
+  // want to flush the pending edit. The presence of data-before-md is the
+  // authoritative "this <p> was being edited" signal.
+  const p = e.target.closest("p");
+  if (!p || !p.dataset.beforeMd) return;
+  const beforeMd = p.dataset.beforeMd;
+  const after = p.textContent.trim();
+  // Use the chapter/index captured AT FOCUS, not the current globals. The
+  // user may have navigated chapters while typing.
+  const chapterNumAtFocus = parseInt(p.dataset.chapterNum || "", 10);
+  const paragraphIndex = parseInt(p.dataset.paragraphIndex || "", 10);
+  if (!Number.isFinite(chapterNumAtFocus) || !Number.isFinite(paragraphIndex)) return;
+  if (!beforeMd || beforeMd.trim() === after) return;
+  // Variant was captured at focus time (paragraph metadata). It tells us
+  // which column the backend should mutate AND which column to splice in
+  // the local cache. Defaults to 'draft' so a paragraph that somehow lost
+  // its dataset still works.
+  const variant = p.dataset.variant || "draft";
+  const ctx = { beforeMd, after, variant, chapterNumAtFocus, paragraphIndex };
+  try {
+    await _commitParagraphSave(p, ctx);
+  } catch (_err) {
+    // Failure is already handled inside _commitParagraphSave (chip + map entry).
   }
 }, true);
 
