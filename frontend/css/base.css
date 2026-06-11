@@ -1,4 +1,4 @@
-/* LN Translator — ink-wash + jade-hilt visual system for the Chinese novel translator.
+/* LN Translator: ink-wash + jade-hilt visual system for the Chinese novel translator.
  * Five themes via [data-theme]: rice (default), vellum (warmer fog),
  * inkstone (dark), cinnabar (charcoal + 朱砂 red), celadon (pale jade).
  * Multi-page layout (not SPA), so this lives alongside the existing HTML pages.
@@ -12,10 +12,11 @@
  * (home.css, library.css, reader.css, glossary.css).
  */
 
-/* No web-font @import: the app is fully self-contained / offline and makes no
- * third-party (Google Fonts) request. The --font-family-* stacks below keep the
- * bespoke faces (Fraunces, Spectral, Noto Serif SC, ...) as the first choice so
- * they are used when installed locally, then degrade to solid system fonts. */
+@import url("fonts.css");
+
+/* Fraunces, Spectral, and Noto Serif SC are now self-hosted under /static/fonts
+ * as subsetted woff2 files (see frontend/css/fonts.css). Zero third-party
+ * requests at runtime. Regenerate with: python scripts/fetch_fonts.py */
 
 :root,
 [data-theme="rice"] {
