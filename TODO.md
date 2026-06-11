@@ -2,7 +2,7 @@
 
 Roadmap for upcoming work on LN-Translator.
 
-## IN PROGRESS 2026-06-11: adversarial full-stack rule audit vs Wuxiaworld corpus
+## DONE 2026-06-11: adversarial full-stack rule audit vs Wuxiaworld corpus (phase15 shipped)
 
 Trigger: user read live ch424 (a stale phase5 translation) showing the comma-to-period
 stamp defect plus the standing "lacking vs a WW pro" gap. Binding directive: every
@@ -22,13 +22,50 @@ Plan file: C:\Users\Roych\.claude\plans\certain-issues-like-period-purring-volca
   alone") is the suspected hatch; on trial in Phase C with this chapter pair as evidence.
 - Artifacts so far: data/ww_corpus/ (10 chapters, 6 novels, 7 translators, ~27k words,
   INDEX.md), data/rules_ledger.md (143 rules, 8 sources, 5 pre-flagged conflicts).
-- Next: Phase C adversarial per-rule trials (data/rule_trials/) + Phase D positive-gap
-  comparative read (data/positive_gaps.md), then phase15 synthesis and the battery A/B
-  ship gate on claude-opus-4-8 (never fable), chapters 401/414/427/437.
-- WS1 metrics side-findings to fold into the glossary trial bundle: missing glossary
-  renders (mid stage 中期, Moon Star 月星, Dao Body 道身, cultivation technique 功法,
-  Faction 势力), predicate losses near Demon-Purging True Person, one banned word
-  ("slew"), "Yun Family" lowercased once.
+- Trials DONE (6 bundles, data/rule_trials/, 100% ledger coverage verified) + positive-gap
+  read (data/positive_gaps.md). Verdict spread: most rules corpus-validated; the flat
+  WW contradictions were asterisk-italic inner thought (zero italic thought across all
+  7 pro translators) and the staccato single-verb action mandate.
+- phase15-ww-adversarial-1 SHIPPED (b1c8212): comma-hinge hatch closed (noun-phrase
+  scene stamps stay comma-joined; subject+finite-verb required to split), inner thought
+  defaults to plain roman (brief-only italics opt-in), action mode rebalanced, new
+  exposition scene mode, title-economy tell + action worked example, fidelity
+  drop-clause scoped to facts, example English genericized, refiner softening clauses
+  removed, em dashes out of model-facing strings, locked-term casing now matches
+  possessive forms (apostrophe sat in the boundary lookahead; 5 new tests). 1471 tests.
+- Ship gate PASSED: 4-chapter battery (401/414/427/437, dev, claude-opus-4-8), phase14
+  vs phase15, memo data/opus_ab_phase15_memo.md. Better on 4 axes (thoughts 25 to 0
+  italic spans ch401, full-title repeats 11 to 4 ch437, archaic tells 2 to 0, banned
+  words 4 to 2), tied on 5 incl. the fidelity spot-check (zero drops), worse on none
+  reader-visible (sentence-shape 3 to 6, all cosmetic, itemized in the memo).
+- Live ch424/425/427 re-retranslated under phase15: ch424 now opens "Sword Pavilion,
+  Extreme Heaven Cliff." (the user-flagged defect, fixed in stored text).
+- Glossary data fixed both DBs (data/fix_glossary_ww_audit.py): 势力 -> "faction /
+  power" lowercase note, 中期/初期 hyphenated; 气/后期 rows absent (no-op); the morning
+  scorer flags were 6/7 false positives (full evidence in bundle F memo).
+- EXE rebuilt (phase15 bundle verified) + both Windows assets re-uploaded to
+  v0.1.0-beta.1 with --clobber. NOTE: the user's running app is the OLD phase14 EXE
+  running from dist\, so dist\ could not be swapped; fresh build parked at
+  %LOCALAPPDATA%\Temp\ln-dist-phase15\. Until the app is restarted on the new build,
+  in-app translations still run phase14.
+
+### Open user decisions / watch items (do not act without the user)
+
+- Brief thought-format scope: the novel-2 brief says roman for HIS (protagonist) inner
+  thought; the model reads that contrast as license to keep italics for other
+  characters (live ch427: 15 italic spans). One-line brief edit ("for every character")
+  would finish the job; brief is user-owned.
+- ALL-CAPS SFX ("BOOM.") vs pro sentence-case ("Smack!"): corpus had no battle chapter,
+  evidence thin; kept as-is.
+- Units 里 -> miles: RWX uses meters; user policy (2026-06-09) kept, logged as
+  user-decision in bundle A.
+- GLOS-TITLELEN: pros run pronoun:title at 3.6-6.1:1, we were 1.6-2.6:1; phase15 moved
+  it (11 to 4 on ch437). Further lever = glossary short-handle field (feature work).
+- Back catalog: ~119 stale chapters (ch1-423, phase4/5 stacks) deliberately left per
+  user's forward-only choice; the wave-driver design in the plan file covers a later
+  batch if wanted.
+- Dev battery watch: ch414 coined name 天语馄烨龙章 romanized inconsistently; pin with a
+  glossary entry if it recurs.
 
 ## DONE 2026-06-10: translation workflow review (prompt load + model sustainability)
 
