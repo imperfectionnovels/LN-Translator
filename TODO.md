@@ -2,6 +2,41 @@
 
 Roadmap for upcoming work on LN-Translator.
 
+## DONE 2026-06-11 (later same day): phase16 thought-italics + phase17 flow-seams
+
+User follow-ups to phase15: (1) "internal thoughts should still be italics for all
+characters" (reverses phase15's roman default; user preference outranks the WW corpus
+on this axis), (2) main focus = how sentences sound and flow; title economy is
+deprioritized ("whatever", keep what shipped, no more work there).
+
+- phase16-thought-italics-1 (666d175): base.md + xianxia overlay restore the italic
+  mandate for every character's marked thought; the brief's contradicting "plain roman
+  text, not italics" line removed in BOTH DBs (data/fix_brief_thought_italics.py);
+  ww_metrics thought_format flag inverted (now flags marked-thought sources with zero
+  italic spans).
+- Flow evidence round: 53-item editorial awkwardness inventory over the p15 battery
+  (data/flow_awkward_inventory.md; COLD-ABUT 18, CALQUE-SHAPE 8, OVER-SPLIT 7,
+  CUT-IN 5...) + pro flow band (data/flow_pro_band.md). KEY INSIGHT: aggregate flow
+  metrics were already INSIDE the pro band; the real gap is seam-level (the model
+  drops source-marked logical turns 然而/所以/毕竟 and abuts cold sentences).
+- phase17-flow-seams-1 (a7f09fa): marked turns are content (land as connective/hinge),
+  relative-clause cut-ins fold into the subject, fronted participials re-seat,
+  dependent clauses never strand as stubs, name re-opens runs only under ambiguity,
+  gnomic exposition unrolls as plain reasoning, one marked-turn worked example.
+- Ship gate PASSED (data/opus_ab_phase17_memo.md, p16 vs p17 battery): 53-spot diff =
+  30 FIXED / 21 same / 0 worse; zero invented-relation connectives; +4 raw violations
+  adjudicated false-positive or isolated; thought italics persist. Battery files
+  data/opus_p16_ch*.txt / opus_p17_ch*.txt + data/battery_phase17_results.md.
+- Live ch424/425/427 re-retranslated on phase17 (comma stamp held, italics back:
+  424=6 spans, 427=9, 425=0 with none marked in source). EXE rebuilt (phase17 bundle
+  verified) + both Windows assets re-uploaded to v0.1.0-beta.1. The user's running app
+  is still an older build from dist\ (alternate-distpath build parked at
+  %LOCALAPPDATA%\Temp\ln-dist-phase17\): RESTART the app to translate on phase17
+  in-app.
+- Watch items (memo): "as the words fell" calque single instance; ch414 unmarked
+  interior panic rendered as spoken quotes once; one noun-run spot; COLD-ABUT moved
+  9/18, room remains if the user still hears flat seams.
+
 ## DONE 2026-06-11: adversarial full-stack rule audit vs Wuxiaworld corpus (phase15 shipped)
 
 Trigger: user read live ch424 (a stale phase5 translation) showing the comma-to-period
