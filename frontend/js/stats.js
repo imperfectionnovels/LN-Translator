@@ -240,7 +240,15 @@ async function render() {
   }
 }
 
-novelSelect.addEventListener("change", render);
+// Audit 2.2: write the selected novel back to the URL so the page is
+// bookmarkable and the browser history tracks per-novel visits.
+// Boot code already reads ?novel= to preselect (see IIFE below).
+// Pattern adapted from reader.js history.replaceState usage.
+novelSelect.addEventListener("change", () => {
+  const id = novelSelect.value;
+  history.replaceState(null, "", id ? `/stats?novel=${encodeURIComponent(id)}` : "/stats");
+  render();
+});
 
 (async () => {
   await loadNovelList();

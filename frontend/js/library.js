@@ -118,6 +118,10 @@ function effectiveStatus(n) {
 
 const lastSyncEl = document.getElementById("last-sync");
 const pollErrorEl = document.getElementById("poll-error");
+// Snapshot-signature skip -- ported from queue.js lastSig pattern (audit 1.6).
+// Covers every input that renderSummary / renderContinue / renderGrid read.
+// Reset to null on error so the next good poll always re-renders.
+let _lastRenderSig = null;
 function fmtClock(ts) {
   const d = new Date(ts);
   const pad = n => String(n).padStart(2, "0");
@@ -172,12 +176,47 @@ async function load() {
     }
     for (const n of fresh) prevDoneMap.set(n.id, n.done_chapters || 0);
     novels = fresh;
+    // Snapshot-signature skip (audit 1.6; pattern from queue.js lastSig).
+    // Build a deterministic string over every input that the render functions
+    // actually read. Maps/Sets are converted to sorted arrays so insertion
+    // order differences never cause spurious re-renders.
+    //   - novels: all server-side fields (title, counts, status, cover, etc.)
+    //   - filterStatus / searchQuery / sortByEl.value: UI filter state
+    //   - _lastReadCache: per-novel localStorage breadcrumbs (may change when
+    //       user reads a chapter in another tab)
+    //   - _observationsByNovel: QA badge counts
+    //   - _providersCache: provider names used in the ledger view
+    //   - recentlyAdvancedIds: pulse-dot set (changes each poll when chapters
+    //       translate; insertion order is deterministic per-poll since we
+    //       iterate `fresh` which is stable, so Array.from is stable too)
+    //   - archivedCount: chip count + empty-state guard
+    //   - activeNovelsCache: masthead ledger totals
+    const renderSig = JSON.stringify([
+      novels,
+      filterStatus,
+      searchQuery,
+      sortByEl.value,
+      Array.from(_lastReadCache ? _lastReadCache.entries() : []).sort((a, b) => a[0] - b[0]),
+      _observationsByNovel,
+      _providersCache,
+      Array.from(recentlyAdvancedIds).sort(),
+      archivedCount,
+      activeNovelsCache,
+    ]);
+    // Always update the cheap text nodes even on a skip so the clock/error
+    // chip stay current without tearing down the grid.
+    if (lastSyncEl) lastSyncEl.textContent = `Synced ${fmtClock(Date.now())}`;
+    if (pollErrorEl) pollErrorEl.classList.add("hidden");
+    if (renderSig === _lastRenderSig) return;
+    _lastRenderSig = renderSig;
     renderSummary();
     renderContinue();
     renderGrid();
-    if (lastSyncEl) lastSyncEl.textContent = `Synced ${fmtClock(Date.now())}`;
-    if (pollErrorEl) pollErrorEl.classList.add("hidden");
   } catch (e) {
+    // Reset the sig so the next successful poll always triggers a full
+    // re-render -- without this, a grid rebuilt after an error could be
+    // skipped if the data looks identical to the pre-error sig.
+    _lastRenderSig = null;
     // Preserve the existing grid (don't blank it on poll failure) and surface
     // the problem as an inline chip in the toolbar so the user knows the
     // page might be showing stale state.
@@ -350,8 +389,12 @@ function sortedVisibleNovels() {
     list = list.filter(n => effectiveStatus(n) === filterStatus);
   }
   if (searchQuery) {
+    // Audit 3.3: search across all identifying fields, not title only.
+    // author / original_title / series_name are already in the API payload.
     const q = searchQuery.toLowerCase();
-    list = list.filter(n => (n.title || "").toLowerCase().includes(q));
+    list = list.filter(n =>
+      [n.title, n.author, n.original_title, n.series_name]
+        .some(f => (f || "").toLowerCase().includes(q)));
   }
   const by = sortByEl.value;
   list.sort((a, b) => {
