@@ -73,10 +73,12 @@
       pill.classList.add("hidden");
       pop.classList.add("hidden");
       popoverOpen = false;
+      document.body.classList.remove("has-queue-pill");
       return;
     }
     pill.classList.remove("hidden");
     pill.textContent = label;
+    document.body.classList.add("has-queue-pill");
   }
 
   function renderPop(snap) {

@@ -732,13 +732,17 @@ function renderToc() {
     // don't re-fire the request.
     if (_ftsHits && _ftsHits.q === q && _ftsHits.matches.length > 0) {
       tocList.innerHTML = _ftsHits.matches.map(m => `
-        <div class="toc-row toc-fts-row" data-ch="${m.chapter_num}">
+        <a class="toc-row toc-fts-row" href="/reader?novel=${novelId}&ch=${m.chapter_num}" data-ch="${m.chapter_num}">
           <span class="ti">${escapeHtml(m.title_en || displayTitleZh(m.title_zh) || "")}</span>
           <div class="toc-snippet">${highlightSnippet(m.snippet)}</div>
-        </div>
+        </a>
       `).join("");
       tocList.querySelectorAll(".toc-row").forEach(row => {
-        row.addEventListener("click", () => loadChapter(parseInt(row.dataset.ch, 10)));
+        row.addEventListener("click", (e) => {
+          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+          e.preventDefault();
+          loadChapter(parseInt(row.dataset.ch, 10));
+        });
       });
       return;
     }
@@ -777,20 +781,23 @@ function renderToc() {
       : state === "queued"
         ? `<button class="toc-cancel" data-cancel="${c.chapter_num}" title="Remove from queue" aria-label="Remove chapter ${c.chapter_num} from queue">×</button>`
         : `<span class="st">${statusGlyph(state)}</span>`;
-    return `<div class="toc-row ${cls}${active}" data-ch="${c.chapter_num}" ${aria}>
+    return `<a class="toc-row ${cls}${active}" href="/reader?novel=${novelId}&ch=${c.chapter_num}" data-ch="${c.chapter_num}" ${aria}>
       <span class="ti">${escapeHtml(title)}</span>
       ${trailing}
-    </div>`;
+    </a>`;
   }).join("");
   tocList.querySelectorAll(".toc-row").forEach(row => {
     row.addEventListener("click", (e) => {
       // Don't navigate when the user clicked the row's cancel button.
       if (e.target.closest(".toc-cancel")) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
       loadChapter(parseInt(row.dataset.ch, 10));
     });
   });
   tocList.querySelectorAll(".toc-cancel").forEach(btn => {
     btn.addEventListener("click", (e) => {
+      e.preventDefault();
       e.stopPropagation();
       cancelOneFromQueue(parseInt(btn.dataset.cancel, 10), btn);
     });
