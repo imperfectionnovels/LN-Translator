@@ -316,3 +316,96 @@ def test_commit_records_a_restorable_snapshot(client):
     ).fetchone()[0]
     conn.close()
     assert restored == "Bai Xiaochun walked."
+
+
+# ---- snapshot_ids in commit response ------------------------------------
+
+
+def test_commit_single_novel_response_includes_snapshot_id(client):
+    """A single-novel commit returns exactly one snapshot_id; that id appears
+    as the newest row in the novel's fr-snapshots list."""
+    novel_id = _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    token = client.post(
+        "/api/find",
+        json={
+            "find": "Bai Xiaochun",
+            "replacement": "Bai Xiao Chun",
+            "scope_kind": "novel",
+            "scope_ids": [novel_id],
+        },
+    ).json()["token"]
+
+    commit_body = client.post("/api/replace", json={"token": token}).json()
+    assert commit_body["chapters_updated"] == 1
+    assert len(commit_body["snapshot_ids"]) == 1
+    returned_id = commit_body["snapshot_ids"][0]
+
+    snaps = client.get(f"/api/novels/{novel_id}/fr-snapshots").json()
+    assert len(snaps) == 1
+    assert snaps[0]["id"] == returned_id
+
+
+def test_commit_scope_all_two_novels_returns_two_snapshot_ids(client):
+    """An all-scope commit touching two novels returns one snapshot id per
+    novel; restoring each id reverts both novels back to pre-commit text."""
+    novel_a = _seed_novel_with_chapters(
+        [(1, "Bai Xiaochun arrived.", None)], title="Novel A"
+    )
+    novel_b = _seed_novel_with_chapters(
+        [(1, "Bai Xiaochun departed.", None)], title="Novel B"
+    )
+    token = client.post(
+        "/api/find",
+        json={
+            "find": "Bai Xiaochun",
+            "replacement": "Bai Xiao Chun",
+            "scope_kind": "all",
+        },
+    ).json()["token"]
+
+    commit_body = client.post("/api/replace", json={"token": token}).json()
+    assert commit_body["chapters_updated"] == 2
+    snap_ids = commit_body["snapshot_ids"]
+    assert len(snap_ids) == 2, f"expected 2 snapshot ids, got {snap_ids}"
+
+    # Both ids must be distinct positive integers.
+    assert snap_ids[0] != snap_ids[1]
+    assert all(sid > 0 for sid in snap_ids)
+
+    # Restoring each snapshot brings the chapter text back.
+    for sid in snap_ids:
+        restore = client.post(f"/api/fr-snapshots/{sid}/restore")
+        assert restore.status_code == 200
+
+    conn = sqlite3.connect(DB_PATH)
+    row_a = conn.execute(
+        "SELECT translated_text FROM chapters WHERE novel_id = ? AND chapter_num = 1",
+        (novel_a,),
+    ).fetchone()[0]
+    row_b = conn.execute(
+        "SELECT translated_text FROM chapters WHERE novel_id = ? AND chapter_num = 1",
+        (novel_b,),
+    ).fetchone()[0]
+    conn.close()
+    assert row_a == "Bai Xiaochun arrived."
+    assert row_b == "Bai Xiaochun departed."
+
+
+def test_commit_no_matches_returns_empty_snapshot_ids(client):
+    """A commit whose preview found zero hits returns snapshot_ids == []."""
+    novel_id = _seed_novel_with_chapters([(1, "The sect elder spoke.", None)])
+    # A preview with zero hits still issues a token; commit is a no-op.
+    token = client.post(
+        "/api/find",
+        json={
+            "find": "ZZZ_NOT_PRESENT",
+            "replacement": "X",
+            "scope_kind": "novel",
+            "scope_ids": [novel_id],
+        },
+    ).json()["token"]
+    commit_body = client.post("/api/replace", json={"token": token}).json()
+    assert commit_body["chapters_updated"] == 0
+    assert commit_body["snapshot_ids"] == []

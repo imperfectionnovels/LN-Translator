@@ -71,6 +71,10 @@ class CommitResponse(BaseModel):
     chapters_updated: int
     rows_updated_translated: int
     rows_updated_refined: int
+    # Snapshot row ids written during this commit, one per touched novel.
+    # Empty when there were no matches or when a novel's snapshot was skipped
+    # due to payload size. Clients can use these ids to offer cross-novel undo.
+    snapshot_ids: list[int] = []
 
 
 class FrSnapshot(BaseModel):
@@ -169,6 +173,7 @@ async def find_replace_commit(
         chapters_updated=result.chapters_updated,
         rows_updated_translated=result.rows_updated_translated,
         rows_updated_refined=result.rows_updated_refined,
+        snapshot_ids=result.snapshot_ids,
     )
 
 

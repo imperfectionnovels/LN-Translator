@@ -165,6 +165,10 @@ class CommitResult:
     # user-facing find/replace UI is scoped to body text). Defaults to 0
     # so the generic commit_preview path stays untouched.
     rows_updated_titles: int = 0
+    # Row ids of the find_replace_snapshots rows written during this commit,
+    # one per touched novel. Empty when there were no matches (no snapshots
+    # written) or when record_snapshot skipped a novel due to payload size.
+    snapshot_ids: list[int] = field(default_factory=list)
 
 
 # Internal in-memory store. {token: _StoredPreview}. Process-local;
@@ -532,8 +536,9 @@ async def commit_preview(
         if {"translated_text", "refined_text"} <= set(query.target_cols)
         else (query.target_cols[0] if query.target_cols else "both")
     )
+    snapshot_ids: list[int] = []
     for novel_id, payload in snapshot_payloads.items():
-        await record_snapshot(
+        sid = await record_snapshot(
             conn,
             novel_id=novel_id,
             commit_token=token,
@@ -544,6 +549,8 @@ async def commit_preview(
             chapters_changed=len(payload),
             payload=payload,
         )
+        if sid is not None:
+            snapshot_ids.append(sid)
 
     await conn.commit()
 
@@ -555,6 +562,7 @@ async def commit_preview(
                               if cid in stored.chapter_hashes}),
         rows_updated_translated=rows_translated,
         rows_updated_refined=rows_refined,
+        snapshot_ids=snapshot_ids,
     )
 
 
