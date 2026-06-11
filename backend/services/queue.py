@@ -173,7 +173,7 @@ def _spawn_translate(novel_id: int, chapter_id: int) -> None:
     bookkeeping, plus a per-chapter cancellation slot."""
 
     def _done(t: asyncio.Task) -> None:
-        # Clear every slot that still points at THIS task — the claim-at-lock
+        # Clear every slot that still points at THIS task: the claim-at-lock
         # rebind (audit 3.2) may have re-keyed the task under the chapter it
         # actually processed, so the spawn-time key alone is not enough. Slots
         # already overwritten by a newer task (rapid retranslate) are left.
