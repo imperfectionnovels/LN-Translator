@@ -595,6 +595,25 @@ def test_locked_term_casing_cross_entry_soft_dedup() -> None:
     assert n == 0
 
 
+def test_locked_term_casing_lowercase_lead_keeps_sentence_head_capital() -> None:
+    # A canonical with a lowercase lead word ("peak Foundation Establishment",
+    # "the Nether Whisper Ancestor") must not down-case a sentence-head
+    # capital; sentence-initial capitalization is correct English.
+    g = [_atomic_entry("peak Foundation Establishment", category="other")]
+    text = "Peak Foundation Establishment, five reincarnations."
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == text
+    assert n == 0
+
+
+def test_locked_term_casing_lowercase_lead_normalizes_rest_at_sentence_head() -> None:
+    g = [_atomic_entry("peak Foundation Establishment", category="other")]
+    text = "Peak foundation establishment was within reach."
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == "Peak Foundation Establishment was within reach."
+    assert n == 1
+
+
 def test_locked_term_casing_never_downcases_inside_longer_title_case_name() -> None:
     # A mixed-case canonical (正法 -> "righteous Dharma") must not lowercase
     # the tail of a LONGER Title-Case name it happens to sit inside

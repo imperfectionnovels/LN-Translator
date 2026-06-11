@@ -513,12 +513,16 @@ _LEADING_ARTICLES = frozenset({"the", "a", "an"})
 
 
 def _cased_for_position(canonical: str, sentence_initial: bool) -> str:
-    """`canonical` with a leading article down-cased when used mid-sentence.
+    """`canonical` re-cased for its sentence position.
 
-    The noun keeps its canonical casing either way; only a leading the/a/an is
-    lowercased away from a sentence head. Length is preserved, so match offsets
-    stay valid."""
+    Mid-sentence, a leading The/A/An down-cases ("into the Void"). At a
+    sentence head the FIRST letter up-cases instead, so a canonical stored
+    with a lowercase lead ("the Nether Whisper Ancestor", "peak Foundation
+    Establishment") never fights correct sentence-initial capitalization.
+    Length is preserved, so match offsets stay valid."""
     if sentence_initial:
+        if canonical[:1].islower():
+            return canonical[:1].upper() + canonical[1:]
         return canonical
     first, sep, rest = canonical.partition(" ")
     if rest and first[:1].isupper() and first.lower() in _LEADING_ARTICLES:
