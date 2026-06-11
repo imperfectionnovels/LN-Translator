@@ -2,6 +2,34 @@
 
 Roadmap for upcoming work on LN-Translator.
 
+## IN PROGRESS 2026-06-11: adversarial full-stack rule audit vs Wuxiaworld corpus
+
+Trigger: user read live ch424 (a stale phase5 translation) showing the comma-to-period
+stamp defect plus the standing "lacking vs a WW pro" gap. Binding directive: every
+translation-governing rule is presumed faulty and must justify being kept with evidence
+from professional wuxiaworld.com translations; scope covers base.md, the xianxia
+overlay + examples, the runtime template (translators/base.py), refiner.py, the novel-2
+custom_style_brief, glossary policy/data, and the structural tests that pin them.
+Plan file: C:\Users\Roych\.claude\plans\certain-issues-like-period-purring-volcano.md
+
+- WS1 DONE: live ch424/425/427 retranslated onto phase14/claude-opus-4-8 through the
+  production queue (backup novels.pre-forward-retranslate.20260611-013543.db.gz; no hand
+  edits lost). Stale-inventory root cause confirmed: of 137 done chapters only 15 were
+  current-stack; the user chose forward-only scope, back catalog (ch1-423) left alone.
+- RESIDUAL LIVE MISS: ch424 opening 剑阁，极天崖。STILL period-splits under phase14
+  ("Sword Pavilion. Extreme Heaven Cliff."), while ch429 renders the same shape with a
+  comma. The base.md comma-hinge clause ("or its own sentence when the clause stands
+  alone") is the suspected hatch; on trial in Phase C with this chapter pair as evidence.
+- Artifacts so far: data/ww_corpus/ (10 chapters, 6 novels, 7 translators, ~27k words,
+  INDEX.md), data/rules_ledger.md (143 rules, 8 sources, 5 pre-flagged conflicts).
+- Next: Phase C adversarial per-rule trials (data/rule_trials/) + Phase D positive-gap
+  comparative read (data/positive_gaps.md), then phase15 synthesis and the battery A/B
+  ship gate on claude-opus-4-8 (never fable), chapters 401/414/427/437.
+- WS1 metrics side-findings to fold into the glossary trial bundle: missing glossary
+  renders (mid stage 中期, Moon Star 月星, Dao Body 道身, cultivation technique 功法,
+  Faction 势力), predicate losses near Demon-Purging True Person, one banned word
+  ("slew"), "Yun Family" lowercased once.
+
 ## DONE 2026-06-10: translation workflow review (prompt load + model sustainability)
 
 Shipped 2026-06-10 (phase12+13 compiled v2 stack + phase14 english-cadence pass,
