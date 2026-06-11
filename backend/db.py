@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS chapters (
         CHECK (status IN ('pending', 'translating', 'done', 'error')),
     error_msg TEXT,
     translate_queued INTEGER NOT NULL DEFAULT 0,
+    -- Audit 3.2 (2026-06-11): move-to-front priority. Default 0. The
+    -- translate-next service increments it to MAX+1 so the most-recent
+    -- "Translate next" click always wins the front slot. The worker
+    -- claims the best-ranked pending row (queue_priority DESC) rather
+    -- than the one it was spawned for. Cleared to 0 on every dequeue,
+    -- success commit, and cancel so stale priority never leaks across
+    -- translate cycles. See prioritize_chapter in services/queue.py.
+    -- STALE DEAD COLUMN: chapters.queue_position exists in user DBs from
+    -- an older schema; do NOT reuse that name. This column is queue_priority.
+    queue_priority INTEGER NOT NULL DEFAULT 0,
     -- Set by /retranslate so the worker bypasses the LLM cache. The worker
     -- clears it when it claims the row, so it survives a restart but is
     -- consumed exactly once.
@@ -753,6 +763,12 @@ _ADDITIVE_MIGRATIONS = (
     # chapter. Written by PUT /api/novels/{id}/reading-position.
     "ALTER TABLE novels ADD COLUMN last_read_chapter_num INTEGER",
     "ALTER TABLE novels ADD COLUMN last_read_at TEXT",
+    # 2026-06-11 translate-next move-to-front (audit 3.2). MAX+1 semantics:
+    # the most-recent "Translate next" click wins the front slot; default 0
+    # means FIFO for unprioritized chapters. Cleared with translate_queued
+    # on every dequeue/success/cancel path. Do NOT reuse queue_position
+    # (that stale dead column exists in user DBs from an older schema).
+    "ALTER TABLE chapters ADD COLUMN queue_priority INTEGER NOT NULL DEFAULT 0",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed
@@ -904,6 +920,10 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
                     CHECK (status IN ('pending', 'translating', 'done', 'error')),
                 error_msg TEXT,
                 translate_queued INTEGER NOT NULL DEFAULT 0,
+                -- Audit 3.2 (2026-06-11): move-to-front priority preserved
+                -- through the dead-column rebuild so existing queued rows
+                -- keep their priority after a first-boot schema migration.
+                queue_priority INTEGER NOT NULL DEFAULT 0,
                 force_retranslate INTEGER NOT NULL DEFAULT 0,
                 translation_degraded INTEGER NOT NULL DEFAULT 0,
                 glossary_merge_error TEXT,
@@ -932,7 +952,12 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
         has_refinement = "refinement_status" in cols_now
         has_cost = "cost_usd" in cols_now
         has_translated_at = "translated_at" in cols_now
-        # Cost + translated_at SELECT/INSERT fragments — empty when the
+        # Audit 3.2: carry queue_priority through the rebuild so an in-flight
+        # prioritized chapter keeps its priority. Default 0 when absent on very
+        # old pre-migration rows (the additive migration ran moments ago so the
+        # column exists on every normally-initialised DB).
+        has_queue_priority = "queue_priority" in cols_now
+        # Cost + translated_at SELECT/INSERT fragments -- empty when the
         # source rows don't have the columns yet (so the INSERT defaults
         # them to NULL).
         cost_select = (
@@ -942,6 +967,8 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
         cost_cols = ", input_tokens, output_tokens, cached_input_tokens, cost_usd"
         ta_select = ", translated_at" if has_translated_at else ", NULL"
         ta_cols = ", translated_at"
+        qp_select = ", queue_priority" if has_queue_priority else ", 0"
+        qp_cols = ", queue_priority"
         if has_refinement:
             await conn.execute(
                 "INSERT INTO chapters__new "
@@ -949,12 +976,12 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
                 "translated_text, status, error_msg, translate_queued, "
                 "force_retranslate, translation_degraded, glossary_merge_error, "
                 "refinement_status, refined_text, refinement_error, refined_at"
-                + cost_cols + ta_cols + ") "
+                + cost_cols + ta_cols + qp_cols + ") "
                 "SELECT id, novel_id, chapter_num, title_zh, title_en, original_text, "
                 "translated_text, status, error_msg, translate_queued, "
                 "force_retranslate, translation_degraded, glossary_merge_error, "
                 "COALESCE(refinement_status, 'none'), refined_text, refinement_error, refined_at"
-                + cost_select + ta_select + " FROM chapters"
+                + cost_select + ta_select + qp_select + " FROM chapters"
             )
         else:
             await conn.execute(
@@ -962,11 +989,11 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
                 "(id, novel_id, chapter_num, title_zh, title_en, original_text, "
                 "translated_text, status, error_msg, translate_queued, "
                 "force_retranslate, translation_degraded, glossary_merge_error"
-                + cost_cols + ta_cols + ") "
+                + cost_cols + ta_cols + qp_cols + ") "
                 "SELECT id, novel_id, chapter_num, title_zh, title_en, original_text, "
                 "translated_text, status, error_msg, translate_queued, "
                 "force_retranslate, translation_degraded, glossary_merge_error"
-                + cost_select + ta_select + " FROM chapters"
+                + cost_select + ta_select + qp_select + " FROM chapters"
             )
         # Drop FTS triggers first — they reference the old columns and would
         # error during DROP TABLE chapters.
@@ -1414,9 +1441,10 @@ async def init_db() -> None:
         )
         translating_reset = cur.rowcount or 0
 
-        # Stale translate_queued on terminal rows.
+        # Stale translate_queued on terminal rows. Also zero queue_priority
+        # so a stale priority from a previous session never leaks forward.
         cur = await conn.execute(
-            "UPDATE chapters SET translate_queued = 0 "
+            "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
             "WHERE translate_queued = 1 AND status IN ('done', 'error')"
         )
         stale_translate_cleared = cur.rowcount or 0

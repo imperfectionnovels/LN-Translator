@@ -344,8 +344,10 @@ async def cancel_global_queue(
         "FROM chapters"
     )
     counts = await cur.fetchone()
+    # Audit 3.2: zero queue_priority alongside translate_queued so a translate-next
+    # priority does not persist on chapters that are being bulk-cancelled.
     await conn.execute(
-        "UPDATE chapters SET translate_queued = 0 "
+        "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
         "WHERE translate_queued = 1 AND status != 'translating'"
     )
     await conn.commit()
@@ -378,6 +380,7 @@ async def list_global_queue(
            OR c.refinement_status IN ('pending', 'in_progress')
         ORDER BY
             (c.status = 'translating' OR c.refinement_status = 'in_progress') DESC,
+            c.queue_priority DESC,
             c.novel_id, c.chapter_num
         """
     )
@@ -602,8 +605,10 @@ async def cancel_novel_queue(
     )
     counts = await cur.fetchone()
 
+    # Audit 3.2: zero queue_priority alongside translate_queued so a translate-next
+    # priority does not persist on chapters being bulk-cancelled for this novel.
     await conn.execute(
-        "UPDATE chapters SET translate_queued = 0 "
+        "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
         "WHERE novel_id = ? AND translate_queued = 1 AND status != 'translating'",
         (novel_id,),
     )

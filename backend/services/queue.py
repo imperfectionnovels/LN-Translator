@@ -173,10 +173,12 @@ def _spawn_translate(novel_id: int, chapter_id: int) -> None:
     bookkeeping, plus a per-chapter cancellation slot."""
 
     def _done(t: asyncio.Task) -> None:
-        # Only clear the slot if it still points at THIS task — a rapid
-        # retranslate could have already registered a newer one.
-        if _translate_tasks.get(chapter_id) is t:
-            _translate_tasks.pop(chapter_id, None)
+        # Clear every slot that still points at THIS task — the claim-at-lock
+        # rebind (audit 3.2) may have re-keyed the task under the chapter it
+        # actually processed, so the spawn-time key alone is not enough. Slots
+        # already overwritten by a newer task (rapid retranslate) are left.
+        for key in [k for k, v in _translate_tasks.items() if v is t]:
+            _translate_tasks.pop(key, None)
 
     task = _registry.spawn(_run_translate(novel_id, chapter_id), on_done=_done)
     _translate_tasks[chapter_id] = task
@@ -277,10 +279,14 @@ async def reset_chapters_for_retranslate(
     for i in range(0, len(chapter_ids), _QUEUE_BATCH_CHUNK):
         chunk = chapter_ids[i : i + _QUEUE_BATCH_CHUNK]
         placeholders = ",".join("?" * len(chunk))
+        # Audit 3.2: zero queue_priority on re-queue so a chapter that was
+        # previously "translate-nexted" does not retain a stale high priority
+        # when it is re-queued via retranslate. New translate-next clicks will
+        # re-assign a fresh MAX+1 priority if the user wants it front again.
         await conn.execute(
             f"UPDATE chapters SET "
             f"status = 'pending', error_msg = NULL, "
-            f"force_retranslate = 1, translate_queued = 1, "
+            f"force_retranslate = 1, translate_queued = 1, queue_priority = 0, "
             f"translation_degraded = 0, glossary_merge_error = NULL "
             f"WHERE novel_id = ? AND id IN ({placeholders}) "
             f"  AND status != 'translating'",
@@ -295,6 +301,35 @@ async def reset_chapters_for_retranslate(
         reset_ids.extend(r["id"] for r in await cur.fetchall())
     await conn.commit()
     return reset_ids
+
+
+async def prioritize_chapter(
+    conn: aiosqlite.Connection, novel_id: int, chapter_num: int
+) -> int | None:
+    """Move a queued pending chapter to the front of the translate queue.
+
+    Returns the assigned priority, or None when the chapter is not in a
+    prioritizable state (not queued, already translating, or done).
+    MAX+1 semantics: the most recent translate-next click wins the front.
+    The subquery reads MAX across ALL queued chapters (not just this novel)
+    so a prioritized chapter beats any other waiting chapter globally.
+    """
+    cur = await conn.execute(
+        "UPDATE chapters SET queue_priority = ("
+        "  SELECT COALESCE(MAX(queue_priority), 0) + 1 FROM chapters WHERE translate_queued = 1"
+        ") WHERE novel_id = ? AND chapter_num = ? "
+        "  AND translate_queued = 1 AND status = 'pending'",
+        (novel_id, chapter_num),
+    )
+    await conn.commit()
+    if (cur.rowcount or 0) == 0:
+        return None
+    cur = await conn.execute(
+        "SELECT queue_priority FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+        (novel_id, chapter_num),
+    )
+    row = await cur.fetchone()
+    return row["queue_priority"] if row else None
 
 
 async def shutdown() -> None:
@@ -372,20 +407,58 @@ async def drain_on_startup() -> None:
 async def _run_translate(novel_id: int, chapter_id: int) -> None:
     """One translate task: wait on the translator lock, then process the row.
 
+    Audit 3.2: once this task holds the lock, it claims the best-ranked
+    queued pending chapter rather than necessarily the one it was spawned
+    for (queue_priority DESC, then novel_id ASC, chapter_num ASC). Tasks
+    equal queued chapters one-to-one, so every queued chapter is still
+    processed exactly once; only the binding of task-to-chapter moves from
+    spawn time to lock-acquire time. The cancellation map is re-keyed so
+    cancel_translate finds the task that is actually translating a given
+    chapter.
+
     Chains into the refinement pass in the SAME lock acquisition when the
     chapter ends up with refinement_status='pending'. Sequencing them under
     one lock keeps the queue strictly serial AND avoids a race where another
     translate task could wedge between the two passes on the same chapter.
     """
+    # Initialise with the spawn-time ids so both recovery handlers below
+    # can always reference valid identifiers even if the claim SELECT
+    # fires before the lock is acquired.
+    run_novel_id, run_chapter_id = novel_id, chapter_id
     async with _translator_lock:
         try:
             async with open_conn() as conn:
-                await _translate_chapter_in_db(conn, novel_id, chapter_id)
+                # Audit 3.2: while holding the lock, claim the highest-priority
+                # queued pending chapter. queue_priority DESC puts user-prioritized
+                # chapters first; (novel_id, chapter_num) ASC is the Up-next
+                # ordering the /queue page displays. The spawning task was
+                # registered under the original chapter_id; re-key the map so
+                # cancel_translate can find the task by the chapter it actually
+                # processes.
+                cur = await conn.execute(
+                    "SELECT id, novel_id FROM chapters "
+                    "WHERE translate_queued = 1 AND status = 'pending' "
+                    "ORDER BY queue_priority DESC, novel_id ASC, chapter_num ASC LIMIT 1"
+                )
+                row = await cur.fetchone()
+                if row is not None:
+                    run_chapter_id = row["id"]
+                    run_novel_id = row["novel_id"]
+                if run_chapter_id != chapter_id:
+                    # Re-key the cancellation map so cancel_translate finds the
+                    # task actually translating this chapter, not the original
+                    # spawn-time chapter.
+                    t = asyncio.current_task()
+                    if t is not None:
+                        if _translate_tasks.get(chapter_id) is t:
+                            _translate_tasks.pop(chapter_id, None)
+                        _translate_tasks[run_chapter_id] = t
+                await _translate_chapter_in_db(conn, run_novel_id, run_chapter_id)
                 # Same lock, same connection: if the translator just flipped
                 # refinement_status='pending', refine now. _refine is a no-op
                 # for any other status, so this branch costs a single SELECT
                 # when refinement isn't configured.
-                await _refine_chapter_in_db(conn, novel_id, chapter_id)
+                await _refine_chapter_in_db(conn, run_novel_id, run_chapter_id)
         except asyncio.CancelledError:
             # User cancelled mid-flight (see cancel_translate). The LLM call,
             # or a chained refine, was interrupted at its await point; nothing
@@ -396,27 +469,28 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
             # unwinding, so the next queued chapter proceeds immediately. The
             # provider's underlying subprocess may take a few seconds to
             # actually abort, but that does not block the queue.
-            logger.info("queue translate ch_id=%d cancelled by user", chapter_id)
+            logger.info("queue translate ch_id=%d cancelled by user", run_chapter_id)
             try:
                 async with open_conn() as recovery:
                     await recovery.execute(
                         "UPDATE chapters SET "
                         "status = CASE WHEN translated_text IS NOT NULL "
                         " AND translated_text != '' THEN 'done' ELSE 'pending' END, "
-                        "translate_queued = 0, force_retranslate = 0, error_msg = NULL "
+                        "translate_queued = 0, queue_priority = 0, "
+                        "force_retranslate = 0, error_msg = NULL "
                         "WHERE id = ? AND status = 'translating'",
-                        (chapter_id,),
+                        (run_chapter_id,),
                     )
                     await recovery.commit()
             except Exception:
                 logger.exception(
                     "translate cancel cleanup failed for ch_id=%d; row may be "
                     "stuck in 'translating' until next server restart",
-                    chapter_id,
+                    run_chapter_id,
                 )
             raise
         except Exception:
-            logger.exception("queue translate ch_id=%d crashed", chapter_id)
+            logger.exception("queue translate ch_id=%d crashed", run_chapter_id)
             try:
                 async with open_conn() as recovery:
                     await recovery.execute(
@@ -425,16 +499,16 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
                         "error_msg = CASE WHEN status = 'translating' "
                         " THEN COALESCE(error_msg, 'translator worker crashed') "
                         " ELSE error_msg END, "
-                        "translate_queued = 0 "
+                        "translate_queued = 0, queue_priority = 0 "
                         "WHERE id = ?",
-                        (chapter_id,),
+                        (run_chapter_id,),
                     )
                     await recovery.commit()
             except Exception:
                 logger.exception(
                     "translate recovery cleanup also failed for ch_id=%d; "
                     "queue flag may be stuck until next server restart",
-                    chapter_id,
+                    run_chapter_id,
                 )
 
 
@@ -675,9 +749,11 @@ async def _translate_chapter_in_db(
             if r["import_source_url"]
             else "chapter source text is empty"
         )
+        # Audit 3.2: also zero queue_priority so the translate-next priority
+        # does not linger on an error row that the user later re-queues.
         await conn.execute(
             "UPDATE chapters SET status = 'error', error_msg = ?, "
-            "translate_queued = 0, force_retranslate = 0 "
+            "translate_queued = 0, queue_priority = 0, force_retranslate = 0 "
             "WHERE id = ? AND novel_id = ? AND status != 'translating'",
             (msg, chapter_id, novel_id),
         )
@@ -693,8 +769,10 @@ async def _translate_chapter_in_db(
         # See predecessor commit comment: don't reuse _clear_translate_queue
         # here — a concurrent /retranslate could race the unconditional clear.
         # The status != 'pending' guard makes this atomic w.r.t. retranslate.
+        # Audit 3.2: also zero queue_priority so a translate-next priority
+        # does not persist on a chapter that was already processed elsewhere.
         await conn.execute(
-            "UPDATE chapters SET translate_queued = 0 "
+            "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
             "WHERE id = ? AND novel_id = ? AND status != 'pending'",
             (chapter_id, novel_id),
         )
@@ -851,10 +929,14 @@ async def _translate_chapter_in_db(
         # the original record isn't blanked; on a fresh translation we overwrite
         # them with this call's counts. Build the SET list + params once with
         # the token clause inserted conditionally.
+        # Audit 3.2: clear queue_priority alongside translate_queued on the
+        # success commit so a priority assigned by translate-next is consumed
+        # exactly once and never leaks to a future retranslate of this chapter.
         set_clauses = [
             "title_en = ?", "translated_text = ?", "status = 'done'",
             "error_msg = NULL", "force_retranslate = 0",
             "translation_degraded = ?", "translate_queued = 0",
+            "queue_priority = 0",
             "refinement_status = ?", "refined_text = NULL",
             "refinement_error = NULL", "refined_at = NULL",
         ]
@@ -973,9 +1055,11 @@ async def _translate_chapter_in_db(
                 logger.exception("could not even persist glossary_merge_error")
     except Exception as e:
         logger.exception("translate ch %d failed: %s", r["chapter_num"], e)
+        # Audit 3.2: zero queue_priority on error so a translate-next priority
+        # does not persist on a failed chapter that the user later re-queues.
         await conn.execute(
             "UPDATE chapters SET status = 'error', error_msg = ?, "
-            "translate_queued = 0, force_retranslate = 0 "
+            "translate_queued = 0, queue_priority = 0, force_retranslate = 0 "
             "WHERE id = ? AND novel_id = ? AND status = 'translating'",
             (str(e)[:4000], chapter_id, novel_id),
         )
@@ -1245,8 +1329,10 @@ def spawn_refine_worker(novel_id: int, chapter_id: int) -> None:
 async def _clear_translate_queue(
     conn: aiosqlite.Connection, chapter_id: int
 ) -> None:
+    # Audit 3.2: clear queue_priority alongside translate_queued so a stale
+    # priority never leaks forward after a chapter is dequeued by any path.
     await conn.execute(
-        "UPDATE chapters SET translate_queued = 0 WHERE id = ?",
+        "UPDATE chapters SET translate_queued = 0, queue_priority = 0 WHERE id = ?",
         (chapter_id,),
     )
     await conn.commit()

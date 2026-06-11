@@ -84,7 +84,8 @@
         </div>
         <div class="qs-row-actions">
           <a class="qs-row-btn" href="/reader?novel=${item.novel_id}&ch=${item.chapter_num}">Open</a>
-          ${waitingPolish ? "" : `<button class="qs-row-btn" data-act="dequeue" type="button" title="Drop this chapter from the queue">×</button>`}
+          ${waitingPolish ? "" : `<button class="qs-row-btn" data-act="next" type="button" title="Move this chapter to the front of the queue">Next</button>`}
+          ${waitingPolish ? "" : `<button class="qs-row-btn" data-act="dequeue" type="button" title="Drop this chapter from the queue">x</button>`}
         </div>
       </div>`;
   }
@@ -225,6 +226,21 @@
         parseInt(row.dataset.ch, 10),
         dq,
       ));
+      const nx = row.querySelector("[data-act='next']");
+      if (nx) nx.addEventListener("click", async () => {
+        nx.disabled = true;
+        try {
+          await api.translateNext(parseInt(row.dataset.novel, 10), parseInt(row.dataset.ch, 10));
+          showToast("Moved to the front of the queue.", "ok");
+          // Force a fresh render by clearing lastSig so the re-ordered queue
+          // is reflected immediately even if the snapshot bytes change.
+          lastSig = null;
+          await refresh();
+        } catch (e) {
+          showToast(`Couldn't prioritize: ${e.message}`, "err");
+          nx.disabled = false;
+        }
+      });
     });
     recentEl.querySelectorAll(".qs-row[data-novel]").forEach(row => {
       const novel = parseInt(row.dataset.novel, 10);

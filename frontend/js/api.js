@@ -208,6 +208,7 @@ const api = {
   retryRefinement: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/retry-refinement`, { method: "POST" }),
   refreshFreeDraft: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/refresh-free-draft`, { method: "POST" }),
   cancelQueueChapter: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/queue`, { method: "DELETE" }),
+  translateNext: (novelId, chapterNum) => apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/translate-next`, { method: "POST" }),
   cancelQueueAll: (id) => apiFetch(`/api/novels/${id}/queue`, { method: "DELETE" }),
   // Mass-queue chapters for translation. `body` shape:
   //   { mode: "all_untranslated" | "range",

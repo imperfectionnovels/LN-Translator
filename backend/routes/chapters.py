@@ -213,6 +213,33 @@ async def retranslate_chapter(
     return {"status": "queued"}
 
 
+@router.post("/novels/{novel_id}/chapters/{chapter_num}/translate-next")
+async def translate_next(
+    novel_id: int,
+    chapter_num: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Move a queued pending chapter to the front of the translate queue.
+
+    Uses MAX+1 priority so the most-recent translate-next click always wins
+    the front slot. Returns 404 when the chapter does not exist, 409 when the
+    chapter is not in a prioritizable state (not queued, already translating,
+    or already done).
+    """
+    cur = await conn.execute(
+        "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+        (novel_id, chapter_num),
+    )
+    if await cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    prio = await queue_svc.prioritize_chapter(conn, novel_id, chapter_num)
+    if prio is None:
+        raise HTTPException(
+            status_code=409, detail="chapter is not waiting in the queue"
+        )
+    return {"ok": True, "queue_priority": prio}
+
+
 @router.post("/novels/{novel_id}/chapters/{chapter_num}/retry-refinement")
 async def retry_refinement(
     novel_id: int,
@@ -353,8 +380,10 @@ async def cancel_chapter_queue(
     cancelled_translate = bool(r["translate_queued"]) and not in_flight_translate
 
     if cancelled_translate or in_flight_translate:
+        # Audit 3.2: zero queue_priority alongside translate_queued so a
+        # translate-next priority does not persist after the chapter is dequeued.
         await conn.execute(
-            "UPDATE chapters SET translate_queued = 0 WHERE id = ?",
+            "UPDATE chapters SET translate_queued = 0, queue_priority = 0 WHERE id = ?",
             (r["id"],),
         )
         await conn.commit()
