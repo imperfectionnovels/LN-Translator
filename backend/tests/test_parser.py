@@ -274,6 +274,34 @@ def test_strip_title_update_marker_none_and_empty():
     assert strip_title_update_marker("") == ""
 
 
+def test_strip_title_update_marker_unclosed_trailing_parenthetical():
+    """A rescraped source title can arrive truncated mid-marker (live ch426:
+    （晚上还有三更 with no closing ）). The unclosed trailing form still strips."""
+    cases = [
+        ("第426章 不杀剑，终杀一人！（晚上还有三更", "第426章 不杀剑，终杀一人！"),
+        ("第99章 标题（求月票", "第99章 标题"),
+        ("第98章 标题(第3更", "第98章 标题"),
+    ]
+    for raw, want in cases:
+        assert strip_title_update_marker(raw) == want, raw
+
+
+def test_strip_title_update_marker_keeps_unclosed_non_marker():
+    """A truncated parenthetical WITHOUT marker content is not noise."""
+    assert strip_title_update_marker("第50章 大战（上") == "第50章 大战（上"
+
+
+def test_normalize_title_backstop_fires_on_unclosed_zh_marker():
+    """The zh gate must also recognize a truncated, unclosed marker
+    parenthetical, so the model's translated marker still gets dropped."""
+    out = normalize_title_en(
+        "The No-Killing Sword Finally Kills Someone! (Three more chapters tonight)",
+        426,
+        title_zh="第426章 不杀剑，终杀一人！（晚上还有三更",
+    )
+    assert out == "Chapter 426: The No-Killing Sword Finally Kills Someone!"
+
+
 def test_strip_heading_update_marker_cleans_heading_line():
     body = "第392章 惊变！（第四更！）\n\n【离恨天】外。\n\n正文继续。"
     out = strip_heading_update_marker(body)

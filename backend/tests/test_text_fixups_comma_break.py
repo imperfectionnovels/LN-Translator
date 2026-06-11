@@ -120,6 +120,39 @@ def test_suppressed_when_next_opens_with_single_angle_bracket():
 
 
 # ---------------------------------------------------------------------------
+# Standalone beats: promote the comma, keep the break
+# ---------------------------------------------------------------------------
+
+
+def test_standalone_beat_promotes_comma_to_period():
+    # ch429 shape: the model ends a paragraph on a comma before a standalone
+    # one-word beat (BOOM.). Welding kills the beat (the source keeps 轰隆 as
+    # its own paragraph), so the comma promotes to a period and the break stays.
+    out, n = enforce_mid_sentence_comma_break(
+        "Before Ye Shaoying could come back from his fantasy,\n\nBOOM.\n\nA huge sound rang out."
+    )
+    assert out == (
+        "Before Ye Shaoying could come back from his fantasy.\n\nBOOM.\n\nA huge sound rang out."
+    )
+    assert n == 1
+
+
+def test_standalone_beat_with_exclamation():
+    out, n = enforce_mid_sentence_comma_break("He froze,\n\nRUMBLE!\n\nThe gate fell.")
+    assert out == "He froze.\n\nRUMBLE!\n\nThe gate fell."
+    assert n == 1
+
+
+def test_standalone_beat_promotion_idempotent():
+    text = "He froze,\n\nRUMBLE!\n\nThe gate fell."
+    once, n1 = enforce_mid_sentence_comma_break(text)
+    twice, n2 = enforce_mid_sentence_comma_break(once)
+    assert once == twice
+    assert n1 == 1
+    assert n2 == 0
+
+
+# ---------------------------------------------------------------------------
 # Edge cases / invariants
 # ---------------------------------------------------------------------------
 

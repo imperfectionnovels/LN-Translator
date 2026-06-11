@@ -192,6 +192,34 @@ def test_em_dash_protected_run_collapses_to_single_dash():
     assert count == 2
 
 
+def test_em_dash_before_closing_italic_preserved():
+    # Inner-thought cut-off ends on the closing `*` of an italic span
+    # (*This man is—*). Rewriting strands a comma before the delimiter
+    # ("*This man is, *"), so the dash is a protected interruption mark.
+    text = "*This man is—*\n\nBefore he could react, the man vanished."
+    out, count = enforce_em_dash(text)
+    assert "*This man is—*" in out
+    assert count == 0
+
+
+def test_em_dash_copula_reveal_joins_without_dash():
+    # 名为—— shape: a suspension dash between a copula and its complement.
+    # Comma/period both break the verb-complement bond ("Its name was, the
+    # X"), so the dash is deleted and the clause joins.
+    text = "It was a cultivation technique.\n\nIts name was— the Ascending Mystery Register!"
+    out, count = enforce_em_dash(text)
+    assert "Its name was the Ascending Mystery Register!" in out
+    assert "—" not in out
+    assert count == 1
+
+
+def test_em_dash_called_reveal_joins_without_dash():
+    text = "The art was called— the Hidden Blade."
+    out, count = enforce_em_dash(text)
+    assert "The art was called the Hidden Blade." in out
+    assert count == 1
+
+
 # ---------------------------------------------------------------------------
 # enforce_spaced_hyphen_dash
 # ---------------------------------------------------------------------------
@@ -269,6 +297,14 @@ def test_spaced_hyphen_before_punctuation_preserved():
     out, count = enforce_spaced_hyphen_dash(text)
     assert out == text
     assert count == 0
+
+
+def test_spaced_hyphen_copula_reveal_joins_without_dash():
+    # Same copula-reveal policy as the em-dash enforcer.
+    text = "Its name is - the Hidden Blade."
+    out, count = enforce_spaced_hyphen_dash(text)
+    assert "Its name is the Hidden Blade." in out
+    assert count == 1
 
 
 def test_is_numeric_range_helper():
@@ -557,6 +593,26 @@ def test_locked_term_casing_cross_entry_soft_dedup() -> None:
     out, n = enforce_locked_term_casing(text, g)
     assert out == text
     assert n == 0
+
+
+def test_locked_term_casing_never_downcases_inside_longer_title_case_name() -> None:
+    # A mixed-case canonical (正法 -> "righteous Dharma") must not lowercase
+    # the tail of a LONGER Title-Case name it happens to sit inside
+    # (live ch434: "Mountain-Commanding Peak-Moving Righteous Dharma").
+    g = [_atomic_entry("righteous Dharma", category="other")]
+    text = "He raised the Mountain-Commanding Peak-Moving Righteous Dharma!"
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == text
+    assert n == 0
+
+
+def test_locked_term_casing_mixed_case_canonical_still_normalizes_standalone() -> None:
+    # Outside a Title-Case neighborhood the mixed-case canonical still wins.
+    g = [_atomic_entry("righteous Dharma", category="other")]
+    text = "he preached the Righteous Dharma to the disciples"
+    out, n = enforce_locked_term_casing(text, g)
+    assert "the righteous Dharma to" in out
+    assert n == 1
 
 
 def test_locked_term_casing_skips_slash_alternative_rows() -> None:

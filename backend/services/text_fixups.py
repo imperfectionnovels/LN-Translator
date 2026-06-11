@@ -51,21 +51,31 @@ _CUTOFF_FOLLOW = set('"”“」』')
 # model's stylistic clause dash.
 _PUNCT_FOLLOW = set("!?.…,;:")
 
+# Copula / naming verbs whose dash is a suspension mark before a reveal
+# complement (名为—— "Its name was— the X"). Comma and period both break the
+# verb-complement bond ("Its name was, the X"), so the dash is deleted and
+# the clause joins instead.
+_REVEAL_VERBS = frozenset({
+    "was", "is", "are", "were", "am", "be", "being", "been",
+    "named", "called", "titled",
+})
+
 
 def _dash_protected(text: str, run_end: int) -> bool:
     """`text[run_end]` is the first char AFTER a dash run. Return True when
     the dash is an interruption / suspension mark that must be kept: the next
-    non-space char is a closing quote, sentence punctuation, a line break, or
-    there is nothing after it (paragraph- or text-final dash, 下一秒——).
-    Replacement is only safe when a word follows and the dash is splicing a
-    clause — the comma/period rewrite needs a clause to attach to."""
+    non-space char is a closing quote, a closing emphasis delimiter (`*`, the
+    italic inner-thought cut-off *This man is—*), sentence punctuation, a line
+    break, or there is nothing after it (paragraph- or text-final dash,
+    下一秒——). Replacement is only safe when a word follows and the dash is
+    splicing a clause — the comma/period rewrite needs a clause to attach to."""
     i = run_end
     while i < len(text) and text[i] == " ":
         i += 1
     if i >= len(text):
         return True
     ch = text[i]
-    return ch == "\n" or ch in _CUTOFF_FOLLOW or ch in _PUNCT_FOLLOW
+    return ch == "\n" or ch == "*" or ch in _CUTOFF_FOLLOW or ch in _PUNCT_FOLLOW
 
 
 def _pick_replacement(text: str, run_start: int, run_end: int) -> str:
@@ -101,13 +111,17 @@ def enforce_em_dash(text: str) -> tuple[str, int]:
                 out = out[:start] + "—" + out[end:]
                 count += 1
             continue
-        repl = _pick_replacement(out, start, end)
         after = out[end:]
         if after.startswith(" "):
             after = after[1:]
         before = out[:start]
         if before.endswith(" "):
             before = before[:-1]
+        if _preceding_word(out, start).lower() in _REVEAL_VERBS:
+            out = before + " " + after
+            count += 1
+            continue
+        repl = _pick_replacement(out, start, end)
         out = before + repl + after
         count += 1
     return out, count
@@ -156,6 +170,11 @@ def enforce_spaced_hyphen_dash(text: str) -> tuple[str, int]:
         if _is_numeric_range(out, start, end):
             continue
         if _dash_protected(out, end):
+            continue
+        if _preceding_word(out, start).lower() in _REVEAL_VERBS:
+            # Copula reveal: " - " collapses to a single joining space.
+            out = out[:start] + " " + out[end:]
+            count += 1
             continue
         repl = _pick_replacement(out, start, end)
         # The match spans the flanking spaces (" - "); replacing the whole span
@@ -557,6 +576,24 @@ def enforce_locked_term_casing(
             current = m.group(0)
             if current == replacement:
                 continue
+            if any(
+                a.isupper() and b.islower() for a, b in zip(current, replacement)
+            ):
+                # The rewrite would DOWN-case letters the model capitalized.
+                # Inside a longer Title-Case name that is damage, not
+                # normalization (a "righteous Dharma" canonical must not
+                # rewrite "...Peak-Moving Righteous Dharma"), so the match is
+                # skipped when its neighborhood reads as a proper-noun
+                # compound: a capitalized word follows, a hyphen joins it to a
+                # capitalized word, or a capitalized non-function word
+                # precedes it.
+                if _next_nonspace_is_upper(out, m.end()):
+                    continue
+                if _hyphen_joined_to_capital(out, start, m.end()):
+                    continue
+                prev = _preceding_word(out, start)
+                if prev and prev[0].isupper() and prev.lower() not in _FUNCTION_WORDS:
+                    continue
             out = out[:start] + replacement + out[m.end():]
             count += 1
 
@@ -881,6 +918,23 @@ def enforce_sentence_initial_capitalization(text: str) -> tuple[str, int]:
 # `text_observers.detect_mid_sentence_paragraph_break`.
 _JOINABLE_NON_TERMINAL = frozenset(",;，；、")
 
+# Terminal punctuation closing a standalone beat paragraph (BOOM. / RUMBLE!).
+_BEAT_TERMINALS = frozenset(".!?…。！？")
+
+
+def _is_standalone_beat(para: str) -> bool:
+    """True for a one-word paragraph closed by terminal punctuation — an
+    onomatopoeia / interjection beat (``BOOM.``, ``RUMBLE!``) the source keeps
+    as its own paragraph. Welding one onto a comma-ended paragraph flattens
+    the beat, so the joiner promotes the comma to a period instead. The word
+    must be a single ASCII-alphabetic token: CJK prose has no spaces, so a
+    spaceless test alone would misclassify any short CJK sentence."""
+    p = para.strip()
+    if not p or p[-1] not in _BEAT_TERMINALS:
+        return False
+    word = p.rstrip("".join(_BEAT_TERMINALS))
+    return bool(word) and word.isascii() and word.isalpha()
+
 
 def enforce_mid_sentence_comma_break(text: str) -> tuple[str, int]:
     """Join a paragraph that ends mid-clause (a comma/semicolon) onto the next,
@@ -909,8 +963,14 @@ def enforce_mid_sentence_comma_break(text: str) -> tuple[str, int]:
             and prev_stripped[-1] in _JOINABLE_NON_TERMINAL
             and not nxt_stripped.startswith(_NEXT_PARA_DIALOGUE_OPENERS)
         ):
-            out[-1] = prev_stripped + " " + nxt_stripped
-            count += 1
+            if _is_standalone_beat(nxt_stripped):
+                period = "。" if prev_stripped[-1] in "，；、" else "."
+                out[-1] = prev_stripped[:-1] + period
+                out.append(nxt)
+                count += 1
+            else:
+                out[-1] = prev_stripped + " " + nxt_stripped
+                count += 1
         else:
             out.append(nxt)
     return "\n\n".join(out), count

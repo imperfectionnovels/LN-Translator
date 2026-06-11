@@ -131,15 +131,25 @@ _TITLE_NOISE_INNER = (
 _TITLE_NOISE_RE = re.compile(
     r"[（(][^（）()]*" + _TITLE_NOISE_INNER + r"[^（）()]*[）)]"
 )
+# Truncated variant: a rescraped source title can arrive cut off mid-marker
+# (live ch426: 第426章 …！（晚上还有三更 with no closing ）). End-anchored so an
+# unclosed marker parenthetical at the tail still strips; an unclosed
+# NON-marker parenthetical (第50章 大战（上) carries no marker shape and never
+# matches.
+_TITLE_NOISE_OPEN_RE = re.compile(
+    r"[（(][^（）()]*" + _TITLE_NOISE_INNER + r"[^（）()]*$"
+)
 
 
 def strip_title_update_marker(title: str | None) -> str:
     """Remove author update-count / vote-begging parentheticals from a chapter
-    heading: ``第392章 惊变！（第四更！）`` → ``第392章 惊变！``. Returns ``""``
+    heading: ``第392章 惊变！（第四更！）`` → ``第392章 惊变！``. Handles both
+    the closed form and a truncated, unclosed trailing form. Returns ``""``
     for None. Idempotent; a heading without a marker passes through unchanged."""
     if not title:
         return ""
     out = _TITLE_NOISE_RE.sub("", title)
+    out = _TITLE_NOISE_OPEN_RE.sub("", out)
     return re.sub(r"\s{2,}", " ", out).strip()
 
 
@@ -236,7 +246,9 @@ def normalize_title_en(
             break
         title = stripped.strip()
     title = title.strip("\"'“”").strip()
-    if title_zh and _TITLE_NOISE_RE.search(title_zh):
+    if title_zh and (
+        _TITLE_NOISE_RE.search(title_zh) or _TITLE_NOISE_OPEN_RE.search(title_zh)
+    ):
         title = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", title).strip()
     title = sanitize_title_punctuation(title)
     if not title or title.lower() in ("(untitled)", "untitled"):
