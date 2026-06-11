@@ -96,18 +96,35 @@ function _refreshImportButtonStates() {
   }
 }
 
-(async function populateGenreSelects() {
+let _genreRetryTimer = null;
+async function populateGenreSelects(attempt = 0) {
   let payload;
   try {
     payload = await api.genres();
-  } catch {
-    // Backend unreachable on load — keep the buttons disabled so the
-    // user doesn't fire requests we know will fail.
+  } catch (e) {
+    // Backend may still be booting inside the EXE; the race self-resolves,
+    // so retry with backoff and offer a manual retry.
     _refreshImportButtonStates();
+    statusEl.className = "status err";
+    statusEl.innerHTML =
+      `Couldn't load the genre list${attempt >= 5 ? `: ${escapeHtml(e.message)}` : " (the app may still be starting). Retrying."} ` +
+      `<button type="button" class="btn-ghost" id="genres-retry-btn">Retry now</button>`;
+    document.getElementById("genres-retry-btn")?.addEventListener("click", () => {
+      if (_genreRetryTimer) { clearTimeout(_genreRetryTimer); _genreRetryTimer = null; }
+      populateGenreSelects(0);
+    });
+    if (attempt < 5) {
+      _genreRetryTimer = setTimeout(() => populateGenreSelects(attempt + 1),
+        Math.min(8000, 1000 * 2 ** attempt));
+    }
     return;
   }
+  if (statusEl.textContent.startsWith("Couldn't load the genre list")) {
+    statusEl.className = "status";
+    statusEl.textContent = "";
+  }
   const genres = (payload && payload.genres) || [];
-  // The placeholder option carries no value — the user must explicitly
+  // The placeholder option carries no value - the user must explicitly
   // pick one of the 10 real options before the submit button enables.
   const opts =
     `<option value="" disabled selected>Pick a genre…</option>` +
@@ -119,7 +136,8 @@ function _refreshImportButtonStates() {
     sel.addEventListener("change", _refreshImportButtonStates);
   });
   _refreshImportButtonStates();
-})();
+}
+populateGenreSelects();
 
 /* ---- F05/F06/F08: import preview gate ----
  * Submit handlers call previewThenImport(previewArg, doImport).
