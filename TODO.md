@@ -2,194 +2,28 @@
 
 Roadmap for upcoming work on LN-Translator.
 
-## DONE 2026-06-11 (later same day): phase16 thought-italics + phase17 flow-seams
+History note (2026-06-11): completed phase logs (workflow review + phase12-14, ch392/phase14 residue sessions, twkan rescrape, phase15 adversarial WW audit, phase16 thought-italics, phase17 flow-seams) were pruned from this file; the full records live in this file's git history, the data/ memos (opus_ab_phase15_memo.md, opus_ab_phase17_memo.md, battery_phase17_results.md, rules_ledger.md, flow_awkward_inventory.md), and the project memory files.
 
-User follow-ups to phase15: (1) "internal thoughts should still be italics for all
-characters" (reverses phase15's roman default; user preference outranks the WW corpus
-on this axis), (2) main focus = how sentences sound and flow; title economy is
-deprioritized ("whatever", keep what shipped, no more work there).
+## Follow-up the user may pick up: stale back-catalog wrong words
 
-- phase16-thought-italics-1 (666d175): base.md + xianxia overlay restore the italic
-  mandate for every character's marked thought; the brief's contradicting "plain roman
-  text, not italics" line removed in BOTH DBs (data/fix_brief_thought_italics.py);
-  ww_metrics thought_format flag inverted (now flags marked-thought sources with zero
-  italic spans).
-- Flow evidence round: 53-item editorial awkwardness inventory over the p15 battery
-  (data/flow_awkward_inventory.md; COLD-ABUT 18, CALQUE-SHAPE 8, OVER-SPLIT 7,
-  CUT-IN 5...) + pro flow band (data/flow_pro_band.md). KEY INSIGHT: aggregate flow
-  metrics were already INSIDE the pro band; the real gap is seam-level (the model
-  drops source-marked logical turns 然而/所以/毕竟 and abuts cold sentences).
-- phase17-flow-seams-1 (a7f09fa): marked turns are content (land as connective/hinge),
-  relative-clause cut-ins fold into the subject, fronted participials re-seat,
-  dependent clauses never strand as stubs, name re-opens runs only under ambiguity,
-  gnomic exposition unrolls as plain reasoning, one marked-turn worked example.
-- Ship gate PASSED (data/opus_ab_phase17_memo.md, p16 vs p17 battery): 53-spot diff =
-  30 FIXED / 21 same / 0 worse; zero invented-relation connectives; +4 raw violations
-  adjudicated false-positive or isolated; thought italics persist. Battery files
-  data/opus_p16_ch*.txt / opus_p17_ch*.txt + data/battery_phase17_results.md.
-- Live ch424/425/427 re-retranslated on phase17 (comma stamp held, italics back:
-  424=6 spans, 427=9, 425=0 with none marked in source). EXE rebuilt (phase17 bundle
-  verified) + both Windows assets re-uploaded to v0.1.0-beta.1. The user's running app
-  is still an older build from dist\ (alternate-distpath build parked at
-  %LOCALAPPDATA%\Temp\ln-dist-phase17\): RESTART the app to translate on phase17
-  in-app.
-- Watch items (memo): "as the words fell" calque single instance; ch414 unmarked
-  interior panic rendered as spoken quotes once; one noun-run spot; COLD-ABUT moved
-  9/18, room remains if the user still hears flat seams.
+User report 2026-06-11: the translator "doesn't use the most appropriate word" (off-register everyday diction + wrong-sense words), seen in chapters up to ~423. Diagnosis: those chapters are stale phase3-phase6 era translations predating the phase7/8/14/15/17 diction and register fixes; no prompt lever (style anchor included) changes already-committed text, only retranslation applies the current stack.
 
-## DONE 2026-06-11: adversarial full-stack rule audit vs Wuxiaworld corpus (phase15 shipped)
+- Saved plan: `C:\Users\Roych\.claude\plans\stale-catalog-wrong-words-verification.md`. One-chapter verification: retranslate a stale chapter (default ch400, or one the user names) on the DEV DB under phase17, word-diff vs the stale live text, report quoted before/after pairs.
+- If verified fixed: decide on selective back-catalog retranslation (user's call, subscription cost; forward-only stance otherwise stands).
+- If wrong words persist under phase17, lever ladder in cost order: populate the EMPTY novel-2 `style_note` (zero code), add sense-trap brief lines from concrete examples, glossary `usage_note`s; the exemplar-prose style-anchor feature (paste admired published prose into every prompt as a register sample) is the LAST resort, single-variable A/B-gated with an exemplar-leakage check.
 
-Trigger: user read live ch424 (a stale phase5 translation) showing the comma-to-period
-stamp defect plus the standing "lacking vs a WW pro" gap. Binding directive: every
-translation-governing rule is presumed faulty and must justify being kept with evidence
-from professional wuxiaworld.com translations; scope covers base.md, the xianxia
-overlay + examples, the runtime template (translators/base.py), refiner.py, the novel-2
-custom_style_brief, glossary policy/data, and the structural tests that pin them.
-Plan file: C:\Users\Roych\.claude\plans\certain-issues-like-period-purring-volcano.md
+## Open user decisions / watch items (do not act without the user)
 
-- WS1 DONE: live ch424/425/427 retranslated onto phase14/claude-opus-4-8 through the
-  production queue (backup novels.pre-forward-retranslate.20260611-013543.db.gz; no hand
-  edits lost). Stale-inventory root cause confirmed: of 137 done chapters only 15 were
-  current-stack; the user chose forward-only scope, back catalog (ch1-423) left alone.
-- RESIDUAL LIVE MISS: ch424 opening 剑阁，极天崖。STILL period-splits under phase14
-  ("Sword Pavilion. Extreme Heaven Cliff."), while ch429 renders the same shape with a
-  comma. The base.md comma-hinge clause ("or its own sentence when the clause stands
-  alone") is the suspected hatch; on trial in Phase C with this chapter pair as evidence.
-- Artifacts so far: data/ww_corpus/ (10 chapters, 6 novels, 7 translators, ~27k words,
-  INDEX.md), data/rules_ledger.md (143 rules, 8 sources, 5 pre-flagged conflicts).
-- Trials DONE (6 bundles, data/rule_trials/, 100% ledger coverage verified) + positive-gap
-  read (data/positive_gaps.md). Verdict spread: most rules corpus-validated; the flat
-  WW contradictions were asterisk-italic inner thought (zero italic thought across all
-  7 pro translators) and the staccato single-verb action mandate.
-- phase15-ww-adversarial-1 SHIPPED (b1c8212): comma-hinge hatch closed (noun-phrase
-  scene stamps stay comma-joined; subject+finite-verb required to split), inner thought
-  defaults to plain roman (brief-only italics opt-in), action mode rebalanced, new
-  exposition scene mode, title-economy tell + action worked example, fidelity
-  drop-clause scoped to facts, example English genericized, refiner softening clauses
-  removed, em dashes out of model-facing strings, locked-term casing now matches
-  possessive forms (apostrophe sat in the boundary lookahead; 5 new tests). 1471 tests.
-- Ship gate PASSED: 4-chapter battery (401/414/427/437, dev, claude-opus-4-8), phase14
-  vs phase15, memo data/opus_ab_phase15_memo.md. Better on 4 axes (thoughts 25 to 0
-  italic spans ch401, full-title repeats 11 to 4 ch437, archaic tells 2 to 0, banned
-  words 4 to 2), tied on 5 incl. the fidelity spot-check (zero drops), worse on none
-  reader-visible (sentence-shape 3 to 6, all cosmetic, itemized in the memo).
-- Live ch424/425/427 re-retranslated under phase15: ch424 now opens "Sword Pavilion,
-  Extreme Heaven Cliff." (the user-flagged defect, fixed in stored text).
-- Glossary data fixed both DBs (data/fix_glossary_ww_audit.py): 势力 -> "faction /
-  power" lowercase note, 中期/初期 hyphenated; 气/后期 rows absent (no-op); the morning
-  scorer flags were 6/7 false positives (full evidence in bundle F memo).
-- EXE rebuilt (phase15 bundle verified) + both Windows assets re-uploaded to
-  v0.1.0-beta.1 with --clobber. NOTE: the user's running app is the OLD phase14 EXE
-  running from dist\, so dist\ could not be swapped; fresh build parked at
-  %LOCALAPPDATA%\Temp\ln-dist-phase15\. Until the app is restarted on the new build,
-  in-app translations still run phase14.
-
-### Open user decisions / watch items (do not act without the user)
-
-- Brief thought-format scope: the novel-2 brief says roman for HIS (protagonist) inner
-  thought; the model reads that contrast as license to keep italics for other
-  characters (live ch427: 15 italic spans). One-line brief edit ("for every character")
-  would finish the job; brief is user-owned.
-- ALL-CAPS SFX ("BOOM.") vs pro sentence-case ("Smack!"): corpus had no battle chapter,
-  evidence thin; kept as-is.
-- Units 里 -> miles: RWX uses meters; user policy (2026-06-09) kept, logged as
-  user-decision in bundle A.
-- GLOS-TITLELEN: pros run pronoun:title at 3.6-6.1:1, we were 1.6-2.6:1; phase15 moved
-  it (11 to 4 on ch437). Further lever = glossary short-handle field (feature work).
-- Back catalog: ~119 stale chapters (ch1-423, phase4/5 stacks) deliberately left per
-  user's forward-only choice; the wave-driver design in the plan file covers a later
-  batch if wanted.
-- Dev battery watch: ch414 coined name 天语馄烨龙章 romanized inconsistently; pin with a
-  glossary entry if it recurs.
-
-## DONE 2026-06-10: translation workflow review (prompt load + model sustainability)
-
-Shipped 2026-06-10 (phase12+13 compiled v2 stack + phase14 english-cadence pass,
-EXE rebuilt and release re-uploaded). Phase D's blocked-on-memo-read gate was
-resolved by the user's explicit ship-now decision during the ch392 defect
-session; the A/B memo (data/opus_ab_phase_c_memo.md) remains available to read.
-
-### Verdicts and directives (binding)
-
-- **Sonnet is a FAILURE** (user ruling 2026-06-10): disqualified on translation latency and failure rate. Full-size calls through the claude_agent SDK timed out at 600s repeatedly (4+ attempts across 3 battery runs) while tiny probes and direct CLI calls passed; best theory is the saturated five-hour subscription window queuing large requests, but even passing runs were too slow. Do NOT re-attempt Sonnet benchmarking.
-- **Target model for prompt benchmarking is Opus** (`claude-opus-4-8`). Don't benchmark prompt changes on fable (user directive: "not sustainable" for benchmark batteries). Clarified 2026-06-10: fable is NOT forbidden as a provider; the user may select it per-novel like any other model.
-- **Benchmark method (user-specified)**: score outputs against the PROMPT'S OWN RULE CATEGORIES — violations / checkable opportunities per category, with quoted examples — not just surface register metrics.
-
-### Findings already established (do not re-derive)
-
-- Composed system instruction: ~5,000 words / ~7k tokens (base.md 2,714 + xianxia overlay 1,048 + examples 815 + precedence ladder + ~330-word brief), ~150 constraints, ~3:1 instruction-to-content ratio per call. Dynamic blocks are lean (chapter-filtered glossary was 56 rows / ~1.4KB for ch427).
-- Three structural problems: (1) phases 7-11 tuned on fable only; (2) duplication/scar tissue across layers; (3) one call does four jobs (title + prose + glossary compliance + TERMS extraction) — future lever, kept for now.
-- `prompt_snapshot` instrumentation fixed (base.py stamps the exact prompt after caching).
-
-### Remaining tasks (in order)
-
-1. ~~Opus arm~~ DONE 2026-06-10: provider id=5 -> claude-opus-4-8, novel 3 pointed at it (data/setup_opus_ab.py); scratch sonnet id=6 deleted.
-2. ~~Rule-category compliance scorer~~ DONE: data/ww_metrics.py rules_report (violations/reviews/opportunities + quotes per category; reuses backend body_correctness_observations; respects "lowercase" usage notes).
-3. ~~Phase A~~ DONE: outputs data/opus_baseline_ch*.txt, memo data/opus_baseline_matrix.md. Headlines: thought-format conflict (overlay italic beat brief roman via ladder), negative-example contamination (4 banned constructions reproduced verbatim from ch427-mined examples), 35 invented ellipses, locked-term misses.
-4. ~~Phase B~~ DONE: phase12-novel-voice-compiled-1 (commit 94f8908). base 1,409 w / overlay 654 / examples 430 (was 4,569 total). Examples genericized; brief owns thought formatting; no-added-trail-off rule.
-5. ~~Phase C~~ DONE: v2 outputs data/opus_v2_ch*.txt + fable sanity data/fable_v2_ch427.txt. A/B memo: data/opus_ab_phase_c_memo.md. v2 equal-or-better on 10/11 mechanical categories (protagonist italics 15->3, archaic/cleft/calque fixed); regressions: "slew" x2 near All-Slaying + 3 judgment-grade idiom/phrase instances on ch427 traced to cut novel-mined examples. Fable live-lane sanity PASS.
-6. ~~Phase D — ship~~ DONE 2026-06-10: shipped together with the phase14 english-cadence pass after the user's ship-now decision (ch392 defect session). Full pytest (1450+), dev Opus validation retranslate of ch392 (all six checks passed: clean title, dashes preserved, 神道 as "the gods", profanity at force, recomposed cadence, rules_report no-regression), EXE rebuilt + smoked, release assets re-uploaded, dev provider wiring restored.
-
-### Ch392 defect session (2026-06-10, same-day follow-up)
-
-User read of live ch392 surfaced five defects; all fixed and shipped:
-- Dash mangling (fixup damage, the worst): enforce_em_dash deleted source —— interruption/suspension dashes ("you, !!!", orphaned "The next instant," paragraphs, comma-welded BOOM paragraphs). Fixed via _dash_protected (keep before punctuation / closing quote / newline / end-of-text; kept runs collapse to one em-dash). Committed chapters repaired via data/repair_dash_damage.py (segment-anchored splice from raw cache replay): live 38/38 applied + ch392 title SQL fix, 2 live skips were already hand-fixed; dev 1 applied + ch392 spot fix, 10 old-epoch skips left alone. Backups: novels.pre-dash-repair.*.db.gz in each data root.
-- Author update markers in titles (（第四更！）): stripped at prompt time + zh-gated normalize backstop (parser.strip_title_update_marker).
-- 神道 -> "no Dao": missing glossary entry added both DBs with metonymy usage_note + base.md no-sub-entry-capture clause.
-- Profanity softening (狗日的 -> "damned"): base.md calibration bullet.
-- Chinese comma-chain cadence: phase14 (see above).
-
-### Phase14 residue session (2026-06-10 late evening, same-day follow-up) — DONE
-
-User read tonight's 15 fresh chapters (phase14-english-cadence-1, claude_agent /
-claude-opus-4-8) and reported both the cadence pass and the title-marker strip
-"didn't totally pass". Full-replay attribution (_apply_text_fixups re-run on raw
-llm_cache bodies) reproduced committed text byte-for-byte for 14/15 chapters:
-the PROMPT WORKED (raw prose recomposed, fluent); every visible defect was the
-deterministic layer or glossary data. Findings and fixes, all shipped:
-
-- Title residue = ONE chapter (ch426): twkan rescrape truncated the source title
-  mid-marker (（晚上还有三更, no closing paren), defeating both the closed-paren
-  strip and its zh-gate. Fixed: end-anchored _TITLE_NOISE_OPEN_RE (ad982d3);
-  title repaired in DB. The 21 pending marker titles are closed-paren shapes the
-  existing regex already handles.
-- Fixup defects (ad982d3 + 063eb86, all test-first): dash before closing `*`
-  now protected ("*This man is, *"); dash after copula joins without dash
-  ("Its name was, the X"); one-word beat paragraphs no longer comma-weld
-  ("fantasy, BOOM." now period + standalone BOOM); up-caser skips rewrites that
-  would down-case inside Title-Case neighborhoods ("...Peak-Moving righteous
-  Dharma"); sentence-head capital wins over lowercase-lead canonicals.
-- Glossary data class (the volume leader): generic nouns locked Title-Case in
-  trusted categories stamped caps mid-sentence ("the Devil is vicious", "every
-  Sect", "icy Abyss", "all Creation dimmed", "spiritual Qi of Heaven and
-  Earth"). Hatched (lowercase term_en + lowercase note) in BOTH DBs:
-  魔/宗门/门派/深渊/造化/昭顯/邪祀/天地之气 + 天人 (term_en only, context-cased), then
-  audit-approved 神光(太乙)/地狱/紅塵/天意. Audit method: fire-scan all 1,387
-  atomic targets over 40 recent texts; only ~10 real offenders, the single-word
-  suspects (Academy/Elder/Faction/...) never fire. data/fix_glossary_generic_casing.py.
-- Out-of-band edit found: ch396 carried 3 phrase rewrites no fixup can produce
-  ("fruition attainment embryo" -> canonical, leaving "a Embryonic"); a parallel
-  glossary-session propagation, not the pipeline. Article fixed.
-- Repairs: data/repair_phase14_fixup_damage.py full-replay splice (valid because
-  replay==committed held) rewrote 13 live chapters + ch426 title; dev ch392
-  repaired the same way; gzip backup novels.pre-phase14-repair.db.gz; idempotent.
-
-### Rescrape (user finding 2026-06-10) — DONE, both DBs applied
-
-69shuba scrape left the LIVE DB novel 2 with 23 missing chapters (53,96,187,233,237,249,392,396,405,413,422,426,428,429,492,522,542,546,550,586,614,619,1322) + 5 short ones. Authoritative source now twkan.com/book/78813.html (1,454 numbered chapters; traditional script converted locally to simplified + 「」->“” to match existing data). Tool: data/rescrape_twkan.py (scrape = resumable cache in data/twkan_cache/; apply = gzip backup then replace original_text/title_zh + insert missing as pending; translations untouched).
-
-Status 2026-06-10: applied wholesale to BOTH DBs (live novel 2: 1451 rows; dev novel 3: 1446 + 5 inserts; ch 101/108/118 kept old text, twkan pages broken-short). The first live apply corrupted structure (whole chapter in title_zh, quad-newline paragraph gaps): write_text/read_text newline translation double-fault, see docs/gotchas.md. Script fixed (LF cache + CR-strip reader + exact keep-same so reruns repair/no-op) and re-applied; verified clean on both DBs. Apply now also strips obfuscated twkan ad paragraphs (math-alphanumeric / circled / squared / small-caps domains, ⊥-interleaved promo, GOOGLE搜索TWKAN) that the scrape-time noise filter missed. Battery sources changed: future scorer runs reflect the twkan edition (it HAS trail-off dots the old edition stripped, so re-measure the invented-ellipsis category).
-
-### Loose ends
-
-- `data/` scratch scripts are local-only by design (gitignored): setup_opus_ab.py, rescrape_twkan.py, save_battery_texts.py, ww_metrics.py, the memos, plus older sonnet probes.
-- ~~Glossary-data cleanup surfaced by the A/B~~ DONE 2026-06-10 (data/fix_glossary_shendao.py, both DBs): 巅峰 -> "peak" + lowercase note, 萬眾一心 re-pointed to simplified 万众一心, 香火 idiom-sense usage_note, plus the new 神道 entry.
-- Deferred watch items: TERMS-extraction split-out as a future workflow lever; colon density; divergent 正法 renders left alone deliberately; fable invented-ellipsis trait (model-level, not stack).
+- RESTART the running app on a current build: live ch428-435 still translated under phase14 (the running EXE bundles the old prompt stack; phase15+17 fixes only reach new translations after restart). Fresh builds were uploaded to v0.1.0-beta.1 and parked at `%LOCALAPPDATA%\Temp\ln-dist-phase17\` (dist\ was locked by the running app).
+- GLOS-TITLELEN further lever: a glossary short-handle field (feature work, user's call). Phase15 already moved pronoun:title from 11 to 4 on ch437; pros run 3.6-6.1:1.
+- Dev battery watch: ch414 coined name 天语馄烨龙章 romanized inconsistently; pin with a glossary entry if it recurs.
+- Phase17 watch items (data/opus_ab_phase17_memo.md): "as the words fell" calque (single instance); ch414 unmarked interior panic rendered as spoken quotes once; COLD-ABUT moved 9/18, room remains if the user still hears flat seams.
+- Scorer note for future batteries: sources are now the twkan edition (it HAS trail-off dots the old edition stripped), so re-measure the invented-ellipsis category before trusting it.
+- Deferred workflow lever: split TERMS extraction out of the translate call; colon density; fable invented-ellipsis trait (model-level, not stack).
 
 ## Translation quality
 
 - [ ] Optimize translator and refinement prompts
-  - [x] Reframe `backend/prompts/base.md` and the per-genre overlays into a concise novelist's brief (2026-05-29); refiner prompt reframed the same way.
   - Expand `backend/prompts/examples/<genre>.md` worked examples where coverage is thin.
   - Re-baseline against a fixture chapter per genre after each prompt revision.
 
