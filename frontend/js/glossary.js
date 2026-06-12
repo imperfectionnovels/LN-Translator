@@ -1079,3 +1079,19 @@ async function load() {
 }
 
 load();
+
+// The page fetches once at init, but the data is editable from elsewhere
+// (the reader's term popover and revise form, another tab, the phone), and
+// the packaged app has no reload key. Catch up whenever the page returns
+// to the foreground or is restored from the back/forward cache, skipping
+// when a refresh would clobber in-progress edit state.
+function refreshIfIdle() {
+  if (editingId != null || addOpen || selected.size > 0) return;
+  load();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshIfIdle();
+});
+window.addEventListener("pageshow", (ev) => {
+  if (ev.persisted) refreshIfIdle();
+});

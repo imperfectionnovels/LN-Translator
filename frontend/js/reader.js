@@ -1529,8 +1529,8 @@ function showTermEditPop(span, entry, side) {
       </select>
     </div>
     <div class="row"><label style="width:64px;">Locked</label>
-      <input id="te-lock" type="checkbox"${entry.locked ? " checked" : ""}>
-      <span class="muted" style="font-size:11.5px;">Editing locks automatically.</span>
+      <input id="te-lock" type="checkbox" checked>
+      <span class="muted" style="font-size:11.5px;">Uncheck to allow auto-updates.</span>
     </div>
     <div id="te-err" class="muted" style="color: var(--signal-error); min-height: 1em;"></div>
     <div class="actions">
@@ -1600,12 +1600,21 @@ function showTermEditPop(span, entry, side) {
     const newLock = lockChk.checked;
     const oldEn = (entry.term_en || "").trim();
 
-    // Build the PATCH body from changed fields only. Skip the request
-    // entirely if nothing changed (avoid a useless lock bump).
+    // Build the PATCH body from changed fields only, comparing the lock
+    // checkbox against its RENDERED default (checked) rather than the row:
+    // an untouched form stays a no-op instead of a surprise lock bump.
     const patch = {};
     if (newEn !== oldEn) patch.term_en = newEn;
     if (newCat !== (entry.category || "other")) patch.category = newCat;
-    if (newLock !== !!entry.locked) patch.locked = newLock;
+    if (Object.keys(patch).length === 0 && newLock) { close(); return; }
+    // Ship the lock state explicitly whenever a field changed or it
+    // differs from the row. An unchecked box must reach the server as
+    // locked=false, or update_entry's implicit lock-on-edit would
+    // override the opt-out; a checked box on an unlocked row locks it,
+    // matching what the checkbox shows.
+    if (Object.keys(patch).length > 0 || newLock !== !!entry.locked) {
+      patch.locked = newLock;
+    }
     if (Object.keys(patch).length === 0) { close(); return; }
 
     const saveBtn = pop.querySelector("[data-act='save']");
@@ -2175,12 +2184,13 @@ function showReviseForm(entry, rect) {
   formEl = document.createElement("div");
   formEl.className = "sel-form";
   const cats = ["character","place","technique","item","other","idiom"];
-  // Surface the "this PATCH will implicitly lock the entry" behavior. The
-  // server's update_entry() flips locked=1 on any non-locked field change
-  // unless locked is passed explicitly. Showing a checkbox here lets the
-  // user opt OUT of the implicit lock for a quick correction they don't
-  // want to make permanent.
-  const lockedChecked = entry.locked ? "checked" : "";
+  // The Locked checkbox renders CHECKED regardless of the row's current
+  // state: a revision is an endorsement of the new rendering, and the
+  // server's update_entry() would implicitly lock on any edit anyway.
+  // Unchecking is the explicit opt-out. It used to default to the row's
+  // current state, which for auto-detected entries silently sent
+  // locked=false and let the next translation's merge_new_terms revert
+  // the user's rendering (the upsert overwrites WHERE locked = 0).
   const wasAutoTag = entry.locked ? "" : "<span class=\"sel-form-tag\">was auto</span>";
   formEl.innerHTML = `
     <div class="muted">Revise glossary term ${wasAutoTag}</div>
@@ -2194,7 +2204,7 @@ function showReviseForm(entry, rect) {
     <div class="row"><label style="width:60px;">Notes</label><input id="gf-notes" value="${escapeHtml(entry.notes || "")}" placeholder="optional"></div>
     <div class="row"><label style="width:60px;">Locked</label>
       <label style="display:flex;align-items:center;gap:6px;font-size:0.95em;">
-        <input type="checkbox" id="gf-locked" ${lockedChecked}>
+        <input type="checkbox" id="gf-locked" checked>
         <span class="muted">Protect from auto-overwrite by future translations</span>
       </label>
     </div>

@@ -277,3 +277,21 @@ async function load() {
   }
 }
 load();
+
+// Catch up on edits made elsewhere whenever the page returns to the
+// foreground or comes back from the back/forward cache. Every card field
+// here is a live input, so skip while the user is mid-edit (focus inside
+// the rows), the add form is open, or the apply-choice dialog is up: a
+// re-render would clobber their typing.
+function refreshIfIdle() {
+  if (!addForm.hidden) return;
+  if (applyChoiceDlg && applyChoiceDlg.open) return;
+  if (rowsEl.contains(document.activeElement)) return;
+  load();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshIfIdle();
+});
+window.addEventListener("pageshow", (ev) => {
+  if (ev.persisted) refreshIfIdle();
+});

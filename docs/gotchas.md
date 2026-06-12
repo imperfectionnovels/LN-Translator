@@ -280,3 +280,24 @@ Found 2026-06-11 on `.app-toast` (caught in review) and `.fr-undo-bar` (latent
 since the undo bar shipped: it rendered a permanently visible phantom Undo
 strip). Grep candidates: any class with `display:` that JS toggles with
 `.hidden =` or `setAttribute("hidden", ...)`.
+
+## Explicit `locked: false` in a glossary PATCH defeats lock-on-edit
+
+`update_entry` implicitly locks an entry when any field changes, but only
+when the caller says nothing about `locked`. A payload that includes
+`locked: false` is honored as an explicit opt-out, and `merge_new_terms`
+overwrites `term_en` AND `category` of every unlocked row (`ON CONFLICT ...
+WHERE locked = 0`) on each subsequent translation that re-extracts the term.
+
+The reader's Revise form used to default its Locked checkbox to the row's
+CURRENT state and always sent it. For auto-detected entries (unlocked, the
+ones users correct most) a routine revision therefore shipped
+`locked: false`, and the next chapter translation silently reverted the
+user's rendering to the model's (reported 2026-06-11 as "reader edits don't
+update the glossary tab"). The merge also does not bump `updated_at`, so
+the revert leaves no timestamp trail.
+
+Rule: a lock checkbox in any edit form must default to the POST-SAVE state
+(checked), never to the row's pre-save state, and unchecking is the explicit
+opt-out. Send `locked` explicitly when the box is untouched-but-meaningful
+only if other fields changed; an untouched form should stay a no-op.
