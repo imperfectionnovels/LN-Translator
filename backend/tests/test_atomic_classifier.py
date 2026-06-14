@@ -145,6 +145,9 @@ def test_classifier_generic_lexicon_overrides_category() -> None:
         # Second batch (317-323 audit): bare common nouns.
         ("Treasure", "item"), ("Talisman", "item"), ("Reincarnation", "other"),
         ("Bloodline", "item"), ("Heart Demons", "other"),
+        # Third batch (translator-audit 2026-06-14): abstract cultivation-state
+        # nouns, including ones that landed in a trusted named category.
+        ("Perfection", "technique"), ("Realm", "place"), ("Realm", "other"),
     ]:
         assert is_atomic_case_locked_term(_entry(term, category=cat)) is False, term
 
@@ -152,7 +155,11 @@ def test_classifier_generic_lexicon_overrides_category() -> None:
 def test_classifier_named_compound_of_generic_still_atomic() -> None:
     # The lexicon matches the FULL term_en, so a named compound that merely
     # contains a generic word is still a proper term (force-cased / not lexicon).
-    for term in ("Spirit Treasure", "Five Thunders Talisman", "True Dragon Bloodline"):
+    for term in (
+        "Spirit Treasure", "Five Thunders Talisman", "True Dragon Bloodline",
+        # Third-batch generics must not swallow their named compounds.
+        "Nascent Soul Realm", "Great Perfection",
+    ):
         assert is_atomic_case_locked_term(_entry(term, category="item")) is True, term
 
 

@@ -39,6 +39,15 @@ GENERIC_LOWERCASE = frozenset({
     # membership test is on the FULL term_en string, never a substring.
     "treasure", "talisman", "reincarnation", "bloodline",
     "heart demon", "heart demons",
+    # Third batch (translator-audit 2026-06-14): abstract cultivation-state
+    # nouns the extractor minted Title-Cased, which then read as proper nouns
+    # both in the prompt glossary block (training the register) and, when locked
+    # into a named category, force-cased into prose by enforce_locked_term_casing.
+    # 圆满 "perfection" and 境界 "realm" are generic in every xianxia novel and
+    # are seeded from the ch.421 ground-truth revision. Full-string membership
+    # keeps named compounds safe (Nascent Soul Realm, Great Perfection are not
+    # this string), exactly as the prior batches' compound guards do.
+    "perfection", "realm",
 })
 
 # A freshly extracted English term that is *entirely* a rank/grade/tier

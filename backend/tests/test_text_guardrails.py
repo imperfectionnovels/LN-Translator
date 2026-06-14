@@ -660,6 +660,19 @@ def test_locked_term_casing_skips_generic_rank_rows() -> None:
     assert n == 0
 
 
+def test_locked_term_casing_generic_in_named_category_not_upcased() -> None:
+    # D1 root: a generic abstract that landed in a trusted named category
+    # ('perfection' as a technique) must NOT be force-up-cased into prose. The
+    # enforcer only guards against DOWN-casing proper-noun compounds; the guard
+    # for the generic case is upstream — `perfection` is in GENERIC_LOWERCASE, so
+    # is_atomic_case_locked_term drops it and the enforcer never targets it.
+    g = [_atomic_entry("Perfection", category="technique")]
+    text = "He was drawn closer to perfection with each breath."
+    out, n = enforce_locked_term_casing(text, g)
+    assert "closer to perfection" in out
+    assert n == 0
+
+
 def test_locked_term_casing_idempotent() -> None:
     g = [_atomic_entry("Fruition Attainment", category="other")]
     text = "He reached fruition attainment swiftly."
