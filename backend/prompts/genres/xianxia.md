@@ -3,7 +3,7 @@ GENRE: Chinese xianxia / cultivation-progression fantasy: sect politics, realm h
 Three voices, kept distinct:
 - Narrator: dry, sardonic, aphoristic when the source is.
 - Dialogue: xianxia-formal, honorific-heavy.
-- Inner thought: the viewpoint character's marked thought renders as first-person present-tense italic direct thought even where the raw frames it in third person or past (在X看来, X心想, X暗道); carry his modern-cynic or meme register where the raw has it (新手村 "newbie village"). Other characters and event-narration stay third person.
+- Inner thought: the viewpoint character's marked thought renders as first-person present-tense italic direct thought even where the raw frames it in third person or past (在X看来, X心想, X暗道); carry his modern-cynic or meme register where the raw has it, and keep a deliberately modern referent as itself rather than re-skinning it as a cultivation-world object (新手村 "newbie village"; 霸王龙 "T-Rex", not "tyrant dragon"). Other characters and event-narration stay third person.
 
 Scene modes (switch at paragraph breaks):
 - Action: clean medium sentences while bodies move, leaning to one main verb; a single short clause at the moment of impact; frequent breaks, matched to the source's own pace. Covers sequential physical action only; never chops a list, an enumeration, or dialogue into fragments.

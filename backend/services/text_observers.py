@@ -81,6 +81,52 @@ def detect_mt_texture(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Residual-CJK detection: untranslated ideographs left in the English output
+# ---------------------------------------------------------------------------
+
+# Runs of Han ideographs that survived into the English: a glossary term the
+# model never rendered, or an OCR-garbled source token copied straight through.
+# Scoped strictly to CJK ideographs (U+3400-U+9FFF: Unified + Extension A) so it
+# never trips on intentional romanized names ("Hong Yun") or fullwidth
+# punctuation; only literal Han characters in the output fire it.
+_RESIDUAL_CJK_RE = re.compile(r"[㐀-鿿]+")
+_RESIDUAL_CJK_MAX_FLAGS = 5
+
+
+def detect_residual_cjk(text: str) -> list[str]:
+    """Flag runs of CJK ideographs left untranslated in the English output.
+
+    A run is a maximal span of Han ideographs (U+3400-U+9FFF). Counts distinct
+    runs and returns a single issue string listing up to five, most frequent
+    first, with a ``(+N more)`` suffix when the distinct count exceeds five.
+    Returns ``[]`` when the text is empty or carries no ideographs, so a
+    romanized name like "Hong Yun" never fires. Output-only by design: callers
+    pass the English text, never the Chinese source."""
+    if not text:
+        return []
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for m in _RESIDUAL_CJK_RE.finditer(text):
+        run = m.group(0)
+        if run not in counts:
+            counts[run] = 0
+            order.append(run)
+        counts[run] += 1
+    if not counts:
+        return []
+    # Most frequent first; first-appearance order breaks ties deterministically.
+    first_seen = {run: i for i, run in enumerate(order)}
+    distinct = sorted(counts, key=lambda r: (-counts[r], first_seen[r]))
+    shown = distinct[:_RESIDUAL_CJK_MAX_FLAGS]
+    parts = "; ".join(f"'{run}' ({counts[run]}x)" for run in shown)
+    msg = f"residual CJK in output: {parts}"
+    extra = len(distinct) - len(shown)
+    if extra > 0:
+        msg += f" (+{extra} more)"
+    return [msg]
+
+
+# ---------------------------------------------------------------------------
 # Calqued-structure detection: what-clefts and orphan "Which" fragments
 # ---------------------------------------------------------------------------
 
@@ -882,6 +928,7 @@ def body_correctness_observations(
     mt_tells = detect_mt_texture(en_text)
     if mt_tells:
         found.append("mt-texture tics: " + "; ".join(mt_tells))
+    found.extend(detect_residual_cjk(en_text))
     found.extend(detect_what_cleft(en_text))
     found.extend(detect_orphan_which_clause(en_text))
     found.extend(detect_double_possessive(en_text, glossary))
