@@ -81,6 +81,124 @@ def detect_mt_texture(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Calqued-structure detection: what-clefts and orphan "Which" fragments
+# ---------------------------------------------------------------------------
+
+# Two translation-tic structures that carry CN topic-prominence into English
+# and read as non-native flow (audited 2026-06-14). They are NOT auto-fixed —
+# recasting a cleft or joining an orphan clause is a meaning-preserving rewrite
+# the model/refiner must do, not a regex transform. These observers give the
+# per-chapter count so a prompt or refiner change can be measured.
+#
+# base.md:32 already bans the what-cleft; this is the telemetry that surfaces
+# the adherence failures, plus the 这说明-calque "Which …" continuation that no
+# existing rule names.
+
+# Anchors a sentence start: string start, a terminal-punctuation+space, or a
+# newline. Shared by both structure detectors.
+_SENTENCE_START = r"(?:^|[.!?…”’\"]\s+|\n\s*)"
+
+# Sentence-initial "What … was/were/is/are …" with at least two words between
+# "What" and the copula. The word gate excludes the common question forms
+# ("What was that?", "What is this?") where the copula sits right after "What";
+# a genuine what-cleft always has a full clause first ("What he wanted was …").
+# Tokens exclude terminal punctuation so a match never spans two sentences.
+_WHAT_CLEFT_RE = re.compile(
+    _SENTENCE_START
+    + r"(What\b(?:\s+[^\s.!?…]+){2,10}?\s+(?:was|were|is|are)\b)"
+)
+
+# Sentence-initial "Which" + (optional connective) + a reporting/copular verb —
+# the 这说明 / 这意味着 calque rendered as a standalone fragment ("Which showed
+# that …"). Narrow to "Which" on purpose: "This showed …" is valid English, so
+# only the antecedent-less relative pronoun is flagged.
+_ORPHAN_WHICH_VERBS = (
+    "showed", "shows", "meant", "means", "proved", "proves",
+    "indicated", "indicates", "suggested", "suggests",
+    "demonstrated", "demonstrates", "explained", "explains",
+    "was", "is",
+)
+_ORPHAN_WHICH_RE = re.compile(
+    _SENTENCE_START
+    + r"(Which\b(?:\s+(?:also|only|in\s+turn|then|further|just|again))?\s+"
+    + r"(?:" + "|".join(_ORPHAN_WHICH_VERBS) + r")\b)"
+)
+
+_STRUCTURE_MAX_FLAGS = 5
+
+
+def _next_terminal_is_question(text: str, start: int) -> bool:
+    """True when the first sentence-terminal after `start` is a '?'.
+
+    Used to drop interrogatives the structure patterns can otherwise catch
+    ("Which is correct?", "What was that, really?"). When no terminal follows
+    (end of text), the span is treated as a statement (returns False)."""
+    m = re.search(r"[.!?…]", text[start:])
+    return bool(m) and m.group(0) == "?"
+
+
+def _collect_structure_spans(pattern: re.Pattern, text: str) -> list[str]:
+    """Return up to `_STRUCTURE_MAX_FLAGS` distinct statement spans matched by
+    `pattern`, skipping any whose sentence ends in a question mark."""
+    flagged: list[str] = []
+    seen: set[str] = set()
+    for m in pattern.finditer(text):
+        if _next_terminal_is_question(text, m.start(1)):
+            continue
+        span = m.group(1).strip()
+        key = span.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        flagged.append(span)
+        if len(flagged) >= _STRUCTURE_MAX_FLAGS:
+            break
+    return flagged
+
+
+def detect_what_cleft(text: str) -> list[str]:
+    """Flag sentence-initial what-clefts ("What he wanted was the future").
+
+    These violate the existing base.md:32 ban; this observer surfaces the
+    adherence failures. Fires on the first hit (no density gate); returns one
+    issue string listing up to five distinct spans. Interrogatives are
+    excluded via the trailing-question-mark check."""
+    if not text:
+        return []
+    flagged = _collect_structure_spans(_WHAT_CLEFT_RE, text)
+    if not flagged:
+        return []
+    quoted = ", ".join(f'"{s}…"' for s in flagged)
+    return [
+        f"What-cleft structure(s): {quoted}. Recast into a plain "
+        f"subject-verb sentence (\"What he wanted was X\" → \"He wanted X\") — "
+        f"the cleft carries CN topic-emphasis (是…的) into English and reads "
+        f"as a translation tic (base.md:32)."
+    ]
+
+
+def detect_orphan_which_clause(text: str) -> list[str]:
+    """Flag sentence-initial "Which showed/meant/…" relative fragments.
+
+    The 这说明 / 这意味着 calque: a relative clause punctuated as its own
+    sentence with no antecedent. Fires on the first hit (no density gate);
+    returns one issue string with up to five distinct spans. "This showed …"
+    (a valid demonstrative subject) is deliberately not flagged."""
+    if not text:
+        return []
+    flagged = _collect_structure_spans(_ORPHAN_WHICH_RE, text)
+    if not flagged:
+        return []
+    quoted = ", ".join(f'"{s}…"' for s in flagged)
+    return [
+        f"Orphan 'Which' clause(s): {quoted}. A relative clause is punctuated "
+        f"as its own sentence with no antecedent (这说明 / 这意味着 calque). "
+        f"Join it to the previous sentence, or recast with a real subject "
+        f"(\"This showed that …\")."
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Double-possessive detection (regex shared with text_fixups.enforce_*)
 # ---------------------------------------------------------------------------
 
@@ -764,6 +882,8 @@ def body_correctness_observations(
     mt_tells = detect_mt_texture(en_text)
     if mt_tells:
         found.append("mt-texture tics: " + "; ".join(mt_tells))
+    found.extend(detect_what_cleft(en_text))
+    found.extend(detect_orphan_which_clause(en_text))
     found.extend(detect_double_possessive(en_text, glossary))
     found.extend(detect_intensifier_inflation_on_glossary_term(en_text, glossary))
     found.extend(detect_mid_sentence_paragraph_break(en_text))
