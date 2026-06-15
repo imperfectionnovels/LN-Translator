@@ -43,7 +43,14 @@ def client(monkeypatch):
         from backend.models import TranslationResult
         return TranslationResult(title_en="EN", translated_text="translated", new_terms=[])
 
+    # The lifespan probe round-trips the default provider, which shells out to a
+    # real translator CLI (e.g. `claude`). Stub it so the suite needs no CLI
+    # installed; without this, setup errors on any host lacking the binary (CI).
+    async def _no_probe(default_provider):
+        return None
+
     monkeypatch.setattr("backend.services.queue.translate_chapter", _fake_translate)
+    monkeypatch.setattr("backend.main._probe_backends", _no_probe)
     with TestClient(app) as c:
         yield c
 
