@@ -44,6 +44,15 @@ class TypeEntry:
     auth: Literal["subscription", "api_key", "none"]
     base_url_default: str | None = None
     secret_ref_hint: str | None = None
+    # For `subscription`-auth types that ALSO accept an optional long-lived
+    # token (e.g. Claude Code's `claude setup-token` → CLAUDE_CODE_OAUTH_TOKEN,
+    # required for headless use after the 2026-06-15 Agent-SDK credit-pool
+    # change). When set, the Settings form fixes the provider's secret_ref to
+    # this value and surfaces an inline token field (stored in the OS keychain),
+    # so the subscription backend can authenticate without a loose env var.
+    # None for subscription types that have no token (codex/gemini/opencode use
+    # their own CLI login). Never used by api_key types (they use secret_ref_hint).
+    subscription_token_ref: str | None = None
     # When True, the Model dropdown appends an "Other (custom ID)…" option
     # that reveals a free-text input. ALWAYS True today — a hardcoded list
     # would block users when a new model ships before the catalog updates.
@@ -147,8 +156,9 @@ _CATALOG: tuple[TypeEntry, ...] = (
         display="Claude Agent SDK (local subscription)",
         group="Subscription",
         auth="subscription",
-        install_hint="Uses your local Claude Code subscription via the Agent SDK — no API key needed. Just make sure you're logged into Claude Code.",
-        auth_command="claude login",
+        install_hint="Runs on your Claude subscription via the Agent SDK (no API key, no API credits). Since 2026-06-15, headless use draws from your subscription's monthly Agent-SDK credit and needs a subscription token: run `claude setup-token`, then paste it below (stored in your OS keychain).",
+        auth_command="claude setup-token",
+        subscription_token_ref="CLAUDE_CODE_OAUTH_TOKEN",
         models=_CLAUDE_MODELS,
     ),
     TypeEntry(
@@ -156,8 +166,9 @@ _CATALOG: tuple[TypeEntry, ...] = (
         display="Claude CLI (subprocess, subscription)",
         group="Subscription",
         auth="subscription",
-        install_hint="Spawns the `claude` CLI as a subprocess. Install Claude Code from https://docs.claude.com/claude-code, then log in once from your terminal.",
-        auth_command="claude login",
+        install_hint="Spawns the `claude` CLI on your Claude subscription (no API key, no API credits). Install Claude Code from https://docs.claude.com/claude-code. Since 2026-06-15, headless `claude -p` draws from your subscription's monthly Agent-SDK credit and needs a subscription token: run `claude setup-token`, then paste it below (stored in your OS keychain).",
+        auth_command="claude setup-token",
+        subscription_token_ref="CLAUDE_CODE_OAUTH_TOKEN",
         models=_CLAUDE_MODELS,
     ),
     TypeEntry(
@@ -384,6 +395,7 @@ def to_api_payload() -> list[dict]:
             "auth": entry.auth,
             "base_url_default": entry.base_url_default,
             "secret_ref_hint": entry.secret_ref_hint,
+            "subscription_token_ref": entry.subscription_token_ref,
             "supports_custom_model": entry.supports_custom_model,
             "install_hint": entry.install_hint,
             "auth_command": entry.auth_command,

@@ -36,8 +36,9 @@ from backend.config import (
     CLAUDE_AGENT_TRANSLATOR_MODEL,
     CLAUDE_CLI_PATH,
 )
-from backend.services.providers import Provider
+from backend.services.providers import Provider, resolve_secret
 from backend.services.translators._subprocess_utils import (
+    claude_sdk_env_overrides,
     resolve_binary,
     system_prompt_file_for,
 )
@@ -166,6 +167,13 @@ class ClaudeAgentTranslator(BaseTranslator):
         # collide in llm_cache.
         if provider is not None and provider.model_id:
             self.model_id = provider.model_id
+        # Subscription OAuth token (`claude setup-token`) for the 2026-06-15
+        # credit-pool change — resolved from the provider's secret_ref and
+        # injected as CLAUDE_CODE_OAUTH_TOKEN into the SDK's CLI subprocess
+        # (see _sdk_core / claude_subprocess_env). NULL secret_ref → None →
+        # local `claude login` session (or an inherited env var). Never an
+        # API key: this is a subscription backend.
+        self._oauth_token = resolve_secret(provider) if provider is not None else None
         self._semaphore = asyncio.Semaphore(self.max_parallel)
         # System-prompt file is written lazily per call (one file per
         # genre+brief hash) because the system instruction is now genre-aware
@@ -343,6 +351,13 @@ class ClaudeAgentTranslator(BaseTranslator):
             skills=[],
             agents={},
             include_partial_messages=False,
+            # Inject the subscription OAuth token (post-credit-pool auth) into
+            # the CLI subprocess the SDK spawns. The SDK merges this on top of
+            # the inherited env, and CLAUDE_CODE_OAUTH_TOKEN is auth precedence
+            # #1, so the call runs on the subscription's Agent-SDK credit, never
+            # API credits. Token-only override (not a full env). See
+            # claude_sdk_env_overrides.
+            env=claude_sdk_env_overrides(self._oauth_token),
         )
         result_parts: list[str] = []
         async for msg in query(prompt=user_prompt, options=options):

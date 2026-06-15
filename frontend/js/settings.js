@@ -195,15 +195,39 @@ function applyTypeDefaults(typeKey, { keepUserValues = false } = {}) {
     els.fBaseUrl.value = entry.base_url_default || "";
   }
 
-  // Secret env var input + inline API-key field: only for api_key types.
-  els.fSecretRow.hidden = !isApiKey;
-  if (!keepUserValues || !els.fSecret.value) {
+  // Secret handling.
+  // - api_key types: editable secret_ref name + inline key field (create only).
+  // - subscription types with an optional token (Claude CLI / Agent SDK after
+  //   the 2026-06-15 credit-pool change): the secret_ref name is FIXED, so we
+  //   keep the name field hidden but set it behind the scenes, and show an
+  //   inline token field on create AND edit, so the `claude setup-token` value
+  //   can be pasted / rotated in one save. Stored in the OS keychain. (Edit
+  //   shows the token field too, so rotating is a one-form change.)
+  const subToken = isSubscription ? (entry.subscription_token_ref || null) : null;
+  els.fSecretRow.hidden = !isApiKey;  // editable name field: api_key types only
+  if (subToken) {
+    els.fSecret.value = subToken;     // fixed ref name, set behind the scenes
+  } else if (!keepUserValues || !els.fSecret.value) {
     els.fSecret.value = entry.secret_ref_hint || "";
   }
   const creating = !els.fId.value;
-  els.fSecretValueRow.hidden = !(creating && isApiKey);
+  const showSecretValue = (creating && isApiKey) || !!subToken;
+  els.fSecretValueRow.hidden = !showSecretValue;
+  const secretValueLabel = els.fSecretValueRow.querySelector("label");
   if (els.fSecretValueRow.hidden) {
     els.fSecretValue.value = "";
+  } else if (subToken) {
+    els.fSecretValue.value = "";  // never prefill a stored secret
+    els.fSecretValue.placeholder = "paste your `claude setup-token` output";
+    if (secretValueLabel) {
+      secretValueLabel.innerHTML =
+        'Subscription token <span class="secret-hint">(optional; from '
+        + '<code>claude setup-token</code>, stored in OS keychain, never in the database)</span>';
+    }
+  } else if (secretValueLabel) {
+    els.fSecretValue.placeholder = "paste your key here";
+    secretValueLabel.innerHTML =
+      'API key <span class="secret-hint">(stored in OS keychain; never written to the database)</span>';
   }
 }
 
@@ -356,6 +380,14 @@ function providerStatus(p) {
     ? entry.auth === "api_key"
     : (p.provider_type === "gemini" || p.provider_type === "deepseek");
   if (!needsSecret) {
+    // Subscription types that accept an optional token (Claude after the
+    // credit-pool change): reflect whether one is stored, so a "Key" button
+    // never sits next to a misleading "no secret needed".
+    if (entry?.subscription_token_ref) {
+      return p.secret_ref
+        ? { kind: "ok", hint: "Subscription token stored (Click Key to rotate)" }
+        : { kind: "warn", hint: "Needs a subscription token. Edit and run `claude setup-token`" };
+    }
     const hint = entry?.auth === "none"
       ? "Local. No secret needed"
       : "No secret needed (subscription / local auth)";
@@ -693,6 +725,17 @@ async function handleFormSubmit(e) {
       }
     } else {
       await api.updateProvider(id, fields);
+      // Store/rotate an inline secret on edit too. Subscription-token types
+      // (Claude) show the token field on edit; api_key types hide it, so this
+      // is a no-op for them. updateProvider set secret_ref first, so the
+      // set-secret route resolves it.
+      const keyVal = (els.fSecretValue.value || "").trim();
+      if (keyVal) {
+        try { await api.setProviderSecret(id, keyVal); }
+        catch (secretErr) {
+          await confirmDialog({ title: "Saved, token not stored", body: `<p>${escapeHtml(secretErr.message)}</p><p>Use the per-row "Key" button to retry.</p>`, okText: "OK", cancelText: "" });
+        }
+      }
     }
     els.dialog.close();
     els.fSecretValue.value = "";

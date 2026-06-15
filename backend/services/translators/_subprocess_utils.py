@@ -44,6 +44,49 @@ def resolve_binary(binary: str) -> str:
     return resolved or binary
 
 
+def claude_subprocess_env(oauth_token: str | None = None) -> dict[str, str]:
+    """Environment for a Claude Code CLI subprocess — used by the `claude_cli`
+    backend (direct Popen) and the `claude_agent` backend (ClaudeAgentOptions.env).
+
+    The Claude backends are **subscription-only** by design; the separate
+    `anthropic_api` provider type is the paid pay-as-you-go path. Claude Code's
+    auth precedence ranks ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN ABOVE the
+    subscription OAuth login, so if either var is present in the environment the
+    CLI would silently bill to API credits instead of the user's subscription.
+    Strip both — a hard guardrail enforcing "subscription, never API credits".
+
+    When `oauth_token` is provided (a `claude setup-token` value, resolved from
+    the provider's keychain entry / env var), inject it as CLAUDE_CODE_OAUTH_TOKEN
+    — the headless-safe credential and auth precedence #1, so it deterministically
+    runs the call on the subscription's Agent-SDK credit. When None, the CLI falls
+    back to the local `claude login` session in ~/.claude (which an inherited
+    CLAUDE_CODE_OAUTH_TOKEN env var, if the user set one, still satisfies because
+    os.environ is copied through)."""
+    env = os.environ.copy()
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    return env
+
+
+def claude_sdk_env_overrides(oauth_token: str | None = None) -> dict[str, str]:
+    """Env *overrides* for the `claude_agent` SDK's CLI subprocess.
+
+    Unlike the `claude_cli` Popen path (which gets a full replacement env via
+    `claude_subprocess_env`), the Agent SDK MERGES `ClaudeAgentOptions.env` on
+    top of the inherited process environment — `{**os.environ, ..., **options.env}`.
+    A merge can only add/override keys, not remove them, so we can't strip
+    ANTHROPIC_API_KEY here (and setting it to "" would authenticate with an empty
+    key → 401). Instead we rely on auth precedence: CLAUDE_CODE_OAUTH_TOKEN is #1,
+    above ANTHROPIC_API_KEY (#2) and subscription OAuth (#5), so injecting the
+    token deterministically runs the call on the subscription's Agent-SDK credit
+    even if a stray API key is present in the environment. Passing a full
+    os.environ copy here would be wrong — it would clobber the SDK's own
+    CLAUDE_CODE_ENTRYPOINT / CLAUDECODE handling. So: token-only, or empty."""
+    return {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token} if oauth_token else {}
+
+
 def build_argv(args: list[str]) -> list[str]:
     """Wrap a CLI invocation through `cmd /c` when the resolved binary is a
     Windows batch file (`.cmd` / `.bat`). Python 3.13 tightened subprocess

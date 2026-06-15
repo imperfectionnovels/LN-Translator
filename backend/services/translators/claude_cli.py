@@ -44,11 +44,12 @@ import subprocess
 import tempfile
 
 from backend.config import CLAUDE_CLI_PATH, CLAUDE_CLI_TRANSLATOR_MODEL
-from backend.services.providers import Provider
+from backend.services.providers import Provider, resolve_secret
 
 from ._claude_errors import classify as _classify_cli_error
 from ._subprocess_utils import (
     build_argv,
+    claude_subprocess_env,
     kill_process_tree,
     resolve_binary,
     system_prompt_file_for,
@@ -83,8 +84,15 @@ class ClaudeCliTranslator(BaseTranslator):
     max_parallel = 1
 
     def __init__(self, provider: Provider | None = None) -> None:
-        # claude_cli auth is the local Claude install's subscription — no
-        # API key to thread through. Provider only contributes model_id.
+        # claude_cli auth is the local Claude install's subscription. As of the
+        # 2026-06-15 credit-pool change, headless `claude -p` usage must present
+        # a subscription OAuth token (`claude setup-token`) to authenticate;
+        # we store it under the provider's secret_ref and resolve it here, then
+        # inject it as CLAUDE_CODE_OAUTH_TOKEN into the subprocess env. NULL
+        # secret_ref → None → fall back to the local `claude login` session
+        # (or an inherited CLAUDE_CODE_OAUTH_TOKEN env var). No API key path:
+        # this is a subscription backend.
+        self._oauth_token = resolve_secret(provider) if provider is not None else None
         if provider is not None and provider.model_id:
             self.model_id = provider.model_id
         self._semaphore = asyncio.Semaphore(1)
@@ -184,6 +192,10 @@ class ClaudeCliTranslator(BaseTranslator):
             # project's CLAUDE.md/AGENTS.md and inject the coding-repo dev guide
             # into a literary-translation call (~13 KB of stray context, verified).
             cwd=tempfile.gettempdir(),
+            # Subscription-only env: injects the OAuth token (post-credit-pool
+            # auth) and strips any ANTHROPIC_API_KEY so billing can never fall
+            # through to pay-as-you-go API credits. See claude_subprocess_env.
+            env=claude_subprocess_env(self._oauth_token),
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.to_thread(
