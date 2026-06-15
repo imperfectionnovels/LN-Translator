@@ -80,6 +80,23 @@ def _model_family_effort(model_id: str) -> str:
         return "high"
     return CLAUDE_AGENT_TRANSLATOR_EFFORT
 
+
+# Substrings (in the CLI's error text) that mean the upstream API connection
+# dropped mid-request — transient, should retry, not hard-fail. The Claude CLI
+# surfaces these as AssistantMessage.error="unknown" with the real text in a
+# TextBlock, e.g. "API Error: The socket connection was closed unexpectedly".
+_CONNECTION_DROP_MARKERS = (
+    "socket connection was closed",
+    "socket hang up",
+    "connection error",
+    "connection closed",
+    "connection reset",
+    "econnreset",
+    "etimedout",
+    "fetch failed",
+    "network error",
+)
+
 # Extended thinking ("effort") can split one chapter response across more than
 # one SDK turn (a thinking turn, then the text turn), so a hard max_turns=1
 # makes the SDK abort a thinking model mid-response with "Reached maximum number
@@ -399,7 +416,7 @@ class ClaudeAgentTranslator(BaseTranslator):
         async for msg in query(prompt=user_prompt, options=options):
             if isinstance(msg, AssistantMessage):
                 if msg.error:
-                    self._raise_assistant_error(msg.error)
+                    self._raise_assistant_error(msg)
                 for block in msg.content:
                     if isinstance(block, TextBlock):
                         result_parts.append(block.text)
@@ -429,27 +446,60 @@ class ClaudeAgentTranslator(BaseTranslator):
             )
         return "".join(result_parts)
 
-    def _raise_assistant_error(self, err: str) -> None:
+    @staticmethod
+    def _assistant_error_detail(msg: AssistantMessage) -> str:
+        """Pull the human-readable failure text the CLI tucked into the message:
+        any TextBlock content (e.g. "API Error: The socket connection was closed
+        unexpectedly") plus the stop_reason. The bare error label ("unknown") is
+        useless alone; this is what makes the failure diagnosable and lets us
+        spot a dropped connection."""
+        parts = [
+            block.text.strip()
+            for block in (getattr(msg, "content", None) or [])
+            if isinstance(block, TextBlock) and block.text and block.text.strip()
+        ]
+        detail = " ".join(parts)[:300].strip()
+        sr = getattr(msg, "stop_reason", None)
+        if sr:
+            detail = f"{detail} (stop_reason={sr})" if detail else f"stop_reason={sr}"
+        return detail
+
+    def _raise_assistant_error(self, msg: AssistantMessage) -> None:
+        err = getattr(msg, "error", None) or "unknown"
+        detail = self._assistant_error_detail(msg)
+        suffix = f" Detail: {detail}" if detail else ""
+
         if err == "rate_limit":
             raise TransientTranslatorError(
                 "Claude subscription rate limit hit. Wait for your 5-hour "
-                "window to reset, then click Start to resume."
+                "window to reset, then click Start to resume." + suffix
             )
         if err == "authentication_failed":
             raise ClaudeAgentError(
                 "Claude Agent SDK is not authenticated. Run `claude` in a "
-                "terminal to log in, then restart the server."
+                "terminal to log in, then restart the server." + suffix
             )
         if err == "billing_error":
             raise ClaudeAgentError(
-                "Claude subscription billing issue. Check your account before retrying."
+                "Claude subscription billing issue. Check your account before "
+                "retrying." + suffix
             )
-        if err == "server_error":
-            raise TransientTranslatorError(
-                "Claude upstream server error. Click Translate again later to retry."
+        # Transient: an unclassified ("unknown") or server error, OR a dropped
+        # API connection (the CLI reports "API Error: socket connection closed"
+        # with error="unknown"). Raise a retryable ConnectionError so
+        # _call_sdk_with_retry retries it with backoff instead of hard-failing
+        # the chapter and dead-stopping the queue on one network blip. If the
+        # retries exhaust, that loop surfaces a TransientTranslatorError, so the
+        # chapter stays unchanged/retryable.
+        is_connection_drop = any(m in detail.lower() for m in _CONNECTION_DROP_MARKERS)
+        if err in ("unknown", "server_error") or is_connection_drop:
+            logger.warning(
+                "Claude Agent SDK transient error (%s) — will retry.%s",
+                err, suffix or " <no detail captured>",
             )
-        # invalid_request / unknown / anything else — permanent for this call.
-        raise ClaudeAgentError(f"Claude Agent SDK error: {err}")
+            raise ConnectionError(f"Claude Agent SDK {err}.{suffix}")
+        # invalid_request / anything else genuinely unexpected — permanent.
+        raise ClaudeAgentError(f"Claude Agent SDK error: {err}.{suffix}")
 
     def _raise_result_error(self, msg: ResultMessage) -> None:
         status = msg.api_error_status
