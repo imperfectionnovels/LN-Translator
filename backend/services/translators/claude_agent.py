@@ -32,6 +32,7 @@ from claude_agent_sdk import (
 )
 
 from backend.config import (
+    CLAUDE_AGENT_CALL_TIMEOUT,
     CLAUDE_AGENT_TRANSLATOR_EFFORT,
     CLAUDE_AGENT_TRANSLATOR_MODEL,
     CLAUDE_CLI_PATH,
@@ -54,8 +55,15 @@ logger = logging.getLogger(__name__)
 
 # Hard upper bound on a single chapter call. The SDK does the same Node.js
 # subprocess work the CLI backend does, just amortized — give the same
-# headroom for cold-disk / first-call warmup as the CLI backend.
-_CALL_TIMEOUT_SECONDS = 600.0
+# headroom for cold-disk / first-call warmup as the CLI backend. Sourced from
+# config (CLAUDE_AGENT_CALL_TIMEOUT, default 600s) so a slow chapter can be
+# given headroom via env without a rebuild; was previously a hardcoded 600.
+_CALL_TIMEOUT_SECONDS = CLAUDE_AGENT_CALL_TIMEOUT
+
+# Effort levels the Agent SDK accepts (blank = omit the option). Mirrors the
+# validation set in config.py so a per-provider params["effort"] override is
+# checked the same way.
+_VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 # Extended thinking ("effort") can split one chapter response across more than
 # one SDK turn (a thinking turn, then the text turn), so a hard max_turns=1
@@ -155,7 +163,7 @@ class ClaudeAgentTranslator(BaseTranslator):
         the system-instruction body. Mirrors DeepSeek's revN pattern."""
         return (
             f"{self.name}:{self.model_id}"
-            f":opus47-think{CLAUDE_AGENT_TRANSLATOR_EFFORT or 'off'}"
+            f":opus47-think{self._effort or 'off'}"
         )
 
     def __init__(self, provider: Provider | None = None) -> None:
@@ -174,6 +182,19 @@ class ClaudeAgentTranslator(BaseTranslator):
         # local `claude login` session (or an inherited env var). Never an
         # API key: this is a subscription backend.
         self._oauth_token = resolve_secret(provider) if provider is not None else None
+        # Thinking-effort is PER-PROVIDER (provider.params["effort"]), falling
+        # back to the global CLAUDE_AGENT_TRANSLATOR_EFFORT default. This lets a
+        # Sonnet provider run at a lower effort than the Opus-tuned global
+        # default without changing the shipped default: effort=high makes
+        # Sonnet 4.6 spiral into runaway extended thinking (250k+ output
+        # tokens/chapter, blowing the call timeout), so the user can dial it
+        # down per provider. Invalid / absent values fall through to the global.
+        provider_effort = None
+        if provider is not None:
+            raw = provider.params.get("effort")
+            if isinstance(raw, str) and raw.strip().lower() in _VALID_EFFORTS:
+                provider_effort = raw.strip().lower()
+        self._effort = provider_effort or CLAUDE_AGENT_TRANSLATOR_EFFORT
         self._semaphore = asyncio.Semaphore(self.max_parallel)
         # System-prompt file is written lazily per call (one file per
         # genre+brief hash) because the system instruction is now genre-aware
@@ -310,8 +331,9 @@ class ClaudeAgentTranslator(BaseTranslator):
             # the SDK's own default applies; "low" effectively disables it.
             # ThinkingBlock items the SDK streams are filtered out below by
             # the `isinstance(block, TextBlock)` check, so thinking output never
-            # lands in the envelope payload.
-            effort=CLAUDE_AGENT_TRANSLATOR_EFFORT or None,
+            # lands in the envelope payload. Per-provider (self._effort): a
+            # Sonnet provider can run lower than the Opus-tuned global default.
+            effort=self._effort or None,
             # Pass the system prompt as a file reference, not an inline string —
             # see system_prompt_file_for in _subprocess_utils for the cap rationale.
             # File path derives from a hash of self.system_instruction, so a
