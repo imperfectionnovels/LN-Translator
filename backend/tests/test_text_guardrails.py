@@ -22,13 +22,13 @@ from backend.main import app
 from backend.models import GlossaryEntry
 from backend.services import queue
 from backend.services.text_fixups import (
+    _is_numeric_range,
     enforce_brackets,
     enforce_em_dash,
     enforce_locked_term_casing,
     enforce_spaced_hyphen_dash,
     enforce_stem_branch_casing,
 )
-from backend.services.text_fixups import _is_numeric_range
 from backend.services.text_observers import (
     detect_double_possessive,
     detect_glossary_predicate_loss,

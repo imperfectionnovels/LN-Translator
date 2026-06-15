@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from backend.services.text_fixups import enforce_mid_sentence_comma_break
 
-
 # ---------------------------------------------------------------------------
 # Comma / semicolon breaks ARE joined
 # ---------------------------------------------------------------------------

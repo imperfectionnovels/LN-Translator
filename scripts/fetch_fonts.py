@@ -10,12 +10,10 @@ Requires: fonttools, brotli  (pip install fonttools brotli)
 No runtime deps added; this script is never packaged.
 """
 
-import os
 import re
 import sys
-import json
-import urllib.request
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 # ---------------------------------------------------------------------------

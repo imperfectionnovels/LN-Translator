@@ -8,8 +8,8 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "==> python -m ruff check backend" -ForegroundColor Cyan
-python -m ruff check backend
+Write-Host "==> python -m ruff check ." -ForegroundColor Cyan
+python -m ruff check .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> python -m compileall backend" -ForegroundColor Cyan

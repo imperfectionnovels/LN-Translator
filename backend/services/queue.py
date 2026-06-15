@@ -31,10 +31,10 @@ from backend.config import (
     PROMPT_INCLUDE_STYLE_NOTE,
 )
 from backend.db import open_conn
-from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services import global_glossary as global_glossary_svc
 from backend.services import glossary as glossary_svc
 from backend.services import tm as tm_svc
+from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services.observations import (
     NormalizedObservation,
     implicit_observation_glossary_merge_error,

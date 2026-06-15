@@ -267,8 +267,6 @@ async def test_worker_order_respects_priority(monkeypatch, fresh_db) -> None:
 
     processed_order: list[int] = []
 
-    original_translate = queue_svc.translate_chapter
-
     async def _recording_translate(source, title, glossary, **kwargs):
         # Identify which chapter is being processed by looking up the
         # translating row. We return a minimal stub result.

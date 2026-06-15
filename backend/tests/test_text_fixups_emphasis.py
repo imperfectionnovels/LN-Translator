@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from backend.services.text_fixups import enforce_balanced_emphasis
 
-
 # ---------------------------------------------------------------------------
 # Stray (unpaired) delimiters are removed
 # ---------------------------------------------------------------------------

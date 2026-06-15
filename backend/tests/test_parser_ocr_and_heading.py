@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from backend.services.parser import detect_ocr_issues, split_leading_heading
 
-
 # ============================================================
 # split_leading_heading
 # ============================================================

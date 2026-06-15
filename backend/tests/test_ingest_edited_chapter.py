@@ -8,7 +8,6 @@ from backend.models import GlossaryEntry
 from backend.scripts.ingest_edited_chapter import (
     _align_pairs,
     _apply_fixups,
-    _changed_case_terms,
     _classify,
     _split_paras,
 )

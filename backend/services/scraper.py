@@ -169,7 +169,7 @@ class ScrapeResult:
 # can import it at module scope (no scraper<->recipe import cycle). Re-exported
 # here for back-compat: routes/translate.py and others still do
 # `from backend.services.scraper import ScrapeError`.
-from backend.services.scrapers.base import ScrapeError  # noqa: E402,F401
+from backend.services.scrapers.base import ScrapeError  # noqa: E402,F401,I001
 
 
 # ---- SSRF guard ------------------------------------------------------------

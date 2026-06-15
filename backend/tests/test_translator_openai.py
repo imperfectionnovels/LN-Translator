@@ -12,10 +12,16 @@ network call.
 from __future__ import annotations
 
 import os
+import types
 
+import httpx
+import openai
 import pytest
 
+from backend.models import TokenUsage
 from backend.services.providers import Provider
+from backend.services.translators import _openai_errors
+from backend.services.translators.base import TransientTranslatorError
 from backend.services.translators.openai import OpenAITranslator
 
 _SECRET_ENV = "LN_TEST_OPENAI_KEY"
@@ -88,15 +94,6 @@ def test_classic_model_without_cap_omits_token_fields() -> None:
 # (OpenAITranslator) with a STUBBED async client so no network call happens,
 # and monkeypatch asyncio.sleep to a no-op so the backoff schedule doesn't
 # actually wait.
-
-import types
-
-import httpx
-import openai
-
-from backend.models import TokenUsage
-from backend.services.translators import _openai_errors
-from backend.services.translators.base import TransientTranslatorError
 
 
 def _bare_translator(model_id: str = "gpt-4o") -> OpenAITranslator:
