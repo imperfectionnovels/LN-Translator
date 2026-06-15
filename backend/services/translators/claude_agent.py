@@ -65,6 +65,21 @@ _CALL_TIMEOUT_SECONDS = CLAUDE_AGENT_CALL_TIMEOUT
 # checked the same way.
 _VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
+
+def _model_family_effort(model_id: str) -> str:
+    """Default thinking effort by model family. Sonnet and Haiku spiral into
+    runaway extended thinking at high effort (250k+ output tokens for a single
+    chapter, blowing the call timeout), so they default to "low". Opus, Fable,
+    and Mythos calibrate high-effort thinking well, so they default to "high".
+    Unknown models fall back to the global CLAUDE_AGENT_TRANSLATOR_EFFORT. An
+    explicit provider params["effort"] still overrides this."""
+    m = (model_id or "").lower()
+    if "sonnet" in m or "haiku" in m:
+        return "low"
+    if "opus" in m or "fable" in m or "mythos" in m:
+        return "high"
+    return CLAUDE_AGENT_TRANSLATOR_EFFORT
+
 # Extended thinking ("effort") can split one chapter response across more than
 # one SDK turn (a thinking turn, then the text turn), so a hard max_turns=1
 # makes the SDK abort a thinking model mid-response with "Reached maximum number
@@ -182,19 +197,18 @@ class ClaudeAgentTranslator(BaseTranslator):
         # local `claude login` session (or an inherited env var). Never an
         # API key: this is a subscription backend.
         self._oauth_token = resolve_secret(provider) if provider is not None else None
-        # Thinking-effort is PER-PROVIDER (provider.params["effort"]), falling
-        # back to the global CLAUDE_AGENT_TRANSLATOR_EFFORT default. This lets a
-        # Sonnet provider run at a lower effort than the Opus-tuned global
-        # default without changing the shipped default: effort=high makes
-        # Sonnet 4.6 spiral into runaway extended thinking (250k+ output
-        # tokens/chapter, blowing the call timeout), so the user can dial it
-        # down per provider. Invalid / absent values fall through to the global.
+        # Thinking-effort is chosen by MODEL FAMILY: Sonnet/Haiku default to
+        # "low" (they spiral into runaway extended thinking at high effort, e.g.
+        # 250k+ output tokens/chapter that blow the call timeout), Opus/Fable/
+        # Mythos default to "high" (they calibrate deep thinking well). An
+        # explicit provider params["effort"] still overrides the family default;
+        # unknown models fall back to the global CLAUDE_AGENT_TRANSLATOR_EFFORT.
         provider_effort = None
         if provider is not None:
             raw = provider.params.get("effort")
             if isinstance(raw, str) and raw.strip().lower() in _VALID_EFFORTS:
                 provider_effort = raw.strip().lower()
-        self._effort = provider_effort or CLAUDE_AGENT_TRANSLATOR_EFFORT
+        self._effort = provider_effort or _model_family_effort(self.model_id)
         self._semaphore = asyncio.Semaphore(self.max_parallel)
         # System-prompt file is written lazily per call (one file per
         # genre+brief hash) because the system instruction is now genre-aware

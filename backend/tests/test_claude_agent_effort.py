@@ -1,10 +1,10 @@
-"""Per-provider thinking-effort for the claude_agent backend.
+"""Model-family thinking-effort policy for the claude_agent backend.
 
-effort=high makes Sonnet 4.6 spiral into runaway extended thinking (250k+ output
-tokens/chapter) that blows the call timeout. Effort is therefore resolved
-per-provider from `provider.params["effort"]`, falling back to the global
-CLAUDE_AGENT_TRANSLATOR_EFFORT default — so a Sonnet provider can run lower than
-the Opus-tuned global default without changing the shipped default.
+Sonnet/Haiku spiral into runaway extended thinking at high effort (250k+ output
+tokens/chapter, blowing the call timeout), so they default to "low"; Opus/Fable/
+Mythos calibrate deep thinking well, so they default to "high". An explicit
+provider params["effort"] overrides the family default; unknown models fall back
+to the global CLAUDE_AGENT_TRANSLATOR_EFFORT.
 """
 
 from __future__ import annotations
@@ -14,37 +14,52 @@ from backend.config import CLAUDE_AGENT_TRANSLATOR_EFFORT
 from backend.services.providers import Provider
 
 
-def _prov(params: dict) -> Provider:
+def _prov(model_id: str = "claude-sonnet-4-6", params: dict | None = None) -> Provider:
     return Provider(
         id=1,
         name="Claude Agent SDK",
         provider_type="claude_agent",
         base_url=None,
-        model_id="claude-sonnet-4-6",
-        params=params,
+        model_id=model_id,
+        params=params or {},
         secret_ref=None,  # avoid keyring/env lookup in resolve_secret
     )
 
 
-def test_effort_from_provider_params_overrides_global():
-    t = ca.ClaudeAgentTranslator(_prov({"effort": "low"}))
-    assert t._effort == "low"
-    # cache key must reflect it so a low-effort run can't collide with a
-    # high-effort cache entry for the same model.
-    assert "thinklow" in t.cache_identity()
+def test_sonnet_and_haiku_default_to_low():
+    assert ca.ClaudeAgentTranslator(_prov("claude-sonnet-4-6"))._effort == "low"
+    assert ca.ClaudeAgentTranslator(_prov("claude-haiku-4-5-20251001"))._effort == "low"
 
 
-def test_effort_case_and_whitespace_normalized():
-    t = ca.ClaudeAgentTranslator(_prov({"effort": "  LOW "}))
-    assert t._effort == "low"
+def test_opus_fable_mythos_default_to_high():
+    assert ca.ClaudeAgentTranslator(_prov("claude-opus-4-8"))._effort == "high"
+    assert ca.ClaudeAgentTranslator(_prov("claude-opus-4-6"))._effort == "high"
+    assert ca.ClaudeAgentTranslator(_prov("claude-fable-5"))._effort == "high"
+    assert ca.ClaudeAgentTranslator(_prov("claude-mythos-5"))._effort == "high"
 
 
-def test_invalid_effort_falls_back_to_global():
-    t = ca.ClaudeAgentTranslator(_prov({"effort": "bogus"}))
-    assert t._effort == CLAUDE_AGENT_TRANSLATOR_EFFORT
+def test_explicit_params_override_wins_over_family():
+    # Power-user override beats the family default, both directions.
+    assert ca.ClaudeAgentTranslator(_prov("claude-sonnet-4-6", {"effort": "high"}))._effort == "high"
+    assert ca.ClaudeAgentTranslator(_prov("claude-opus-4-8", {"effort": "low"}))._effort == "low"
+    # cache key reflects the effort so runs can't collide across levels.
+    assert "thinkhigh" in ca.ClaudeAgentTranslator(_prov("claude-sonnet-4-6", {"effort": "high"})).cache_identity()
 
 
-def test_absent_params_use_global_default():
-    assert ca.ClaudeAgentTranslator(_prov({}))._effort == CLAUDE_AGENT_TRANSLATOR_EFFORT
-    # No-provider construction (legacy/global path) also uses the global default.
-    assert ca.ClaudeAgentTranslator(None)._effort == CLAUDE_AGENT_TRANSLATOR_EFFORT
+def test_invalid_override_falls_back_to_family():
+    assert ca.ClaudeAgentTranslator(_prov("claude-sonnet-4-6", {"effort": "bogus"}))._effort == "low"
+    assert ca.ClaudeAgentTranslator(_prov("claude-opus-4-8", {"effort": "bogus"}))._effort == "high"
+
+
+def test_override_normalized_case_and_whitespace():
+    assert ca.ClaudeAgentTranslator(_prov("claude-opus-4-8", {"effort": "  LOW "}))._effort == "low"
+
+
+def test_unknown_model_uses_global_default():
+    assert ca.ClaudeAgentTranslator(_prov("some-unknown-model"))._effort == CLAUDE_AGENT_TRANSLATOR_EFFORT
+
+
+def test_no_provider_uses_class_model_family():
+    # No provider -> class-default model_id; effort follows its family.
+    t = ca.ClaudeAgentTranslator(None)
+    assert t._effort == ca._model_family_effort(ca.ClaudeAgentTranslator.model_id)
