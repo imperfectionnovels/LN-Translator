@@ -80,6 +80,17 @@ _BRACKETED_RE = re.compile(r"【([^【】]+)】")
 # space/joiners, word joiner).
 _INVISIBLE_CHARS = ("﻿", "​", "‌", "‍", "⁠")
 
+# CJK title / quote / square-bracket glyphs are typographic wrappers around a
+# term (《天剑诀》, 「索唤」, 【系统】). The source raws use the bare term, so a
+# curated entry stored wrapped (the user's convention for technique/scripture
+# names) must fold to the bare form for matching, or the literal-string key
+# splits it into a separate row and the wrapped entry never matches the source.
+# Folded for comparison only; the stored term_zh is never rewritten. ASCII /
+# fullwidth parentheses （） () are DELIBERATELY excluded: entries like
+# `护法 (幡)`, `练气 (碧阳)` use parens as human disambiguation annotations, and
+# stripping them would cross-merge two distinct curated rows.
+_WRAP_BRACKETS = ("《", "》", "〈", "〉", "「", "」", "『", "』", "〔", "〕", "【", "】")
+
 
 def _normalize_line_endings(s: str) -> str:
     return s.replace("\r\n", "\n").replace("\r", "\n")
@@ -88,18 +99,22 @@ def _normalize_line_endings(s: str) -> str:
 def canonical_zh(s: str) -> str:
     """Script-fold a Chinese string for duplicate detection.
 
-    Strips BOM / zero-width characters, NFC-normalizes, and folds traditional
-    Han to simplified, so 索喚 (traditional) and 索唤 (simplified) — the same
-    name — compare equal. Used ONLY for comparison: the stored `term_zh` is
-    never rewritten, so the glossary keeps displaying exactly what the user or
-    the translator produced.
+    Strips BOM / zero-width characters, drops wrapping CJK title/quote/square
+    brackets (《》〈〉「」『』〔〕【】), NFC-normalizes, and folds traditional Han
+    to simplified, so 索喚 (traditional) and 索唤 (simplified), and 《上皓金盞玉光》
+    and bare 上皓金盏玉光, compare equal. ASCII/fullwidth parentheses are
+    preserved (they carry disambiguation annotations, not typographic wrapping).
+    Used ONLY for comparison: the stored `term_zh` is never rewritten, so the
+    glossary keeps displaying exactly what the user or the translator produced.
 
     The glossary's UNIQUE(novel_id, term_zh) constraint keys on the literal
-    Chinese string, so without this fold a simplified/traditional pair lands
-    as two unrelated rows for one term.
+    Chinese string, so without this fold a simplified/traditional or
+    bracketed/bare pair lands as two unrelated rows for one term.
     """
     s = s or ""
     for ch in _INVISIBLE_CHARS:
+        s = s.replace(ch, "")
+    for ch in _WRAP_BRACKETS:
         s = s.replace(ch, "")
     s = unicodedata.normalize("NFC", s).strip()
     return _safe_zh_convert(s, "zh-hans")
