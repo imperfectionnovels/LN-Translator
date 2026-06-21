@@ -234,6 +234,13 @@ def filter_glossary_candidates(
         zh_n = canonical_zh(_normalize_line_endings(t.zh))
         if not zh_n:
             continue
+        # One-character terms are never auto-admitted: a single Han char is
+        # almost always a substring of unrelated words, and
+        # filter_glossary_for_chapter already refuses to inject a 1-char `zh`
+        # downstream, so admitting one is pure table bloat. A genuinely needed
+        # 1-char term can still be added by hand (locked).
+        if len(zh_n) <= 1:
+            continue
         bracketed = any(zh_n in s for s in spans_canon)
         if bracketed or haystack.count(zh_n) >= _MIN_RECURRENCE:
             kept.append(t)

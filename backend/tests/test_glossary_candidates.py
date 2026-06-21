@@ -43,3 +43,24 @@ def test_bracket_free_chapter_still_yields_recurring_terms():
 
 def test_empty_chapter_yields_nothing():
     assert filter_glossary_candidates("", [_term("越级")]) == []
+
+
+def test_one_char_term_never_admitted_even_when_recurring():
+    # A single Han char recurs everywhere and is substring noise; the chapter
+    # filter refuses to inject a 1-char zh downstream, so it is never admitted.
+    chapter = "剑光一闪，他拔剑。剑气纵横，剑意凛然。"
+    kept = filter_glossary_candidates(chapter, [_term("剑", "sword")])
+    assert kept == []
+
+
+def test_one_char_term_not_admitted_inside_bracket_span():
+    chapter = "面板亮起：【剑】。"
+    kept = filter_glossary_candidates(chapter, [_term("剑", "sword")])
+    assert kept == []
+
+
+def test_two_char_term_still_admitted_at_two_occurrences():
+    # Guard against over-hardening: 2-char vocabulary at the >=2x gate stays in.
+    chapter = "偷袭得手。再次偷袭。"
+    kept = filter_glossary_candidates(chapter, [_term("偷袭", "sneak attack")])
+    assert [t.zh for t in kept] == ["偷袭"]
