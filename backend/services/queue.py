@@ -573,10 +573,12 @@ async def _record_commit_provenance(
     previous_context: str | None,
     style_note: str | None,
     style_edits: list[tuple[str, str]] | None,
+    fixup_counts: dict | None = None,
 ) -> None:
     """Post-commit diagnostics for a successful chapter translate: the
     translation-attempts log row, the prompt_config_snapshot provenance blob,
-    and the TM-segment refresh (+ any TM-inconsistency observations).
+    the fixup self-audit blob, and the TM-segment refresh (+ any
+    TM-inconsistency observations).
 
     All three ride in the SAME transaction as the chapter UPDATE (the caller
     commits afterward) but are best-effort observability that must NEVER fail
@@ -625,10 +627,16 @@ async def _record_commit_provenance(
         style_note_included=bool(style_note and style_note.strip()),
         style_edits_included=bool(style_edits),
     )
+    # Fixup self-audit: record which deterministic enforce_* fixups rewrote the
+    # model output and by how much, in the same UPDATE as the snapshot. Makes
+    # the post-LLM override layer queryable (see chapters.fixup_audit) so a
+    # fixup can't silently rewrite correct output without leaving a record.
+    import json  # noqa: PLC0415
+    fixup_json = json.dumps(fixup_counts, sort_keys=True) if fixup_counts else None
     await conn.execute(
-        "UPDATE chapters SET prompt_config_snapshot = ? "
+        "UPDATE chapters SET prompt_config_snapshot = ?, fixup_audit = ? "
         "WHERE id = ? AND novel_id = ?",
-        (snapshot_json, chapter_id, novel_id),
+        (snapshot_json, fixup_json, chapter_id, novel_id),
     )
     # Initiative 5: refresh the TM rows for this chapter in the
     # same transaction. Failed alignment skips the chapter
@@ -664,15 +672,21 @@ async def _record_commit_provenance(
 
 def _apply_text_fixups(
     result, glossary, chapter_num: int, title_zh: str | None = None,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, dict]:
     """Run the deterministic post-translation text fixups (no LLM) and return
-    (title_en, cleaned_text).
+    (title_en, cleaned_text, fixup_counts).
 
     Two groups: casing/strip fixups land on result.translated_text, then the
     em-dash / bracket / sentence-initial fixups produce the final committed
     body. The second group runs BEFORE the observers so detectors see the same
     text the reader will, preserving the QA dashboard's "observers run on the
     final committed body" invariant.
+
+    `fixup_counts` is {"rules": {rule_name: count}, "total": N} over the rules
+    that actually rewrote text (zero-count rules omitted). It is persisted to
+    chapters.fixup_audit so the deterministic override layer is queryable: a
+    fixup can no longer silently rewrite correct model output without leaving a
+    per-chapter record.
     """
     # Normalize line endings to LF before the LF-assuming fixup/observer chain.
     # The source side is normalized in parser.py; the LLM body is not (the
@@ -710,7 +724,17 @@ def _apply_text_fixups(
             "%d emphasis, %d bracket, %d sentence-initial, %d comma-break-join fix(es)",
             chapter_num, em_count, sh_count, emph_count, brk_count, si_count, mc_count,
         )
-    return title_en, cleaned_text
+    rules = {
+        name: n for name, n in (
+            ("title_strip", ts_n), ("locked_case", lt_n), ("lowercase", lc_n),
+            ("stem_branch", sb_n), ("end_marker", cm_n), ("em_dash", em_count),
+            ("spaced_hyphen", sh_count), ("brackets", brk_count),
+            ("emphasis", emph_count), ("sentence_initial", si_count),
+            ("comma_break", mc_count),
+        ) if n
+    }
+    fixup_counts = {"rules": rules, "total": sum(rules.values())}
+    return title_en, cleaned_text, fixup_counts
 
 
 async def _translate_chapter_in_db(
@@ -830,7 +854,7 @@ async def _translate_chapter_in_db(
 
         # Pure deterministic text fixups (casing, em-dash, brackets, title
         # normalization). No LLM. Returns the canonical title + committed body.
-        title_en, cleaned_text = _apply_text_fixups(
+        title_en, cleaned_text, fixup_counts = _apply_text_fixups(
             result, glossary, r["chapter_num"], title_zh=r["title_zh"],
         )
 
@@ -997,6 +1021,7 @@ async def _translate_chapter_in_db(
                 previous_context=previous_context,
                 style_note=style_note,
                 style_edits=style_edits,
+                fixup_counts=fixup_counts,
             )
         await conn.commit()
         if (upd.rowcount or 0) == 0:

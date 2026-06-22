@@ -212,6 +212,13 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- across PROMPT_INCLUDE_* flags stay recoverable per-output. See
     -- services/queue.py::_build_prompt_config_snapshot for the writer.
     prompt_config_snapshot TEXT NOT NULL DEFAULT '{}',
+    -- 2026-06-21 fixup self-audit. JSON written on every successful translate
+    -- commit recording which deterministic enforce_* fixups rewrote the model
+    -- output and by how much ({"rules": {name: count}, "total": N}). NULL = not
+    -- recorded (legacy rows). Makes the post-LLM override layer queryable so a
+    -- fixup can no longer SILENTLY rewrite correct output. Writer:
+    -- services/queue.py::_apply_text_fixups + _record_commit_provenance.
+    fixup_audit TEXT,
     UNIQUE (novel_id, chapter_num)
 );
 
@@ -769,6 +776,12 @@ _ADDITIVE_MIGRATIONS = (
     # on every dequeue/success/cancel path. Do NOT reuse queue_position
     # (that stale dead column exists in user DBs from an older schema).
     "ALTER TABLE chapters ADD COLUMN queue_priority INTEGER NOT NULL DEFAULT 0",
+    # 2026-06-21 fixup self-audit. Per-chapter JSON of which deterministic
+    # enforce_* fixups rewrote the model output and by how much, so the
+    # post-LLM override layer is queryable instead of vanishing into INFO logs.
+    # Nullable: legacy rows + chapters translated before this read as NULL.
+    # Writer: services/queue.py::_apply_text_fixups + _record_commit_provenance.
+    "ALTER TABLE chapters ADD COLUMN fixup_audit TEXT",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed

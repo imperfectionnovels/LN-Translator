@@ -128,11 +128,87 @@ def _mean_block(scored: list[tuple[int, dict]], section: str, keys: list[str]) -
     return out
 
 
+def _aggregate_fixups(audits: list[tuple[int, str | None]], *, high_churn: int = 8) -> dict:
+    """Aggregate per-chapter fixup_audit blobs (the self-audit harvest).
+
+    Returns per-rule fire counts + how many chapters each rule touched, and the
+    chapters whose total fixup churn crossed `high_churn` (a deterministic rule
+    rewrote a lot of the body -- the case where silent damage would have hidden
+    before fixup_audit existed). `recorded` is how many chapters carry an audit
+    (NULL on chapters translated before the column shipped)."""
+    rule_counts: dict[str, int] = {}
+    rule_chapters: dict[str, int] = {}
+    high: list[dict] = []
+    recorded = 0
+    for num, blob in audits:
+        if not blob:
+            continue
+        try:
+            data = json.loads(blob)
+        except (TypeError, ValueError):
+            continue
+        recorded += 1
+        rules = data.get("rules", {}) if isinstance(data, dict) else {}
+        for name, n in rules.items():
+            rule_counts[name] = rule_counts.get(name, 0) + n
+            rule_chapters[name] = rule_chapters.get(name, 0) + 1
+        if (data.get("total", 0) if isinstance(data, dict) else 0) >= high_churn:
+            high.append({"chapter": num, "total": data["total"], "rules": rules})
+    return {
+        "recorded_chapters": recorded,
+        "rule_counts": dict(sorted(rule_counts.items(), key=lambda kv: -kv[1])),
+        "rule_chapters": rule_chapters,
+        "high_churn_chapters": sorted(high, key=lambda d: -d["total"])[:15],
+    }
+
+
+def _casing_collisions(glossary) -> list[dict]:
+    """The documented fixup damage vector, surfaced read-only.
+
+    A same-`term_en` (case-insensitive) orphan collision: a locked entry that
+    WILL be mechanically force-Title-Cased (is_atomic_case_locked_term) coexists
+    with a DIFFERENT locked entry whose intended rendering is lowercase (all-
+    lowercase term_en, or a `lowercase` note). Force-casing the first then
+    capitalizes occurrences meant for the second. The escape hatch already
+    handles the live ones; this catches NEW collisions before they corrupt a
+    chapter, instead of a silent rewrite. Behavior is unchanged -- detection only.
+    """
+    from collections import defaultdict  # noqa: PLC0415
+
+    from backend.services.glossary_casing import is_atomic_case_locked_term  # noqa: PLC0415
+
+    def _lowercase_intent(g) -> bool:
+        if (g.term_en or "").strip().islower():
+            return True
+        notes = ((g.notes or "") + " " + (g.usage_note or "")).lower()
+        return "lowercase" in notes
+
+    groups: dict[str, list] = defaultdict(list)
+    for g in glossary:
+        if g.locked and (g.term_en or "").strip():
+            groups[g.term_en.strip().lower()].append(g)
+
+    out: list[dict] = []
+    for le, members in groups.items():
+        if len(members) < 2:
+            continue
+        atomic_ids = {id(m) for m in members if is_atomic_case_locked_term(m)}
+        lower_members = [m for m in members if _lowercase_intent(m)]
+        if atomic_ids and any(id(m) not in atomic_ids for m in lower_members):
+            out.append({
+                "term_en_lower": le,
+                "force_cased": sorted({m.term_en for m in members if id(m) in atomic_ids}),
+                "lowercase_intent": sorted({m.term_en for m in lower_members if id(m) not in atomic_ids}),
+            })
+    return out
+
+
 async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
     async with open_conn() as conn:
         glossary = await glossary_svc.list_for_novel(conn, novel_id)
         cur = await conn.execute(
-            "SELECT chapter_num, original_text, translated_text, prompt_config_snapshot "
+            "SELECT chapter_num, original_text, translated_text, "
+            "prompt_config_snapshot, fixup_audit "
             "FROM chapters WHERE novel_id = ? AND status = 'done' "
             "AND translated_text IS NOT NULL AND chapter_num BETWEEN ? AND ? "
             "ORDER BY chapter_num",
@@ -140,7 +216,7 @@ async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
         )
         chapters = [
             (r["chapter_num"], r["original_text"] or "", r["translated_text"] or "",
-             r["prompt_config_snapshot"])
+             r["prompt_config_snapshot"], r["fixup_audit"])
             for r in await cur.fetchall()
         ]
         # Harvest the discarded observer signal: every translate writes these and
@@ -165,10 +241,12 @@ def _build_scorecard(novel_id: int, lo: int, hi: int, data: dict, consistency: d
     glossary = data["glossary"]
     scored: list[tuple[int, dict]] = []
     by_config: dict[str, list[tuple[int, dict]]] = {}
-    for num, source, target, snapshot in data["chapters"]:
+    audits: list[tuple[int, str | None]] = []
+    for num, source, target, snapshot, fixup_audit in data["chapters"]:
         score = score_text(target, source, glossary)
         scored.append((num, score))
         by_config.setdefault(_config_tag(snapshot), []).append((num, score))
+        audits.append((num, fixup_audit))
 
     return {
         "novel_id": novel_id,
@@ -185,6 +263,8 @@ def _build_scorecard(novel_id: int, lo: int, hi: int, data: dict, consistency: d
             for tag, chs in by_config.items()
         },
         "observations": data["observations"],
+        "fixup_churn": _aggregate_fixups(audits),
+        "casing_collisions": _casing_collisions(glossary),
         "surface_mean": _mean_block(scored, "surface", _SURFACE_HEADLINE),
         "flow_mean": _mean_block(scored, "flow", _FLOW_HEADLINE),
         "consistency": {
@@ -234,6 +314,27 @@ def _print_scorecard(card: dict) -> None:
             print(f"  {kind:<34} {v['count']:>5} hits over {v['chapters']} ch")
     else:
         print("  (none recorded)")
+
+    fx = card["fixup_churn"]
+    print(f"\nFixup self-audit (which enforce_* rewrote the model output; "
+          f"{fx['recorded_chapters']}/{card['chapters_scored']} ch recorded):")
+    if fx["rule_counts"]:
+        for name, n in fx["rule_counts"].items():
+            print(f"  {name:<18} {n:>5} fixes over {fx['rule_chapters'].get(name, 0)} ch")
+        if fx["high_churn_chapters"]:
+            tops = ", ".join(f"ch{d['chapter']}({d['total']})" for d in fx["high_churn_chapters"][:8])
+            print(f"  high-churn chapters (>=8 fixes): {tops}")
+    else:
+        print("  (no fixup_audit recorded; chapters predate the column)")
+
+    coll = card["casing_collisions"]
+    if coll:
+        print("\nGlossary casing collisions (force-cased term shares an English form")
+        print("with a lowercase-intent sibling -> apply the lowercase escape hatch):")
+        for c in coll:
+            print(f"  {c['force_cased']} collides with {c['lowercase_intent']}")
+    else:
+        print("\nGlossary casing collisions: none (force-case vector clean)")
 
     print("\nSurface / flow means:")
     for k, v in {**card["surface_mean"], **card["flow_mean"]}.items():

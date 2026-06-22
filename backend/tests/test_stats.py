@@ -7,6 +7,7 @@ these tests cover word counts, coverage, throughput, and global rollups.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -110,19 +111,26 @@ async def test_throughput_excludes_null_translated_at():
 
 @pytest.mark.asyncio
 async def test_throughput_groups_by_day():
+    # Dates RELATIVE to now (noon to avoid TZ-midnight drift): the throughput
+    # query filters translated_at >= date('now','-30 days'), so a hardcoded
+    # fixture date silently ages out of the window. Use recent days so the test
+    # is stable whenever it runs.
+    now = datetime.now()
+    d1 = (now - timedelta(days=3)).strftime("%Y-%m-%d")
+    d2 = (now - timedelta(days=4)).strftime("%Y-%m-%d")
     novel_id = await _seed_novel([
         {"chapter_num": 1, "source": "源。", "target": "T.",
-         "translated_at": "2026-05-20 10:00:00"},
+         "translated_at": f"{d1} 10:00:00"},
         {"chapter_num": 2, "source": "源。", "target": "T.",
-         "translated_at": "2026-05-20 14:00:00"},
+         "translated_at": f"{d1} 14:00:00"},
         {"chapter_num": 3, "source": "源。", "target": "T.",
-         "translated_at": "2026-05-21 09:00:00"},
+         "translated_at": f"{d2} 09:00:00"},
     ])
     async with open_conn() as conn:
         result = await stats_svc.novel_stats(conn, novel_id)
     by_day = {r["day"]: r["count"] for r in result["throughput"]}
-    assert by_day.get("2026-05-20") == 2
-    assert by_day.get("2026-05-21") == 1
+    assert by_day.get(d1) == 2
+    assert by_day.get(d2) == 1
 
 
 # ---- Global -------------------------------------------------------------

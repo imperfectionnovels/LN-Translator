@@ -133,12 +133,13 @@ async def _seed_two_arms():
             (2, "清晨的阳光。", "Morning light filled the valley.", snap_b),
         ]
         ch_ids = {}
+        fixups = {1: json.dumps({"rules": {"locked_case": 3, "em_dash": 1}, "total": 4})}
         for num, src, tgt, snap in rows:
             cur = await conn.execute(
                 "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-                "translated_text, status, prompt_config_snapshot) "
-                "VALUES (?, ?, ?, ?, 'done', ?)",
-                (novel_id, num, src, tgt, snap),
+                "translated_text, status, prompt_config_snapshot, fixup_audit) "
+                "VALUES (?, ?, ?, ?, 'done', ?, ?)",
+                (novel_id, num, src, tgt, snap, fixups.get(num)),
             )
             ch_ids[num] = cur.lastrowid
         await conn.execute(
@@ -181,12 +182,55 @@ async def test_load_range_harvests_observations_and_groups_by_config():
     # Chapter 1's English carries 'delve' -> banned_words fired in aggregate.
     assert card["categories"]["banned_words"]["violations"] >= 1
     assert card["consistency"]["overall_tcr"] == 0.9
+    # Fixup self-audit harvested from chapters.fixup_audit (ch1 only).
+    fx = card["fixup_churn"]
+    assert fx["recorded_chapters"] == 1
+    assert fx["rule_counts"]["locked_case"] == 3
+    assert fx["rule_counts"]["em_dash"] == 1
 
 
 async def test_load_range_empty_when_out_of_range():
     novel_id = await _seed_two_arms()
     data = await qr._load_range(novel_id, 500, 600)
     assert data["chapters"] == []
+
+
+# ---- fixup self-audit + casing-collision detector -----------------------
+
+
+def test_aggregate_fixups_counts_rules_and_flags_high_churn():
+    audits = [
+        (1, json.dumps({"rules": {"locked_case": 2, "em_dash": 1}, "total": 3})),
+        (2, None),  # predates the column
+        (3, json.dumps({"rules": {"locked_case": 9}, "total": 9})),  # high churn
+    ]
+    out = qr._aggregate_fixups(audits)
+    assert out["recorded_chapters"] == 2
+    assert out["rule_counts"]["locked_case"] == 11
+    assert out["rule_chapters"]["locked_case"] == 2
+    assert [d["chapter"] for d in out["high_churn_chapters"]] == [3]
+
+
+def test_casing_collisions_flags_orphan_and_respects_escape_hatch():
+    # Title-Case force-cased entry colliding with a lowercase-intent sibling.
+    orphan = [
+        _gloss("灵宝", "Spirit Treasure", category="item"),       # atomic -> force-cased
+        _gloss("宝物", "spirit treasure", category="item"),       # lowercase intent
+    ]
+    coll = qr._casing_collisions(orphan)
+    assert len(coll) == 1
+    assert "Spirit Treasure" in coll[0]["force_cased"]
+    assert "spirit treasure" in coll[0]["lowercase_intent"]
+
+    # Escape hatch: the Title-Case row carries a 'lowercase' note -> not atomic,
+    # so it is NOT force-cased and there is no collision.
+    hatched = [
+        GlossaryEntry(id=1, novel_id=1, term_zh="灵宝", term_en="Spirit Treasure",
+                      category="item", notes="lowercase in narration", usage_note=None,
+                      auto_detected=False, locked=True),
+        _gloss("宝物", "spirit treasure", category="item"),
+    ]
+    assert qr._casing_collisions(hatched) == []
 
 
 # ---- A/B diff renders ---------------------------------------------------
