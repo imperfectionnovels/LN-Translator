@@ -88,7 +88,10 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── ingest_edited_chapter.py   # learn-from-edits: diff a hand-edited chapter, route deltas
 │   │   ├── diff_against_edit.py        # ground-truth diff: a translation vs a hand edit
 │   │   ├── ab_style_edits.py           # A/B the captured style-edit prompt arm
-│   │   └── retranslate_chapter.py      # re-run one chapter through the live pipeline
+│   │   ├── retranslate_chapter.py      # re-run one chapter through the live pipeline
+│   │   ├── consistency_eval.py         # read-only cross-chapter consistency baseline (TCR/reuse) + McNemar/bootstrap helpers
+│   │   ├── quality_metrics.py          # tracked port of the ww_metrics rule-category scorers (pure, importable)
+│   │   └── quality_report.py           # multi-chapter quality scorecard: per-category matrix + observation harvest + group-by prompt_config_snapshot + A/B diff
 │   └── tests/                     # 80+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
@@ -186,6 +189,8 @@ The runtime user prompt stacks several dynamic blocks on top of the static `base
 No "feels right on priors" default flips. (Exception on record: the `PROMPT_INCLUDE_FREE_DRAFT=false` default was an explicit user-directed conviction flip on 2026-05-29, not a graduated A/B result.) Recommended A/B sequence for the remaining flags: `PROMPT_INCLUDE_REFINER=false` if the test novel was using a refiner, then the style flags as completeness arms. Run one flag at a time; bundling makes results uninterpretable.
 
 **Provenance.** Every successful translate commit stamps `chapters.prompt_config_snapshot` (JSON) with the full pipeline config: template version, translator/refiner provider+model, genre, which blocks actually shipped (block included only when both the flag was true AND the data was non-empty — `*_included` keys), and which flags were set (`flags.*`). Refinement-success extends the same blob with `refiner_*` keys. Query A/B runs with `json_extract(prompt_config_snapshot, '$.flags.PROMPT_INCLUDE_FREE_DRAFT')`. Writer: `services/queue.py::_build_prompt_config_snapshot` + `_extend_snapshot_with_refiner`.
+
+**Measuring it (the graduation gate, mechanized).** `python -m backend.scripts.quality_report --novel N [--chapters LO-HI]` produces a multi-chapter scorecard that does the side-by-side work the rule above describes: a per-rule-category compliance matrix, the `chapter_observations` harvested per observer kind (the queue writes these every translate and nothing else aggregates them), novel-level consistency (TCR/reuse), and **the same metrics grouped by `prompt_config_snapshot`** so two config arms in the back catalog compare without re-translating. `--diff A.json B.json` gives per-category deltas with a bootstrap CI on each arm. Prefer this over a one-chapter eyeball; single-chapter A/Bs are noisy. Scorer logic is the importable `quality_metrics.py` (tracked port of the old gitignored `data/ww_metrics.py`).
 
 ## Translator rules
 
