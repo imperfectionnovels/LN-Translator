@@ -27,7 +27,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 ├── docs/
 │   ├── backends.md            # per-backend tuning knobs
 │   ├── exe-build.md           # PyInstaller bundle + first-run wizard
-│   └── gotchas.md             # recurring pitfalls
+│   ├── gotchas.md             # recurring CODE pitfalls + their fix
+│   └── decisions.md           # decisions & lessons log: the WHY, settled calls, ruled-out alternatives, mistakes-and-corrections
 ├── backend/
 │   ├── main.py                # FastAPI app, lifespan, _probe_backends
 │   ├── app_entry.py           # frozen-mode entry orchestrator: main(), first-run routing, _run_uvicorn (re-exports the app_* helpers)
@@ -144,6 +145,7 @@ EXE-style local app (also useful in dev to exercise the first-run wizard):
 - **DB connection per request** via the `get_conn` FastAPI dependency. Queue workers use `open_conn()` directly — never share connections.
 - **Schema** lives in `db.py::SCHEMA` and runs on startup; additive changes append to `_ADDITIVE_MIGRATIONS` (append-only — never reorder or remove an entry). One-time non-additive rebuilds (`_drop_dead_columns`, `_drop_glossary_category_check`) sit alongside as separate idempotent functions.
 - **Frontend**: plain HTML / JS, no framework, no bundler. One JS file per page; `api.js`, `theme.js`, `utils.js`, `spine.js`, `queue-panel.js` shared. Each page loads `base.css` plus its own page sheet.
+- **Log decisions & lessons**: when you make a non-obvious choice, measure an alternative out, or catch and correct a mistake, add a dated bullet to `docs/decisions.md` as part of "done". Check it (and `docs/gotchas.md`) before re-opening a settled question. Mechanical code traps go in `docs/gotchas.md`; the judgment-level *why* goes in `docs/decisions.md`.
 
 ## Pipeline
 
