@@ -30,5 +30,7 @@ jobs:
         run: python -m ruff check .
       - name: Em-dash guard (prompts)
         run: python scripts/check_em_dashes.py backend/prompts
+      - name: Element-ID drift guard (frontend)
+        run: python scripts/check_element_ids.py frontend
       - name: Pytest
         run: python -m pytest backend/tests

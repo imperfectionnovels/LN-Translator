@@ -198,20 +198,22 @@ companion `js/*.js` keeps referencing the old element IDs. Two failure modes:
   `download-*-source`) and the home cookies input (`#cookies-url` dropped from
   the URL panel) all went dead this way.
 
-Detector (run from repo root) lists IDs each page's JS looks up that are absent
-from the HTML that loads it (filter out IDs the JS creates dynamically):
+Detector: `python scripts/check_element_ids.py frontend`. It is gated in CI and
+the local pre-commit hook, so a refactor that strands a lookup fails the commit.
 
-```bash
-for js in home library reader glossary glossary-global settings queue stats find-replace onboarding; do
-  htmls=$(grep -rl "js/$js.js" frontend/*.html)
-  grep -oE 'getElementById\("[a-zA-Z0-9_-]+"\)' "frontend/js/$js.js" \
-    | sed -E 's/getElementById\("//;s/"\)//' | sort -u \
-    | while read id; do
-        for h in $htmls; do grep -q "id=\"$id\"" "$h" && continue 2; done
-        echo "$js.js -> missing #$id"
-      done
-done
-```
+It hard-fails ONLY on the severe case: an UNGUARDED deref
+(`getElementById("x").prop`) of an ID that is neither in the HTML nor created by
+the JS, which is a guaranteed load-time `TypeError`. It recognizes IDs the JS
+creates dynamically (`el.id = "x"`, `id="x"` in template strings,
+`setAttribute("id", ...)`), so it does not flag them. Guarded misses
+(`if (el)` / `el?.`) are NOT a failure (they may be deliberate legacy/cached-HTML
+cleanup, e.g. reader.js dropping old `download-*-source` links); run
+`python scripts/check_element_ids.py --warn-guarded` to list them for a manual
+audit. The detector itself is pinned by `backend/tests/test_check_element_ids.py`.
+
+The older bash one-liner that predated the script flagged every absent looked-up
+ID including the dynamically-created ones (~85% false positives), which is why it
+required a manual filter step and never became a gate.
 
 ## Editing a CSS file without bumping its `?v=` serves stale styles
 
