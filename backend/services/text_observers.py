@@ -923,7 +923,9 @@ def body_correctness_observations(
     because they reference the translator's res.title_en.
     """
     found: list[str] = []
-    for zh, en in missing_translator_terms(source_zh, en_text, glossary):
+    for zh, en in missing_translator_terms(
+        source_zh, en_text, glossary, atomic_only=True
+    ):
         found.append(f'missing locked glossary term {zh!r} → {en!r}')
     mt_tells = detect_mt_texture(en_text)
     if mt_tells:

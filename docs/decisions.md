@@ -36,6 +36,20 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   segment-reuse translation, a new-term enforcer, and soft-anchors were all
   measured out for this corpus. Do not re-propose them. The wins are the
   termbase (glossary) + deterministic casing fixups. (2026-06)
+- **The missing-term signal is atomic-only (precision over recall).** The
+  `missing_glossary_term` / `missing_title_glossary_term` observers and the
+  edit-mode consistency rail's glossary tier pass `atomic_only=True` to
+  `missing_translator_terms`, so they report misses for hard atomic proper
+  terms only (`is_atomic_case_locked_term`). Soft rows (generics, slash,
+  idiom, lowercase-note, generic-rank) are vocabulary the translator may vary
+  by synonym; flagging their absence was noise, not drift (the body observer
+  fired in ~96% of novel-2 chapters, floor of ~41% provably soft). This is a
+  visibility change only: observations are log-only (no retry), translation
+  output is untouched, and the full-coverage TCR metric
+  (`consistency_eval.py`) deliberately keeps `atomic_only` off so its
+  per-category picture stays complete. We tightened what counts as a miss; we
+  did NOT start enforcing more terms (pinning generic variation is wrong, per
+  the 4-axes finding). (2026-06-23)
 - **Translator is strictly serial** (one process-global `asyncio.Lock`). Never
   replace with `Semaphore(N)` and never `--workers > 1`: parallel calls burn the
   subscription window / token budget.

@@ -865,7 +865,7 @@ async def _translate_chapter_in_db(
             r["original_text"], cleaned_text, glossary,
         ))
         for zh, en in glossary_svc.missing_translator_terms(
-            r["title_zh"] or "", title_en or "", glossary,
+            r["title_zh"] or "", title_en or "", glossary, atomic_only=True,
         ):
             observation_messages.append(f'missing title glossary term {zh!r} → {en!r}')
         observation_messages.extend(

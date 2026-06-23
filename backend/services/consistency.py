@@ -287,8 +287,15 @@ def _glossary_flags(
     Reuses the existing locked-only `missing_translator_terms` (with all its
     alias / variant / false-split guards), then maps each hit back to its
     glossary row id and a best-effort paragraph index for the jump action.
+
+    `atomic_only=True`: the rail surfaces hard atomic proper-noun misses only.
+    Soft rows (generics, slash, idiom, lowercase-note) are vocabulary the
+    translator may legitimately vary by synonym, so flagging their absence in
+    the edit-mode rail is noise, not actionable drift.
     """
-    missing = glossary_svc.missing_translator_terms(original, body, glossary)
+    missing = glossary_svc.missing_translator_terms(
+        original, body, glossary, atomic_only=True
+    )
     if not missing:
         return []
     # canonical zh variant -> owning glossary entry

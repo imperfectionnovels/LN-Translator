@@ -261,7 +261,11 @@ def _source_has_checkable_term(
 
 
 def missing_translator_terms(
-    chapter_zh: str, translated: str, glossary: list[GlossaryEntry]
+    chapter_zh: str,
+    translated: str,
+    glossary: list[GlossaryEntry],
+    *,
+    atomic_only: bool = False,
 ) -> list[tuple[str, str]]:
     """Locked glossary terms whose Chinese appears in the source chapter but
     whose English rendering is absent from the translation.
@@ -282,7 +286,15 @@ def missing_translator_terms(
         case-sensitive checking — casing is meaning-bearing for proper
         nouns. Soft rows get case-insensitive checking; this keeps real
         casing drift visible while preventing slash / parenthetical /
-        lowercase-note rows from generating spurious retry payloads."""
+        lowercase-note rows from generating spurious retry payloads.
+      - `atomic_only=True` reports misses for hard atomic proper terms
+        ONLY, dropping soft rows (generics, slash, idiom, lowercase-note,
+        generic-rank) entirely rather than just relaxing their casing.
+        Soft rows are vocabulary the translator is allowed to vary by
+        synonym, so their absence is not a consistency failure. The
+        observer + edit-mode consistency rail pass this; the full-coverage
+        TCR metric leaves it off so its per-category picture stays
+        complete."""
     if not chapter_zh or not translated or not glossary:
         return []
     src_canon = canonical_zh(chapter_zh)
@@ -300,6 +312,10 @@ def missing_translator_terms(
         if not g.locked:
             continue
         atomic = is_atomic_case_locked_term(g)
+        if atomic_only and not atomic:
+            # Soft rows (generics, slash, idiom, lowercase-note) are allowed
+            # to vary by synonym — their absence is not a consistency miss.
+            continue
         for zh, en in split_aliases(g.term_zh or "", g.term_en or ""):
             # 1-char zh variants match almost any chapter — skip, as elsewhere.
             if not zh or not en or len(zh) < 2:

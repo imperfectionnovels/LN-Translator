@@ -322,6 +322,59 @@ def test_missing_terms_truly_missing_atomic_still_flagged() -> None:
     assert missing == [("果位", "Fruition Attainment")]
 
 
+# ---------------------------------------------------------------------------
+# atomic_only=True — the observer + edit-mode rail view: report hard atomic
+# proper-noun misses only, drop soft rows the translator may vary by synonym.
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_only_skips_soft_lowercase_entry_when_absent() -> None:
+    # 神通 -> 'divine ability' is a soft generic (all-lowercase term_en). When
+    # the model uses a synonym, atomic_only=True does not flag its absence...
+    g = [_entry("divine ability", category="other", term_zh="神通")]
+    src = "他施展神通。"
+    trans = "He unleashed a supernatural power."  # synonym; term absent
+    assert missing_translator_terms(src, trans, g, atomic_only=True) == []
+    # ...but the default (full-coverage) view still reports the miss. Pins
+    # back-compat: existing callers/tests see the unchanged behavior.
+    assert missing_translator_terms(src, trans, g) == [("神通", "divine ability")]
+
+
+def test_atomic_only_skips_slash_entry_when_absent() -> None:
+    g = [_entry("Karma / Karmic Threads", term_zh="因果")]
+    src = "因果纠缠。"
+    trans = "Cause and effect entangled."  # neither variant present
+    assert missing_translator_terms(src, trans, g, atomic_only=True) == []
+    assert missing_translator_terms(src, trans, g) == [
+        ("因果", "Karma / Karmic Threads")
+    ]
+
+
+def test_atomic_only_skips_idiom_when_absent() -> None:
+    g = [_entry("courting death", category="idiom", term_zh="找死")]
+    src = "你这是找死。"
+    trans = "You are asking for trouble."  # idiom rendered differently
+    assert missing_translator_terms(src, trans, g, atomic_only=True) == []
+
+
+def test_atomic_only_skips_lowercase_noted_when_absent() -> None:
+    # term_en is Title-Case but the note marks it soft -> not flagged.
+    g = [_entry("Spiritual Power", category="other", notes="lowercase",
+                term_zh="灵力")]
+    src = "他的灵力枯竭。"
+    trans = "His energy was exhausted."  # synonym; term absent
+    assert missing_translator_terms(src, trans, g, atomic_only=True) == []
+
+
+def test_atomic_only_still_flags_dropped_proper_noun() -> None:
+    g = [_entry("Azure Cloud Sect", category="place", term_zh="青云宗")]
+    src = "他来到青云宗。"
+    trans = "He arrived at the mountain gate."  # name dropped
+    assert missing_translator_terms(src, trans, g, atomic_only=True) == [
+        ("青云宗", "Azure Cloud Sect")
+    ]
+
+
 def test_classifier_all_lowercase_trusted_category_false() -> None:
     # An all-lowercase term_en has no proper-noun casing to enforce, even in
     # a trusted category. Live-ch427 defect: 师尊 typed "master" (category
