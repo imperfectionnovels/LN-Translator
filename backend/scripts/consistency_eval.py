@@ -307,16 +307,19 @@ def tcr_for_glossary(
         for cat, v in sorted(by_cat.items())
     }
     # Worst offenders: terms checked at least 3 times with the lowest TCR.
+    # The glossary entry id rides along so a UI can deep-link straight to the
+    # term's editor for triage (per_term is keyed by g.id).
     worst = sorted(
         (
             {
+                "id": tid,
                 "term_zh": zh,
                 "term_en": en,
                 "checkable": chk,
                 "consistent": con,
                 "tcr": _rate(con, chk),
             }
-            for (zh, en, chk, con) in per_term.values()
+            for tid, (zh, en, chk, con) in per_term.items()
             if chk >= 3
         ),
         key=lambda d: (d["tcr"], -d["checkable"]),
@@ -419,6 +422,18 @@ def _build_report(novel_id: int, data: dict) -> dict:
         "segment_reuse": reuse,
         "bracketed_blocks": brackets,
     }
+
+
+async def compute_consistency(novel_id: int) -> dict:
+    """Public callable core: the full consistency report for a novel.
+
+    Same dict `_build_report` returns (TCR overall + by-category + worst_terms,
+    segment reuse, bracketed-panel identity). Importable by the app's quality
+    service and by tests; the CLI (`main`) keeps its own load/print path so it
+    is unaffected. Opens its own read connection (a full-novel scan belongs on a
+    fresh connection, not the request connection).
+    """
+    return _build_report(novel_id, await _load(novel_id))
 
 
 def _print_report(report: dict) -> None:

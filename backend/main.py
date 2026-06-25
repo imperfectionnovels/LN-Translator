@@ -29,6 +29,7 @@ from backend.routes import (
     novels,
     observations,
     providers,
+    quality,
     stats,
     tm,
     translate,
@@ -472,6 +473,7 @@ app.include_router(global_glossary.router, prefix="/api", tags=["global-glossary
 app.include_router(find_replace.router, prefix="/api", tags=["find-replace"])
 app.include_router(tm.router, prefix="/api", tags=["tm"])
 app.include_router(stats.router, prefix="/api", tags=["stats"])
+app.include_router(quality.router, prefix="/api", tags=["quality"])
 app.include_router(config_kv.router, prefix="/api", tags=["config"])
 app.include_router(imports.router, prefix="/api/imports", tags=["imports"])
 

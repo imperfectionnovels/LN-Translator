@@ -203,12 +203,60 @@ def _casing_collisions(glossary) -> list[dict]:
     return out
 
 
+def _worst_chapters(
+    scored: list[tuple[int, dict]],
+    audits: list[tuple[int, str | None]],
+    titles: dict[int, str | None],
+    *,
+    top_n: int = 25,
+) -> list[dict]:
+    """The lowest-quality chapters in the range, as a triage worklist.
+
+    Ranked by absolute rule violations (then by violation rate to break ties),
+    each row carrying the title + fixup churn so a dashboard can link straight
+    into the reader. Pure derivation from the per-chapter scores already
+    computed, so it adds no extra scan."""
+    fixup_total: dict[int, int] = {}
+    for num, blob in audits:
+        try:
+            d = json.loads(blob) if blob else {}
+            fixup_total[num] = d.get("total", 0) if isinstance(d, dict) else 0
+        except (TypeError, ValueError):
+            fixup_total[num] = 0
+    rows: list[dict] = []
+    for num, score in scored:
+        viol = sum(c["violations"] for c in score["categories"])
+        opp = sum(c["opportunities"] for c in score["categories"])
+        rows.append({
+            "chapter_num": num,
+            "title_en": titles.get(num),
+            "violations": viol,
+            "opportunities": opp,
+            "rate": viol / (opp or 1),
+            "fixup_total": fixup_total.get(num, 0),
+        })
+    rows.sort(key=lambda r: (-r["violations"], -r["rate"]))
+    return rows[:top_n]
+
+
 async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
     async with open_conn() as conn:
         glossary = await glossary_svc.list_for_novel(conn, novel_id)
+        # Schema guard: a stale frozen build (live DB) can lag the provenance
+        # columns. fixup_audit shipped after prompt_config_snapshot, so an
+        # older live store may carry one but not the other. Select NULL in
+        # place of a missing column and surface `schema_outdated` so the app
+        # can prompt "rebuild to enable per-chapter fixup detail" instead of
+        # 500ing. The CLI runs against the dev DB where both exist.
+        cur = await conn.execute("PRAGMA table_info(chapters)")
+        cols = {r["name"] for r in await cur.fetchall()}
+        has_fixup = "fixup_audit" in cols
+        has_snapshot = "prompt_config_snapshot" in cols
+        snap_sel = "prompt_config_snapshot" if has_snapshot else "NULL AS prompt_config_snapshot"
+        fixup_sel = "fixup_audit" if has_fixup else "NULL AS fixup_audit"
         cur = await conn.execute(
-            "SELECT chapter_num, original_text, translated_text, "
-            "prompt_config_snapshot, fixup_audit "
+            f"SELECT chapter_num, title_en, original_text, translated_text, "
+            f"{snap_sel}, {fixup_sel} "
             "FROM chapters WHERE novel_id = ? AND status = 'done' "
             "AND translated_text IS NOT NULL AND chapter_num BETWEEN ? AND ? "
             "ORDER BY chapter_num",
@@ -216,7 +264,7 @@ async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
         )
         chapters = [
             (r["chapter_num"], r["original_text"] or "", r["translated_text"] or "",
-             r["prompt_config_snapshot"], r["fixup_audit"])
+             r["prompt_config_snapshot"], r["fixup_audit"], r["title_en"])
             for r in await cur.fetchall()
         ]
         # Harvest the discarded observer signal: every translate writes these and
@@ -234,7 +282,12 @@ async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
             r["kind"]: {"count": r["n"], "chapters": r["chapters"]}
             for r in await cur.fetchall()
         }
-    return {"glossary": glossary, "chapters": chapters, "observations": observations}
+    return {
+        "glossary": glossary,
+        "chapters": chapters,
+        "observations": observations,
+        "schema_outdated": not (has_fixup and has_snapshot),
+    }
 
 
 def _build_scorecard(novel_id: int, lo: int, hi: int, data: dict, consistency: dict) -> dict:
@@ -242,19 +295,23 @@ def _build_scorecard(novel_id: int, lo: int, hi: int, data: dict, consistency: d
     scored: list[tuple[int, dict]] = []
     by_config: dict[str, list[tuple[int, dict]]] = {}
     audits: list[tuple[int, str | None]] = []
-    for num, source, target, snapshot, fixup_audit in data["chapters"]:
+    titles: dict[int, str | None] = {}
+    for num, source, target, snapshot, fixup_audit, title_en in data["chapters"]:
         score = score_text(target, source, glossary)
         scored.append((num, score))
         by_config.setdefault(_config_tag(snapshot), []).append((num, score))
         audits.append((num, fixup_audit))
+        titles[num] = title_en
 
     return {
         "novel_id": novel_id,
         "chapter_range": [lo, hi],
         "chapters_scored": len(scored),
         "chapter_nums": [n for n, _ in scored],
+        "schema_outdated": data.get("schema_outdated", False),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "categories": _aggregate_categories(scored),
+        "worst_chapters": _worst_chapters(scored, audits, titles),
         "by_config": {
             tag: {
                 "chapters": [n for n, _ in chs],
@@ -274,6 +331,24 @@ def _build_scorecard(novel_id: int, lo: int, hi: int, data: dict, consistency: d
             "bracket_identity_rate": consistency["bracketed_blocks"]["identity_rate"],
         },
     }
+
+
+async def compute_quality_scorecard(
+    novel_id: int, lo: int = 1, hi: int = 10**9
+) -> dict | None:
+    """Public callable core: the full scorecard dict for a novel range.
+
+    Returns None when the range has no done chapters (the library/endpoint
+    caller maps that to 404), where the CLI path raises SystemExit instead.
+    Same dict `_build_scorecard` produces. Loop-bound (load + build); the app's
+    quality service offloads the pure build to a threadpool so a full-novel
+    scan doesn't stall the event loop. CLI (`main`) is unaffected.
+    """
+    data = await _load_range(novel_id, lo, hi)
+    if not data["chapters"]:
+        return None
+    consistency = _consistency_report(novel_id, await _consistency_load(novel_id))
+    return _build_scorecard(novel_id, lo, hi, data, consistency)
 
 
 def _print_matrix(title: str, categories: dict) -> None:
