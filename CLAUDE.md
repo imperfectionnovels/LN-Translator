@@ -37,7 +37,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── db.py                  # SCHEMA, _ADDITIVE_MIGRATIONS, init_db, _drop_dead_columns, drain_on_startup hooks
 │   ├── models.py              # Pydantic models
 │   ├── genres.py              # GENRES registry + resolve_genre()
-│   ├── routes/                # 15 routers, mounted under /api
+│   ├── routes/                # 16 routers, mounted under /api
 │   │   ├── translate.py           # /paste, /upload, /bulk + /append/* + /insert (mid-novel) + /scrape
 │   │   ├── novels.py              # /novels list/get/patch/delete + downloads
 │   │   ├── chapters.py            # /chapters, /retranslate, /edit-paragraph, /retry-refinement
@@ -49,6 +49,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── observations.py        # observer hits (read-only)
 │   │   ├── imports.py             # resumable scrape/import job status feed
 │   │   ├── stats.py, cache.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
+│   │   ├── quality.py             # cockpit: /novels/{id}/quality + /consistency + /chapters/{n}/quality (read-only); chapters.py adds /learn-edits (+/commit)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
 │   │   ├── uploads.py             # file decode (txt/docx/epub/html) + transactional novel/chapter insert
@@ -68,6 +69,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── free_draft_queue.py    # mechanical NMT draft lane (own FREE_DRAFT_LOCK)
 │   │   ├── import_runner.py, scrape_jobs.py        # resumable recipe/bulk import (skeleton + fill)
 │   │   ├── translation_attempts.py, fr_snapshots.py, soft_delete.py, genres_novel.py, lang_detect.py
+│   │   ├── quality_dashboard.py   # cockpit read service: wraps quality_report/consistency_eval cores with a run_in_threadpool offload + pull-based version-token cache
+│   │   ├── learn_from_edits.py    # build_proposal/commit_proposal: route a chapter's captured style_edits -> glossary casing fixes + brief notes + ground-truth (stage-then-commit)
 │   │   ├── epub_export.py, covers.py, stats.py
 │   │   ├── scrapers/              # per-site recipe registry: base.py + cloudflare/piaotian/sixnineshu/syosetu/uukanshu/...
 │   │   └── translators/
@@ -96,18 +99,18 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   └── tests/                     # 80+ pytest modules
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
-│   ├── settings.html, queue.html, stats.html, find-replace.html, novel-overview.html, onboarding.html
+│   ├── settings.html, queue.html, stats.html, quality.html, find-replace.html, novel-overview.html, onboarding.html
 │   ├── css/
 │   │   ├── base.css           # shared (imports fonts.css first)
 │   │   ├── fonts.css          # @font-face for the self-hosted faces (audit 6.1)
 │   │   └── home.css, library.css, reader.css, glossary.css, queue.css, settings.css,
-│   │       stats.css, find-replace.css, novel-overview.css, onboarding.css
+│   │       stats.css, quality.css, find-replace.css, novel-overview.css, onboarding.css
 │   ├── fonts/                 # self-hosted subsetted woff2: fraunces/, spectral/, noto-serif-sc/ (+ OFL.txt each; regenerate via scripts/fetch_fonts.py)
 │   └── js/
 │       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
-│       ├── reader.js          # the big one (~2k lines): TOC, polling, terms, dialogs
+│       ├── reader-core.js, reader-toc.js, reader-glossary.js, reader-consistency.js, reader-chapter.js, reader-edit.js, reader-quality.js  # reader.js split into ordered modules (plain <script> tags, source-order = concat-identical; core first owns shared state, quality last = cockpit badge + learn-from-edits panel)
 │       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
-│       ├── settings.js, queue.js, stats.js, find-replace.js, onboarding.js
+│       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
 │   ├── fetch_fonts.py                                   # download + subset the self-hosted fonts

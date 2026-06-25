@@ -101,3 +101,54 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   committed body before suspecting the model. A replay mismatch points to an
   out-of-band writer. `data/fixup_replay_audit.py` is that tool; per-chapter
   `chapters.fixup_audit` now records it forward.
+
+## 2026-06-25: the in-app quality cockpit (leverage moved from the engine to the loop)
+
+- **The engine is mature; the leverage is the loop around it.** Consistency works
+  (TCR ~92%) and the prompt arc (phase 6 to 17) hit diminishing returns: a base.md
+  diction A/B *failed* and was reverted, single-chapter A/Bs are too noisy to
+  graduate flags. So the cockpit invests in the *loop*, not the engine: see quality
+  (dashboard + per-chapter badge), fix fast (worklists deep-link into glossary /
+  reader edit mode), learn (route the user's edits into glossary + brief, capture
+  ground-truth). The prose lever that is NOT exhausted is the user's own edits.
+- **reader.js split: contiguous, source-order, concatenation-identical.** The split
+  into reader-core/toc/glossary/consistency/chapter/edit/quality is mechanical:
+  each module is a contiguous slice, loaded in source order, so concatenating them
+  is byte-identical to the old file. That is the only split that is provably
+  behavior-preserving. **Gotcha that the "byte-identical" framing hides:** function
+  *declarations* hoist within one script but bind only when their own `<script>`
+  runs, so a module-top-level call that forward-references a later module throws at
+  boot (caught live: `_applyReaderMode` -> `applyTermsRail`). Fix: the two
+  forward-referenced rail toggles moved into reader-core (they only touch
+  core-owned state). The boot-safety lint now checks the *concatenation in load
+  order*, which catches this whole class.
+- **Quality service cache: pull-based version token, not invalidation callbacks.**
+  A full-novel consistency scan is multi-second; caching it keyed on a hash of
+  cheap per-novel aggregates (done count + max translated/refined_at + glossary
+  updated_at/count) means any retranslate or glossary edit busts the cache for
+  free, with zero hooks wired into the write paths. The heavy build runs in
+  `run_in_threadpool` so it never blocks the event loop. Single-process only,
+  which `WEB_CONCURRENCY=1` already guarantees.
+- **Learn-from-edits sourced from captured style_edits, not a re-diff.** The reader
+  already writes a style_edits row per paragraph edit, so the panel derives its
+  proposal from those pairs rather than diffing a body the edits already mutated.
+  Net-new value over the auto-captured style edits: promoting cross-paragraph voice
+  patterns to the brief, and fixing glossary casing so a recased term renders right
+  *everywhere*. Glossary casing is detected by matching the full `term_en` in both
+  before/after (multi-word safe, maps to one updatable entry), proposed not
+  auto-applied (confirm-per-row), and written via `update_entry` (lock-on-edit,
+  never clobbers). The MECHANICAL bucket is deliberately **not** applyable: a fixup
+  already owns it on retranslate, so re-teaching it as a style edit would be wrong.
+- **Ground-truth capture closes the graduation loop.** `ground_truth_edits` stores
+  a chapter's user-approved body + its `prompt_config_snapshot`; `diff_against_edit
+  --ground-truth` scores prompt arms against it. This is what finally satisfies the
+  binding graduation rule's criterion 2 (a recoverable reference to diff against)
+  without a stray edited file on disk.
+- **Did NOT restructure the architecture.** The owner offered a "large restructure",
+  but the data did not support rewriting the engine: routes are thin, the glossary
+  split is clean, the serial lock is fundamental, migrations are append-only. The
+  reader.js split was justified only as *enabling* the cockpit features, not for its
+  own sake (the prior de-proposal stands for cosmetic splits). Translator
+  vendor-file collapse and dead `humanizer_*` columns remain low-leverage cleanup,
+  not done here. Back-catalog retranslation stays the user's separate, cost-gated
+  call; the cockpit only makes the stale chapters *visible* (worst-chapter worklist).
