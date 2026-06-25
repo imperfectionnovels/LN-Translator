@@ -2645,3 +2645,17 @@ body.has-queue-pill .type-settings-btn { bottom: 160px; }
   color: var(--accent, #5fb8a4); font: inherit;
 }
 .quality-pop .qp-link:hover { text-decoration: underline; }
+
+/* ---- Learn-from-edits panel rows ---- */
+.learn-sec {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-weight: 600; margin: 12px 0 4px;
+}
+.learn-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 4px; font-size: 13px; line-height: 1.4;
+  border-radius: 6px; cursor: pointer;
+}
+.learn-row:hover { background: var(--bg-tint); }
+.learn-row input { margin-top: 3px; flex: none; }
+.learn-arrow { color: var(--muted); }

@@ -17,10 +17,12 @@ from backend.models import (
     ConsistencyGlossaryFlag,
     ConsistencyMatch,
     EditParagraphRequest,
+    LearnEditsCommit,
     OcrIssues,
     OtherRendering,
 )
 from backend.services import consistency as consistency_svc
+from backend.services import learn_from_edits as learn_from_edits_svc
 from backend.services import queue as queue_svc
 from backend.services.pre_check import chapter_pre_check
 
@@ -417,6 +419,37 @@ async def chapter_pre_check_endpoint(
         raise HTTPException(status_code=404, detail="chapter not found")
     warnings = await chapter_pre_check(conn, novel_id, chapter_num)
     return {"warnings": warnings}
+
+
+@router.post("/novels/{novel_id}/chapters/{chapter_num}/learn-edits")
+async def learn_edits_stage(
+    novel_id: int,
+    chapter_num: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Stage: derive a learn-from-edits proposal (brief candidates + glossary
+    casing fixes) from this chapter's captured style edits. Writes nothing."""
+    proposal = await learn_from_edits_svc.build_proposal(conn, novel_id, chapter_num)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    return proposal
+
+
+@router.post("/novels/{novel_id}/chapters/{chapter_num}/learn-edits/commit")
+async def learn_edits_commit(
+    novel_id: int,
+    chapter_num: int,
+    payload: LearnEditsCommit,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> dict:
+    """Commit: apply the confirmed subset. Re-derives the proposal server-side
+    so only ids the user actually saw are honored (forge guard)."""
+    result = await learn_from_edits_svc.commit_proposal(
+        conn, novel_id, chapter_num, payload.model_dump()
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    return result
 
 
 @router.post("/novels/{novel_id}/chapters/{chapter_num}/edit-paragraph")

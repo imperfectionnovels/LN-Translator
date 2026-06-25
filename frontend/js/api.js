@@ -253,6 +253,14 @@ const api = {
   qualityConsistency: (novelId) => apiFetch(`/api/novels/${novelId}/consistency`),
   chapterQuality: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/quality`),
+  // Learn-from-edits: stage derives a proposal from captured edits (no writes);
+  // commit applies the confirmed subset (selection = {brief, glossary_casing, save_ground_truth}).
+  learnEditsStage: (novelId, chapterNum) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/learn-edits`, { method: "POST" }),
+  learnEditsCommit: (novelId, chapterNum, selection) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/learn-edits/commit`, {
+      method: "POST", body: JSON.stringify(selection),
+    }),
   searchChapters: (novelId, q) =>
     apiFetch(`/api/novels/${novelId}/search?q=${encodeURIComponent(q)}`),
   editParagraph: (novelId, chapterNum, paragraphIndex, beforeMd, afterText, source = "draft") =>

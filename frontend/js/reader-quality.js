@@ -118,3 +118,95 @@ async function renderQualityBadge(ch) {
 // Boot fallback: if a chapter was already rendered before this module executed
 // (rare, since the boot render follows awaited network loads), paint its badge.
 if (typeof lastChapter !== "undefined" && lastChapter) renderQualityBadge(lastChapter);
+
+
+/* ---- Learn-from-edits panel ---------------------------------------------
+ * Turns this chapter's captured paragraph edits into confirm-per-row glossary
+ * casing fixes + per-novel brief notes (and an optional quality reference).
+ * Stage then commit: nothing is written until the user picks Apply. */
+const _learnBtn = document.getElementById("learn-edits-btn");
+const _learnDialog = document.getElementById("learn-edits-dialog");
+const _learnBody = document.getElementById("learn-edits-body");
+const _learnGt = document.getElementById("learn-edits-gt");
+const _learnStatus = document.getElementById("learn-edits-status");
+const _learnApply = document.getElementById("learn-edits-apply");
+let _learnProposal = null;
+
+function _renderLearnProposal(p) {
+  if (!p || p.captured_edits === 0) {
+    return `<p class="muted">No captured edits for this chapter yet. Switch on
+      Edit paragraphs, rewrite a few, then come back.</p>`;
+  }
+  const glossRows = (p.glossary_casing || []).map(g => `
+    <label class="learn-row">
+      <input type="checkbox" data-kind="gloss" value="${g.id}" />
+      <span><b>${escapeHtml(g.term_zh)}</b> ${escapeHtml(g.term_en)}
+        <span class="learn-arrow">→</span> ${escapeHtml(g.proposed_en)}</span>
+    </label>`).join("");
+  const briefRows = (p.brief || []).map(b => `
+    <label class="learn-row">
+      <input type="checkbox" data-kind="brief" value="${b.id}" />
+      <span>${escapeHtml(b.text)}</span>
+    </label>`).join("");
+  const parts = [`<p class="muted" style="font-size:12px;">From ${p.captured_edits} captured edit(s).</p>`];
+  if (glossRows) parts.push(`<div class="learn-sec">Terminology → glossary</div>${glossRows}`);
+  if (briefRows) parts.push(`<div class="learn-sec">Voice → brief note</div>${briefRows}`);
+  if (!glossRows && !briefRows) {
+    parts.push(`<p class="muted">No new glossary or voice patterns found. You can still
+      save this chapter as a quality reference below.</p>`);
+  }
+  return parts.join("");
+}
+
+async function _openLearnEdits() {
+  if (!_learnDialog) return;
+  _learnStatus.textContent = "";
+  if (_learnGt) _learnGt.checked = false;
+  _learnBody.innerHTML = `<p class="muted">Analyzing your edits…</p>`;
+  if (!_learnDialog.open) _learnDialog.showModal();
+  try {
+    _learnProposal = await api.learnEditsStage(novelId, currentCh);
+    _learnBody.innerHTML = _renderLearnProposal(_learnProposal);
+  } catch (e) {
+    _learnBody.innerHTML = `<p class="status err">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+_learnBtn?.addEventListener("click", _openLearnEdits);
+_learnDialog?.querySelector("[data-act='cancel']")
+  ?.addEventListener("click", () => _learnDialog.close());
+
+_learnApply?.addEventListener("click", async () => {
+  if (!_learnProposal) { _learnDialog.close(); return; }
+  const checked = (kind) => Array.from(
+    _learnBody.querySelectorAll(`input[data-kind="${kind}"]:checked`)
+  ).map(el => el.value);
+  const selection = {
+    brief: checked("brief"),
+    glossary_casing: checked("gloss"),
+    save_ground_truth: !!(_learnGt && _learnGt.checked),
+  };
+  if (!selection.brief.length && !selection.glossary_casing.length && !selection.save_ground_truth) {
+    _learnStatus.textContent = "Pick at least one item, or the quality-reference box.";
+    return;
+  }
+  _learnApply.disabled = true;
+  _learnStatus.textContent = "Applying…";
+  try {
+    const r = await api.learnEditsCommit(novelId, currentCh, selection);
+    const bits = [];
+    if (r.applied_glossary) bits.push(`${r.applied_glossary} glossary fix(es)`);
+    if (r.applied_brief) bits.push(`${r.applied_brief} brief note(s)`);
+    if (r.ground_truth_saved) bits.push("saved quality reference");
+    _learnStatus.textContent = bits.length ? `Done: ${bits.join(", ")}.` : "Nothing applied.";
+    if (r.applied_glossary && typeof loadGlossary === "function") {
+      await loadGlossary();
+      if (typeof invalidateTermPattern === "function") invalidateTermPattern();
+    }
+    setTimeout(() => { if (_learnDialog.open) _learnDialog.close(); }, 900);
+  } catch (e) {
+    _learnStatus.textContent = `Failed: ${e.message}`;
+  } finally {
+    _learnApply.disabled = false;
+  }
+});

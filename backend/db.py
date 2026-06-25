@@ -267,6 +267,25 @@ CREATE TABLE IF NOT EXISTS style_edits (
 );
 CREATE INDEX IF NOT EXISTS idx_style_edits_novel ON style_edits(novel_id, id);
 
+-- Ground-truth rewrites the user has approved as the reference rendering of a
+-- chapter, captured from the learn-from-edits commit. quality_report --diff can
+-- diff a config arm's output against this to graduate prompt-flag defaults (the
+-- binding 4-criteria rule needs a real ground-truth to diff against). One row
+-- per (chapter, capture); `prompt_config_snapshot` copies the config that
+-- produced the body so the arm is identifiable later.
+CREATE TABLE IF NOT EXISTS ground_truth_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+    chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    chapter_num INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    edited_text TEXT NOT NULL,
+    prompt_config_snapshot TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ground_truth_novel
+    ON ground_truth_edits(novel_id, chapter_num);
+
 -- Per-novel paired source↔English examples. The loader and the
 -- prompt-time sampler were removed in the post-pivot cleanup; this
 -- table stays as a no-op storage shape for backward compat with any
@@ -782,6 +801,19 @@ _ADDITIVE_MIGRATIONS = (
     # Nullable: legacy rows + chapters translated before this read as NULL.
     # Writer: services/queue.py::_apply_text_fixups + _record_commit_provenance.
     "ALTER TABLE chapters ADD COLUMN fixup_audit TEXT",
+    # 2026-06-25 ground-truth rewrites from the learn-from-edits commit, for
+    # quality_report --diff to graduate prompt-flag defaults against a real
+    # reference. New table, so SCHEMA's CREATE TABLE IF NOT EXISTS already
+    # covers fresh installs; this entry adds it to existing user DBs on boot.
+    "CREATE TABLE IF NOT EXISTS ground_truth_edits ("
+    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,"
+    " chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,"
+    " chapter_num INTEGER NOT NULL,"
+    " source TEXT NOT NULL,"
+    " edited_text TEXT NOT NULL,"
+    " prompt_config_snapshot TEXT,"
+    " created_at TEXT NOT NULL DEFAULT (datetime('now')))",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed

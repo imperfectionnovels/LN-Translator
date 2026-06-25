@@ -4,7 +4,12 @@ prompt change to see whether the change moved the output toward the ground-truth
 edit, and cite the per-paragraph pairs in the commit.
 
     python -m backend.scripts.diff_against_edit --novel-id N --chapter C \
-        --edited-file PATH [--retranslate] [--source draft|refined]
+        (--edited-file PATH | --ground-truth) [--retranslate] [--source draft|refined]
+
+--ground-truth uses the latest reference saved for this chapter by the in-app
+learn-from-edits commit (the ground_truth_edits table), so an A/B no longer needs
+a stray edited file on disk: edit the chapter in the reader, tick "save quality
+reference", then diff future prompt arms against it.
 
 Without --retranslate it scores the STORED body (translated_text / refined_text)
 against the edit, which is free and instant: a baseline read. With --retranslate
@@ -29,6 +34,17 @@ from backend.db import open_conn
 from backend.scripts._db_banner import confirm_db, print_db_banner
 from backend.scripts.ab_style_edits import _clip, _score
 from backend.scripts.ingest_edited_chapter import _align_pairs, _split_paras
+
+
+async def _load_ground_truth(novel_id: int, chapter_num: int) -> str | None:
+    """The most recent saved ground-truth edit for this chapter, or None."""
+    async with open_conn() as conn:
+        r = await (await conn.execute(
+            "SELECT edited_text FROM ground_truth_edits "
+            "WHERE novel_id=? AND chapter_num=? ORDER BY id DESC LIMIT 1",
+            (novel_id, chapter_num),
+        )).fetchone()
+    return r["edited_text"] if r else None
 
 
 async def _retranslate(novel_id: int, chapter_id: int) -> None:
@@ -108,7 +124,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--novel-id", type=int, required=True)
     ap.add_argument("--chapter", type=int, required=True)
-    ap.add_argument("--edited-file", required=True, help="UTF-8 ground-truth edit")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--edited-file", help="UTF-8 ground-truth edit file")
+    src.add_argument("--ground-truth", action="store_true",
+                     help="use the latest saved ground-truth edit for this chapter "
+                          "(from the in-app learn-from-edits commit)")
     ap.add_argument("--source", choices=["draft", "refined"], default="draft")
     ap.add_argument("--retranslate", action="store_true",
                     help="force a fresh translation first (burns the subscription window)")
@@ -121,8 +141,17 @@ def main() -> None:
         assume_yes=args.yes,
     ):
         raise SystemExit(1)
-    with open(args.edited_file, encoding="utf-8") as fh:
-        edited = fh.read()
+    if args.ground_truth:
+        edited = asyncio.run(_load_ground_truth(args.novel_id, args.chapter))
+        if edited is None:
+            raise SystemExit(
+                f"no saved ground-truth edit for novel {args.novel_id} "
+                f"chapter {args.chapter} (save one from the reader's "
+                "learn-from-edits panel first)"
+            )
+    else:
+        with open(args.edited_file, encoding="utf-8") as fh:
+            edited = fh.read()
     raise SystemExit(asyncio.run(
         run(args.novel_id, args.chapter, edited, args.source, args.retranslate)
     ))

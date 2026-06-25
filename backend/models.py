@@ -96,6 +96,17 @@ class EditParagraphRequest(BaseModel):
     source: Literal["draft", "refined"] = "draft"
 
 
+class LearnEditsCommit(BaseModel):
+    """Body for POST .../learn-edits/commit. `brief` / `glossary_casing` are the
+    proposal item ids the user confirmed (brief-N / gloss-<entry id>); only ids
+    that re-derive server-side are honored. save_ground_truth opts into capturing
+    the chapter body as a ground-truth reference for A/B."""
+
+    brief: list[str] = Field(default_factory=list)
+    glossary_casing: list[str] = Field(default_factory=list)
+    save_ground_truth: bool = False
+
+
 class Novel(BaseModel):
     id: int
     title: str
