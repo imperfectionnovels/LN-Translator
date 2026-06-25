@@ -548,6 +548,21 @@
   </div>
 </dialog>
 
-<script src="/static/js/reader.js?v=5" defer></script>
+<!--
+  reader.js was split into ordered modules (2026-06). They are plain classic
+  scripts sharing one global scope; load order = original source order, so the
+  concatenation is byte-identical to the old single file (no behavior change).
+  reader-core.js MUST stay first (it owns the DOM handles + shared state every
+  later module references). reader-quality.js stays last (the cockpit calls into
+  the others). All deferred to keep document order behind the marked/DOMPurify
+  CDN tags. test_reader_js_boot_safety.py lints the concatenation in this order.
+-->
+<script src="/static/js/reader-core.js?v=1" defer></script>
+<script src="/static/js/reader-toc.js?v=1" defer></script>
+<script src="/static/js/reader-glossary.js?v=1" defer></script>
+<script src="/static/js/reader-consistency.js?v=1" defer></script>
+<script src="/static/js/reader-chapter.js?v=1" defer></script>
+<script src="/static/js/reader-edit.js?v=1" defer></script>
+<script src="/static/js/reader-quality.js?v=1" defer></script>
 </body>
 </html>
