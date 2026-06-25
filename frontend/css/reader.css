@@ -2598,3 +2598,50 @@ body.has-queue-pill .reading-rail {
 }
 body.has-queue-pill .shortcuts-btn { bottom: 120px; }
 body.has-queue-pill .type-settings-btn { bottom: 160px; }
+
+/* ---- Per-chapter quality badge (cockpit) ---------------------------------
+ * A compact violation-count chip in the chapter bar, edit-mode only (the
+ * .edit-only class handles mode gating; [hidden] handles pre-data). Clicking
+ * opens .quality-pop, a small detail popover anchored under the badge. */
+.quality-badge { display: inline-flex; align-items: center; gap: 5px; }
+.quality-badge .quality-badge-label { font-size: 12px; }
+.quality-badge .quality-badge-score {
+  min-width: 17px; text-align: center; padding: 0 5px;
+  border-radius: 9px; font-size: 11px; font-weight: 700; color: #fff;
+  background: var(--muted);
+}
+.quality-badge[data-band="good"] .quality-badge-score { background: var(--ok, #4a9d7f); }
+.quality-badge[data-band="warn"] .quality-badge-score { background: var(--warn-fg, #b56a16); }
+.quality-badge[data-band="bad"]  .quality-badge-score { background: var(--err-fg, #b5443a); }
+
+.quality-pop {
+  position: fixed;
+  width: 248px;
+  z-index: 60;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.quality-pop .qp-head {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-weight: 600; margin-bottom: 8px;
+}
+.quality-pop .qp-big { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.quality-pop .qp-big .qp-big-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+.quality-pop .qp-good { color: var(--ok, #4a9d7f); }
+.quality-pop .qp-warn { color: var(--warn-fg, #b56a16); }
+.quality-pop .qp-bad  { color: var(--err-fg, #b5443a); }
+.quality-pop .qp-row {
+  display: flex; justify-content: space-between; gap: 8px; padding: 3px 0;
+}
+.quality-pop .qp-k { color: var(--muted); }
+.quality-pop .qp-v { font-weight: 500; }
+.quality-pop .qp-actions { margin-top: 8px; }
+.quality-pop .qp-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent, #5fb8a4); font: inherit;
+}
+.quality-pop .qp-link:hover { text-decoration: underline; }

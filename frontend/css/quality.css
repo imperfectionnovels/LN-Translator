@@ -1,0 +1,115 @@
+/* Page-specific styles for quality.html. Card-grid + worklist + health-band
+   bars, kept off base.css. Reuses base.css design tokens (var(--...)). */
+
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  align-items: start;
+}
+
+.q-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  background: var(--bg);
+}
+/* The overview + worklists read better spanning the full width on wide screens. */
+.q-card-wide { grid-column: 1 / -1; }
+
+.q-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.q-card-sub { font-size: 12px; color: var(--muted); margin: -2px 0 10px; }
+.q-subhead {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin: 12px 0 4px; font-weight: 600;
+}
+
+.q-headline { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 10px; }
+.q-big { font-size: 30px; font-weight: 700; }
+.q-big-label { font-size: 13px; color: var(--muted); }
+
+.q-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 13px; padding: 3px 0;
+}
+.q-row .lbl { color: var(--muted); }
+.q-row .val { font-weight: 500; }
+.q-dim { color: var(--muted); font-weight: 400; }
+.q-empty { color: var(--muted); font-style: italic; font-size: 13px; }
+
+/* ---- Health-band bars ---- */
+.q-bar-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 8px;
+  align-items: center;
+  margin: 7px 0;
+  font-size: 12px;
+}
+.q-bar-label { color: var(--fg); }
+.q-bar-val { text-align: right; white-space: nowrap; }
+.q-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  background: var(--bg-tint);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.q-fill { display: block; height: 100%; }
+
+/* Band colors: good (green), warn (amber), bad (red). Token fallbacks keep
+   the page readable under every theme even if a token is unset. */
+.q-fill.good, .q-work-tag.good { background: var(--ok, #4a9d7f); }
+.q-fill.warn, .q-work-tag.warn { background: var(--warn-fg, #b56a16); }
+.q-fill.bad,  .q-work-tag.bad  { background: var(--err-fg, #b5443a); }
+.q-bar-val.good { color: var(--ok, #4a9d7f); }
+.q-bar-val.warn { color: var(--warn-fg, #b56a16); }
+.q-bar-val.bad  { color: var(--err-fg, #b5443a); }
+.q-big.good { color: var(--ok, #4a9d7f); }
+.q-big.warn { color: var(--warn-fg, #b56a16); }
+.q-big.bad  { color: var(--err-fg, #b5443a); }
+
+/* ---- Triage worklists ---- */
+.q-worklist { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.q-work-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm, 6px);
+  text-decoration: none;
+  color: var(--fg);
+  border: 1px solid transparent;
+}
+.q-work-row:hover { background: var(--bg-tint); border-color: var(--border); }
+.q-work-tag {
+  color: #fff; font-size: 11px; font-weight: 600;
+  text-align: center; padding: 2px 0; border-radius: 4px;
+}
+.q-work-main { display: flex; flex-direction: column; min-width: 0; }
+.q-work-zh { font-weight: 600; font-size: 13px; }
+.q-work-en {
+  font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.q-work-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.q-work-go { color: var(--muted); font-size: 14px; }
+
+.q-note {
+  margin-top: 10px; padding: 6px 10px; border-radius: 6px;
+  font-size: 12px; line-height: 1.4;
+}
+.q-note-warn {
+  color: var(--warn-fg, #b56a16);
+  background: var(--warn-tint, rgba(181, 106, 22, 0.08));
+}

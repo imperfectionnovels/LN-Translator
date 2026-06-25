@@ -32,6 +32,7 @@ const els = {
 
   readBtn: document.getElementById("no-read-btn"),
   glossaryBtn: document.getElementById("no-glossary-btn"),
+  qualityBtn: document.getElementById("no-quality-btn"),
   statsBtn: document.getElementById("no-stats-btn"),
 
   genreChips: document.getElementById("no-genre-chips"),
@@ -322,6 +323,7 @@ function renderHeader(novel) {
   els.readBtn.href = `/reader?novel=${novelId}&ch=${firstCh}`;
   els.glossaryBtn.href = `/glossary?novel=${novelId}`;
   els.glossaryLink.href = `/glossary?novel=${novelId}`;
+  els.qualityBtn.href = `/quality?novel=${novelId}`;
   els.statsBtn.href = `/stats?novel=${novelId}`;
 }
 

@@ -246,6 +246,13 @@ const api = {
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/saturation`),
   getChapterConsistency: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/consistency`),
+  // Quality cockpit (read-only). qualityScorecard takes an optional "LO-HI"
+  // chapter range; qualityConsistency is the novel-level TCR + worst-terms feed.
+  qualityScorecard: (novelId, range = null) =>
+    apiFetch(`/api/novels/${novelId}/quality${range ? `?chapters=${encodeURIComponent(range)}` : ""}`),
+  qualityConsistency: (novelId) => apiFetch(`/api/novels/${novelId}/consistency`),
+  chapterQuality: (novelId, chapterNum) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/quality`),
   searchChapters: (novelId, q) =>
     apiFetch(`/api/novels/${novelId}/search?q=${encodeURIComponent(q)}`),
   editParagraph: (novelId, chapterNum, paragraphIndex, beforeMd, afterText, source = "draft") =>

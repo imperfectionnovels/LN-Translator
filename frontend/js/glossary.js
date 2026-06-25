@@ -678,6 +678,28 @@ async function saveField(id, field, value) {
 /* ============================================================
    Edit state.
    ============================================================ */
+// Deep-link from the quality cockpit's drifting-terms worklist:
+// `?focus=<entry id>` opens that entry for editing and scrolls it into view,
+// switching off any category filter that would hide it. Runs once per load.
+let _focusHandled = false;
+function _maybeFocusEntry() {
+  if (_focusHandled) return;
+  const focusId = parseInt(params.get("focus"), 10);
+  if (!focusId) return;
+  const entry = entries.find(e => e.id === focusId);
+  if (!entry) return;
+  _focusHandled = true;
+  if (activeCat !== "all" && activeCat !== entry.category) {
+    activeCat = "all";
+    renderCatRail();
+  }
+  openEdit(focusId);
+  requestAnimationFrame(() => {
+    rowsEl.querySelector(`[data-id="${focusId}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
 function openEdit(id, focusField) {
   editingId = id;
   render();
@@ -1071,6 +1093,7 @@ async function load() {
     headSub.textContent = `${entries.length} terms · ${entries.filter(e => e.locked).length} locked.`;
     renderCatRail();
     render();
+    _maybeFocusEntry();
     // Health check is best-effort. Don't block the page on it.
     loadHealth();
   } catch (e) {

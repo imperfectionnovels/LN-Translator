@@ -1419,6 +1419,10 @@ function renderChapterBody(ch) {
   // On-demand consistency rail: caches the chapter and refetches only when the
   // rail is open (no-op otherwise), so chapter open stays cheap.
   renderConsistencyRail(ch);
+  // Per-chapter quality badge (cockpit). Guarded: reader-quality.js loads after
+  // this module, but by the time a chapter actually renders (after awaited
+  // network loads) it has executed. Edit-mode-only gating lives in the fn.
+  if (typeof renderQualityBadge === "function") renderQualityBadge(ch);
   updatePaneEnLabel(ch);
   // QA dashboard (Initiative 1) — fire-and-forget; the observations panel
   // populates whenever the chapter has any persisted detect_* rows. Hidden

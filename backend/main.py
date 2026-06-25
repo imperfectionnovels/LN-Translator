@@ -532,6 +532,11 @@ async def stats_page() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "stats.html")
 
 
+@app.get("/quality")
+async def quality_page() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "quality.html")
+
+
 @app.get("/settings")
 async def settings_page() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "settings.html")

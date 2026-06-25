@@ -130,6 +130,14 @@
             <span class="observations-icon">⚠</span>
             <span class="observations-count" id="observations-count">0</span>
           </button>
+          <!-- Per-chapter quality badge (cockpit). Edit-mode only. Shows this
+               chapter's rule-violation count; click reveals observer hits +
+               fixup churn + worst category, with jumps into the QA panel and
+               the consistency rail. Hidden until reader-quality.js loads data. -->
+          <button class="icon-btn quality-badge edit-only" id="quality-badge" title="This chapter's quality" aria-label="Chapter quality" aria-expanded="false" hidden>
+            <span class="quality-badge-label" aria-hidden="true">Quality</span>
+            <span class="quality-badge-score" id="quality-badge-score">·</span>
+          </button>
           <!-- Wireframes redesign: 9 right-side buttons collapsed into one ⋯
                overflow menu. The buttons themselves keep their original ids
                so every reader.js handler binds without changes. -->
