@@ -369,13 +369,19 @@ async def _load(novel_id: int) -> dict:
         glossary = await glossary_svc.list_for_novel(conn, novel_id)
 
         cur = await conn.execute(
-            "SELECT chapter_num, original_text, translated_text "
+            # Score the body the reader actually sees: refined output when the
+            # novel ran a refiner, else the draft. The reader, the per-chapter
+            # quality badge, and the saved ground-truth reference all use this
+            # COALESCE, so the consistency scan must match or it measures a
+            # different artifact than every other cockpit surface.
+            "SELECT chapter_num, original_text, "
+            "COALESCE(refined_text, translated_text) AS body "
             "FROM chapters WHERE novel_id = ? AND status = 'done' "
             "AND translated_text IS NOT NULL ORDER BY chapter_num",
             (novel_id,),
         )
         chapters = [
-            (r["chapter_num"], r["original_text"] or "", r["translated_text"] or "")
+            (r["chapter_num"], r["original_text"] or "", r["body"] or "")
             for r in await cur.fetchall()
         ]
 

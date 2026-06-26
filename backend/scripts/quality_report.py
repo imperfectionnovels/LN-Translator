@@ -255,7 +255,12 @@ async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
         snap_sel = "prompt_config_snapshot" if has_snapshot else "NULL AS prompt_config_snapshot"
         fixup_sel = "fixup_audit" if has_fixup else "NULL AS fixup_audit"
         cur = await conn.execute(
-            f"SELECT chapter_num, title_en, original_text, translated_text, "
+            # Score COALESCE(refined_text, translated_text): the body the reader
+            # sees (and the per-chapter badge + saved ground-truth score). A
+            # refined novel scored on the raw draft would diverge from every
+            # other cockpit surface and from the A/B ground-truth reference.
+            f"SELECT chapter_num, title_en, original_text, "
+            f"COALESCE(refined_text, translated_text) AS body, "
             f"{snap_sel}, {fixup_sel} "
             "FROM chapters WHERE novel_id = ? AND status = 'done' "
             "AND translated_text IS NOT NULL AND chapter_num BETWEEN ? AND ? "
@@ -263,7 +268,7 @@ async def _load_range(novel_id: int, lo: int, hi: int) -> dict:
             (novel_id, lo, hi),
         )
         chapters = [
-            (r["chapter_num"], r["original_text"] or "", r["translated_text"] or "",
+            (r["chapter_num"], r["original_text"] or "", r["body"] or "",
              r["prompt_config_snapshot"], r["fixup_audit"], r["title_en"])
             for r in await cur.fetchall()
         ]

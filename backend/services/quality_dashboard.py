@@ -50,8 +50,16 @@ _locks: dict[tuple, asyncio.Lock] = {}
 
 
 async def _version_token(novel_id: int) -> str:
-    """Cheap content stamp: changes on any (re)translate, refine, or glossary
-    edit for this novel. Guards the expensive scans below."""
+    """Cheap content stamp: changes on any (re)translate, refine, glossary
+    edit, or inline paragraph edit for this novel. Guards the expensive scans
+    below.
+
+    An inline edit (routes/chapters.py::edit_paragraph) rewrites
+    translated_text/refined_text WITHOUT bumping translated_at/refined_at, so a
+    chapter-timestamp stamp alone would serve a stale scorecard right after the
+    user fixed a chapter. Every such edit inserts exactly one style_edits row,
+    so MAX(style_edits.id) + COUNT advance on each one and bust the cache. The
+    aggregate rides the idx_style_edits_novel index, so it stays sub-millisecond."""
     async with open_conn() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) AS done, MAX(translated_at) AS lt, "
@@ -66,7 +74,13 @@ async def _version_token(novel_id: int) -> str:
             (novel_id,),
         )
         g = await cur.fetchone()
-    raw = f"{c['done']}|{c['lt']}|{c['lr']}|{g['lg']}|{g['n']}"
+        cur = await conn.execute(
+            "SELECT MAX(id) AS le, COUNT(*) AS ne "
+            "FROM style_edits WHERE novel_id = ?",
+            (novel_id,),
+        )
+        e = await cur.fetchone()
+    raw = f"{c['done']}|{c['lt']}|{c['lr']}|{g['lg']}|{g['n']}|{e['le']}|{e['ne']}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -94,11 +108,15 @@ async def scorecard(novel_id: int, lo: int, hi: int) -> dict | None:
         data = await _load_range(novel_id, lo, hi)
         if not data["chapters"]:
             return None
-        cons_data = await _consistency_load(novel_id)
+        # Reuse the cached consistency report rather than re-running the scan
+        # privately: the quality page loads scorecard + consistency together,
+        # so a private _consistency_load + _consistency_report here ran the
+        # full-novel TCR scan (and a second glossary load) twice per paint. The
+        # load is gated behind the empty-range check above so a narrow empty
+        # sub-range never triggers a whole-novel scan it would just discard.
+        cons = await consistency(novel_id)
         return await run_in_threadpool(
-            lambda: _build_scorecard(
-                novel_id, lo, hi, data, _consistency_report(novel_id, cons_data)
-            )
+            _build_scorecard, novel_id, lo, hi, data, cons
         )
 
     return await _cached(("scorecard", novel_id, lo, hi), token, _produce)

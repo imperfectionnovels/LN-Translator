@@ -152,3 +152,33 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   vendor-file collapse and dead `humanizer_*` columns remain low-leverage cleanup,
   not done here. Back-catalog retranslation stays the user's separate, cost-gated
   call; the cockpit only makes the stale chapters *visible* (worst-chapter worklist).
+
+## 2026-06-26: cockpit code-review fixes (score what the reader sees; cache that busts; one scan)
+
+- **The cockpit scores `COALESCE(refined_text, translated_text)` everywhere, not the
+  raw draft.** The per-chapter badge already scored the refined body "to match what
+  the reader displays", but the novel-level scorecard (`quality_report._load_range`)
+  and the consistency scan (`consistency_eval._load`) read `translated_text` only. On
+  a refined novel that measured an artifact the reader never sees, disagreed with the
+  badge, and diverged from the saved ground-truth (which is also COALESCE). Both
+  scorers now COALESCE. The done-gate stays `translated_text IS NOT NULL` (refinement
+  always chains off a successful translate, so the draft is the existence signal).
+  This also makes the CLI A/B score the *shipped* text; the translator arm is still
+  isolable via `prompt_config_snapshot` grouping.
+- **The version token must include the inline-edit signal.** `_version_token` hashed
+  done-count + max translated/refined_at + glossary aggregates, but `edit_paragraph`
+  rewrites the body WITHOUT bumping `translated_at`/`refined_at`, so a cached scorecard
+  served pre-edit data right after the user fixed a chapter (the badge dodged this only
+  by being uncached). Fix: fold `MAX(style_edits.id) + COUNT` into the token. Every
+  inline edit inserts exactly one style_edits row, and the aggregate rides
+  `idx_style_edits_novel`, so it stays a sub-millisecond guard. (Not fixed here: a bare
+  observation-dismiss still doesn't bust the token; tracked separately.)
+- **`scorecard()` reuses the cached `consistency()` result instead of re-running the
+  scan.** The quality page loads scorecard + consistency together; scorecard used to
+  call `_consistency_load` + `_consistency_report` *privately*, so the multi-second
+  full-novel TCR scan (and a second glossary load) ran twice per paint. It now awaits
+  `consistency(novel_id)`, which dedupes through the existing `("consistency", id)`
+  cache key. The reuse sits *after* the empty-range short-circuit so a narrow empty
+  sub-range never triggers a whole-novel scan it would discard. The two per-key locks
+  never form a cycle (consistency never calls scorecard), so no deadlock. Regression
+  tests pin all three (refined-body TCR, token-busts-on-style-edit, scan-runs-once).
