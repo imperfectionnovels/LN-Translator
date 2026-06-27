@@ -144,6 +144,26 @@ def _run_window(webview_mod, url: str, shutdown_event: threading.Event) -> None:
     origin AND a stable on-disk home, so per-origin state finally
     persists across launches.
     """
+    # Enable file downloads. pywebview defaults webview.settings['ALLOW_DOWNLOADS']
+    # to False, and the WebView2 backend's DownloadStarting handler hard-cancels
+    # every download when it is false (args.Cancel = True). That silently broke
+    # the reader's "Whole novel .txt / .md / .epub" links AND the glossary CSV/MD
+    # exports inside the packaged window: the server returns 200 with a proper
+    # Content-Disposition attachment, but the webview throws the bytes away, so a
+    # plain browser downloaded fine while the EXE did nothing. Mutate the key in
+    # place (do NOT rebind `settings` to a new dict — the backend imported the
+    # ImmutableDict by reference, so a rebind would leave it reading the old
+    # object). With it on, WebView2 raises a native Save As dialog. Guarded so a
+    # pywebview build without the key still launches.
+    try:
+        webview_mod.settings["ALLOW_DOWNLOADS"] = True
+    except Exception as e:  # noqa: BLE001 - never let a settings shape block launch
+        logger.warning(
+            "could not enable webview downloads (%s: %s); in-app file downloads "
+            "may be blocked by WebView2",
+            type(e).__name__, e,
+        )
+
     window = webview_mod.create_window(
         "LN-Translator",
         url=url,

@@ -3,6 +3,23 @@
 Things the project keeps tripping on. Read once when something feels off; the
 fix below probably matches.
 
+## In-app file downloads silently cancelled by pywebview
+
+pywebview defaults `webview.settings['ALLOW_DOWNLOADS'] = False`, and the
+WebView2 backend's `DownloadStarting` handler does `args.Cancel = True` whenever
+that setting is false. So inside the packaged EXE every `<a download>` /
+`Content-Disposition: attachment` response is thrown away: the reader's "Whole
+novel .txt / .md / .epub" links and the glossary CSV/MD exports did nothing,
+while a plain browser (and the server, which returns a correct 200 + attachment)
+worked fine. This is the trap behind "downloads don't work but only in the app."
+Fix: `backend/app_ui.py::_run_window` sets `webview_mod.settings["ALLOW_DOWNLOADS"]
+= True` before `start()`. **Mutate the key in place** — do NOT rebind
+`webview.settings = {...}`: the backend imported the `ImmutableDict` by
+reference, so a rebind leaves it reading the old object and downloads stay
+blocked. Symptom-to-cause: if the server returns 200 with the bytes (verify with
+a `TestClient` GET, host `localhost`) but the app saves nothing, it is this, not
+the route.
+
 ## `Path.write_text` / `read_text` newline translation on Windows
 
 Text-mode I/O silently rewrites line endings. Writing a string that already

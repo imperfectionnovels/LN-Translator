@@ -184,6 +184,8 @@ class _FakeWebview:
         self.create_window_calls = []
         self.start_calls = []
         self.window = _FakeWindow()
+        # Mirror pywebview's default: downloads off until the app enables them.
+        self.settings = {"ALLOW_DOWNLOADS": False}
 
     def create_window(self, title, **kwargs):
         self.create_window_calls.append((title, kwargs))
@@ -220,6 +222,37 @@ def test_run_window_passes_persistence_kwargs(monkeypatch, tmp_path):
     assert start_kwargs["private_mode"] is False
     assert start_kwargs["debug"] is False
     assert start_kwargs["storage_path"] == str(tmp_path / "webview-data")
+
+
+def test_run_window_enables_downloads(monkeypatch, tmp_path):
+    """pywebview defaults ALLOW_DOWNLOADS=False and the WebView2 backend
+    cancels every download when it is false, which silently broke the in-app
+    .txt/.md/.epub and glossary exports. _run_window must flip it on."""
+    import backend.config as config
+
+    monkeypatch.setattr(config, "USER_DATA_ROOT", tmp_path, raising=False)
+    fake = _FakeWebview()
+    assert fake.settings["ALLOW_DOWNLOADS"] is False  # pywebview default
+
+    ui._run_window(fake, "http://127.0.0.1:8765/", threading.Event())
+
+    assert fake.settings["ALLOW_DOWNLOADS"] is True
+
+
+def test_run_window_survives_missing_settings(monkeypatch, tmp_path):
+    """A pywebview build without a `settings` mapping must not crash launch:
+    the download-enable is best-effort, the window still opens."""
+    import backend.config as config
+
+    monkeypatch.setattr(config, "USER_DATA_ROOT", tmp_path, raising=False)
+    fake = _FakeWebview()
+    del fake.settings  # simulate an older/odd pywebview with no settings attr
+
+    ui._run_window(fake, "http://127.0.0.1:8765/", threading.Event())
+
+    # Window still created + started despite the missing settings mapping.
+    assert len(fake.create_window_calls) == 1
+    assert len(fake.start_calls) == 1
 
 
 def test_run_window_closing_callback_funnels_shutdown(monkeypatch, tmp_path):
