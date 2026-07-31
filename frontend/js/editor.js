@@ -48,6 +48,7 @@
   crumbNovel.href = `/novel?id=${novelId}`;
 
   let chaptersCache = []; // ChapterSummary list, ordered by chapter_num
+  let currentData = null; // last fetched segments payload (Phase 3 edits re-read it)
   let pollTimer = null;
   let loadSeq = 0; // stale-response guard for fast chapter switches
 
@@ -102,9 +103,11 @@
     if (s === "confirmed") return "Confirmed";
     return "AI";
   }
-  function renderSegments(data) {
-    gridHead.hidden = false;
-    grid.innerHTML = data.segments.map(s => `
+  // One row's markup. Kept separate from renderSegments so Phase 3 can
+  // re-render a single row in place (row.outerHTML = rowHtml(s)) after an
+  // edit instead of blasting the whole grid.
+  function rowHtml(s) {
+    return `
       <div class="seg-row" data-seg="${s.index}" data-status="${escapeHtml(s.status)}"
            data-provenance="${escapeHtml(s.origin)}">
         <span class="seg-idx">${s.index + 1}</span>
@@ -118,7 +121,11 @@
           <span class="seg-badge seg-badge-${escapeHtml(s.status)}">${statusLabel(s.status)}</span>
           ${s.aligned ? "" : `<span class="seg-chip-review" title="Automatic alignment could not pin this row to a single source paragraph. Check it against the source.">needs review</span>`}
         </div>
-      </div>`).join("");
+      </div>`;
+  }
+  function renderSegments(data) {
+    gridHead.hidden = false;
+    grid.innerHTML = data.segments.map(rowHtml).join("");
   }
   function selectRow(row, { scroll = true } = {}) {
     grid.querySelectorAll(".seg-row.active").forEach(r => r.classList.remove("active"));
@@ -146,11 +153,14 @@
       data = await api.chapterSegments(novelId, currentCh);
     } catch (e) {
       if (seq !== loadSeq) return;
+      currentData = null;
       grid.setAttribute("aria-busy", "false");
+      renderProgress({ confirmed: 0, total: 0 });
       showStatus("err", `Could not load this chapter's segments: ${escapeHtml(e.message)}`);
       return;
     }
     if (seq !== loadSeq) return;
+    currentData = data;
     grid.setAttribute("aria-busy", "false");
     renderState(data);
   }
