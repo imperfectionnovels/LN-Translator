@@ -253,6 +253,10 @@ class DeepSeekTranslator(BaseTranslator):
         parse_retried = False
         mismatch_retried = False
         while True:
+            # This loop is DeepSeek's orchestration layer, so it owns the
+            # budget tick for its structured calls (one per iteration; the
+            # plain-text fallback below ticks inside _plain_text_fallback).
+            self._check_call_budget()
             result: TranslationResult | None = None
             try:
                 raw = await self._call_deepseek(current_prompt, label="translate")
@@ -323,11 +327,12 @@ class DeepSeekTranslator(BaseTranslator):
         model: str | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        # Per-chapter budget gate. The single translation pass plus one
-        # parse-retry and a plain-text fallback reach at most 3 calls, well
-        # under MAX_LLM_CALLS_PER_CHAPTER. Going over is the regression signal
-        # — surface it as a clean error rather than let the loop drift.
-        self._check_call_budget()
+        # No budget tick here: the orchestration layer owns the counter
+        # (single-owner rule, see BaseTranslator._check_call_budget). This
+        # method is reached from _translate_once (which ticks per iteration)
+        # and from _complete/_complete_plain under base._plain_text_fallback
+        # (which ticks before calling). Ticking here too double-counted the
+        # fallback call and tripped the cap on the legitimate worst-case path.
         # Default the system instruction to whatever translate_chapter set for
         # this call (genre-aware).
         if system is None:

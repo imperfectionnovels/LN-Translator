@@ -240,7 +240,11 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   draft); the draft is already good text, so a discarded polish costs nothing.
   Neither path ever caches a violating body (validation sits before every
   llm_cache store, including a violating pre-guard cache entry on the refiner
-  read path).
+  read path). Residual seam (spec review): validation runs on the raw model
+  body, and post-validation fixups (the enforce_mid_sentence_comma_break weld,
+  strip_leading_title_line) can still change the COMMITTED body's paragraph
+  count relative to the validated count. Phase 2 segment building must key off
+  the committed text, never the validated count.
 - **base.md scope.** Only the paragraph-boundary contract changed: the two
   boundary rules were replaced by "one paragraph in, one paragraph out", and the
   adjacent "New paragraph when the speaker changes" clause was deleted with them

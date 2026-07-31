@@ -117,8 +117,10 @@ class AnthropicApiTranslator(BaseTranslator):
         system_prompt: str | None,
         label: str,
     ) -> str:
-        self._check_call_budget()
-
+        # No budget tick here: the BaseTranslator orchestration layer owns the
+        # counter (single-owner rule, see _check_call_budget). Ticking in this
+        # hook too made every structured call cost 2 ticks and exhausted the
+        # budget before the legitimate retry/fallback path finished.
         kwargs: dict = {
             "model": self.model_id,
             "max_tokens": _MAX_TOKENS,

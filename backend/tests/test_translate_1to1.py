@@ -152,11 +152,124 @@ async def test_parse_failure_retry_coexists_with_count_validation(isolated_cache
     assert result.degraded is False
 
 
+async def test_compound_mismatch_and_parse_failures_reach_fallback(isolated_cache):
+    """Worst-case interleaving on the base loop: mismatch, then two parse
+    failures. Lands on the plain-text fallback with exactly one budget tick
+    per real LLM call (3 structured + 1 plain = MAX_LLM_CALLS_PER_CHAPTER),
+    not a TransientTranslatorError from double-counting."""
+    t = _Scripted([
+        _envelope("All in one paragraph."),  # parses, count mismatch
+        "garbage with no delimiter",          # corrective retry: parse fail
+        "garbage again",                      # parse retry: parse fail
+    ])
+    result = await t.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert result.degraded is True
+    assert result.translated_text == "PLAIN FALLBACK"
+    assert len(t.prompts) == 3
+    assert t.plain_calls == 1
+    assert t._llm_call_count == 4
+
+
 async def test_paragraph_count_mismatch_carries_counts():
     e = ParagraphCountMismatch(got=3, expected=2)
     assert e.got == 3
     assert e.expected == 2
     assert isinstance(e, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek ladder (independent translate_chapter flow)
+# ---------------------------------------------------------------------------
+
+
+def _scripted_deepseek(monkeypatch, responses: list[str]):
+    """A DeepSeekTranslator built without __init__ (no client, no API key),
+    with _call_deepseek stubbed to replay scripted responses. The budget tick
+    lives in the orchestration loops, not in _call_deepseek, so the stub does
+    not affect counting."""
+    from backend.services.translators.deepseek import DeepSeekTranslator
+
+    ds = object.__new__(DeepSeekTranslator)
+    remaining = list(responses)
+    calls: list[tuple[str, str]] = []
+
+    async def _fake_call(prompt, *, label="translate", **kw):
+        calls.append((label, prompt))
+        return remaining.pop(0)
+
+    monkeypatch.setattr(ds, "_call_deepseek", _fake_call)
+    return ds, calls
+
+
+async def test_deepseek_mismatch_corrective_retry_recovers_and_caches_clean(
+    isolated_cache, monkeypatch,
+):
+    ds, calls = _scripted_deepseek(monkeypatch, [
+        _envelope("All in one paragraph."),
+        _envelope("P one.\n\nP two."),
+    ])
+    result = await ds.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert result.paragraph_count_status == "count_mismatch_retry"
+    assert result.translated_text == "P one.\n\nP two."
+    assert [label for label, _ in calls] == ["translate", "translate"]
+    assert "exactly 2 blank-line-separated paragraphs" in calls[1][1]
+
+    # The recovered result was cached with the per-call status stripped: a
+    # fresh instance serves it from cache without any LLM call.
+    ds2, calls2 = _scripted_deepseek(monkeypatch, [])
+    hit = await ds2.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert calls2 == []
+    assert hit.translated_text == "P one.\n\nP two."
+    assert hit.paragraph_count_status is None
+
+
+async def test_deepseek_mismatch_plus_double_parse_fail_reaches_fallback(
+    isolated_cache, monkeypatch,
+):
+    """The compound path: count mismatch, then the corrective retry and the
+    parse retry both return garbage. Must land on the plain-text fallback
+    (4 budget ticks exactly, no TransientTranslatorError) and cache nothing."""
+    ds, calls = _scripted_deepseek(monkeypatch, [
+        _envelope("All in one paragraph."),  # parses, count mismatch
+        "garbage with no delimiter",          # corrective retry: parse fail
+        "garbage again",                      # parse retry: parse fail
+        "PLAIN FALLBACK BODY",                # plain-text fallback
+    ])
+    result = await ds.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert [label for label, _ in calls] == [
+        "translate", "translate", "translate", "fallback",
+    ]
+    assert result.degraded is True
+    assert result.translated_text == "PLAIN FALLBACK BODY"
+    # Exactly one tick per real LLM call: 3 structured + 1 plain.
+    assert ds._llm_call_count == 4
+
+    # Nothing was cached (fallbacks are never cached): the same inputs reach
+    # the LLM again on a fresh instance.
+    ds2, calls2 = _scripted_deepseek(monkeypatch, [_envelope("P1.\n\nP2.")])
+    fresh = await ds2.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert len(calls2) == 1
+    assert fresh.translated_text == "P1.\n\nP2."
+
+
+async def test_deepseek_double_mismatch_accepts_uncached(
+    isolated_cache, monkeypatch,
+):
+    ds, calls = _scripted_deepseek(monkeypatch, [
+        _envelope("One paragraph only."),
+        _envelope("A.\n\nB.\n\nC."),
+    ])
+    result = await ds.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert result.paragraph_count_status == "count_mismatch_accepted"
+    assert result.translated_text == "A.\n\nB.\n\nC."
+    assert result.degraded is False
+    assert [label for label, _ in calls] == ["translate", "translate"]
+
+    # The violating body must not be served from cache afterwards.
+    ds2, calls2 = _scripted_deepseek(monkeypatch, [_envelope("P1.\n\nP2.")])
+    fresh = await ds2.translate_chapter(SRC, "题", [], expected_paragraph_count=2)
+    assert len(calls2) == 1
+    assert fresh.translated_text == "P1.\n\nP2."
 
 
 # ---------------------------------------------------------------------------

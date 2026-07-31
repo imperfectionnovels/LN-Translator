@@ -848,9 +848,16 @@ class BaseTranslator(ABC):
 
     def _check_call_budget(self) -> None:
         """Raise if this chapter has already burned MAX_LLM_CALLS_PER_CHAPTER
-        LLM completions. Counted at the BaseTranslator orchestration layer
-        (each _complete + _complete_plain ticks one), not inside an SDK's
-        own transient-retry loop.
+        LLM completions.
+
+        Single-owner rule: ONLY the orchestration layer ticks this counter,
+        once per real LLM call: the translate_chapter retry loop (before each
+        _complete), _plain_text_fallback (before its _complete_plain), and
+        DeepSeek's _translate_once loop (its own orchestration, before each
+        _call_deepseek). Backend completion hooks and their transient-retry
+        loops must NOT tick, or every structured call double-counts and the
+        legitimate worst-case path (3 structured + 1 plain = exactly
+        MAX_LLM_CALLS_PER_CHAPTER) trips the cap before the fallback runs.
         """
         if self._llm_call_count >= MAX_LLM_CALLS_PER_CHAPTER:
             raise TransientTranslatorError(
@@ -921,8 +928,11 @@ class BaseTranslator(ABC):
         # - paragraph-count mismatch: one retry with the prompt PLUS an
         #   appended corrective naming got/expected, then ACCEPT the body
         #   anyway (flagged, never cached, never the plain-text fallback).
-        # Worst case is 3 structured calls + 1 plain fallback, which is
-        # exactly MAX_LLM_CALLS_PER_CHAPTER; _check_call_budget still guards.
+        # Worst case is 3 structured calls (initial + parse retry + corrective
+        # retry, in any interleaving) + 1 plain fallback = exactly
+        # MAX_LLM_CALLS_PER_CHAPTER ticks. That arithmetic holds because the
+        # budget has a single ticking owner (this loop + _plain_text_fallback;
+        # see _check_call_budget): backend completion hooks never tick.
         current_prompt = prompt
         parse_retried = False
         mismatch_retried = False
