@@ -253,6 +253,10 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // CAT editor (Phase 4): per-segment assist feed for the rail + the
+  // AI-suggests dialog: {tm_exact, tm_fuzzy, machine_text}.
+  segmentAssist: (novelId, chapterNum, segIndex) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments/${segIndex}/assist`),
   // Learn-from-edits: stage derives a proposal from captured edits (no writes);
   // commit applies the confirmed subset (selection = {brief, glossary_casing, save_ground_truth}).
   learnEditsStage: (novelId, chapterNum) =>

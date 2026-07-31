@@ -6,7 +6,7 @@
 <title>Editor · LN Translator</title>
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=4">
-<link rel="stylesheet" href="/static/css/editor.css?v=1">
+<link rel="stylesheet" href="/static/css/editor.css?v=2">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -39,6 +39,8 @@
               aria-pressed="false" title="Show only unconfirmed segments (f)">Unconfirmed only</button>
       <button type="button" class="btn-ghost" id="confirm-rest"
               title="Confirm every remaining segment in this chapter" disabled>Confirm rest</button>
+      <button type="button" class="btn-ghost" id="assist-toggle"
+              aria-pressed="false" title="Toggle the assist rail (a)">Assist</button>
       <button type="button" class="icon-btn" id="shortcuts-btn"
               title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
       <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
@@ -48,16 +50,38 @@
   <!-- Empty / error state banner (pending, translating, error, unaligned). -->
   <div class="status editor-status" id="editor-status" hidden></div>
 
-  <!-- Segment grid. Column header is static; rows are stamped by editor.js as
-       .seg-row[data-seg][data-status][data-provenance] (no per-row ids: row
-       interaction is event delegation on #seg-grid). -->
-  <div class="seg-grid-head" id="seg-grid-head" hidden>
-    <span class="seg-h seg-h-idx">#</span>
-    <span class="seg-h">Source · 中文</span>
-    <span class="seg-h">Translation · English</span>
-    <span class="seg-h seg-h-status">Status</span>
+  <div class="editor-body">
+    <div class="editor-main">
+      <!-- Segment grid. Column header is static; rows are stamped by
+           editor-core.js as .seg-row[data-seg][data-status][data-provenance]
+           (no per-row ids: row interaction is event delegation on #seg-grid). -->
+      <div class="seg-grid-head" id="seg-grid-head" hidden>
+        <span class="seg-h seg-h-idx">#</span>
+        <span class="seg-h">Source · 中文</span>
+        <span class="seg-h">Translation · English</span>
+        <span class="seg-h seg-h-status">Status</span>
+      </div>
+      <div class="seg-grid" id="seg-grid" aria-busy="true" aria-label="Chapter segments"></div>
+    </div>
+
+    <!-- Assist rail (Phase 4): TM matches + glossary chips for the active
+         segment. Stamped by editor-assist.js; toggled with 'a'. -->
+    <aside class="assist-rail" id="assist-rail" aria-label="Assist rail" hidden>
+      <div class="assist-head">
+        <span class="assist-title">Assist</span>
+        <button type="button" class="icon-btn" id="assist-close"
+                title="Close the assist rail (a)" aria-label="Close the assist rail">×</button>
+      </div>
+      <div class="assist-section">
+        <h3 class="assist-h">Translation memory</h3>
+        <div id="assist-tm" class="assist-tm"></div>
+      </div>
+      <div class="assist-section">
+        <h3 class="assist-h">Glossary</h3>
+        <div id="assist-glossary" class="assist-glossary"></div>
+      </div>
+    </aside>
   </div>
-  <div class="seg-grid" id="seg-grid" aria-busy="true" aria-label="Chapter segments"></div>
 
   <!-- Keyboard shortcuts help (toggled by ? or the bar button). -->
   <dialog id="shortcuts-dialog" class="dialog" aria-labelledby="shortcuts-dialog-title">
@@ -71,11 +95,25 @@
       <div class="key-cell"><span class="kbd">n</span> / <span class="kbd">p</span></div><div>Next / previous unconfirmed segment</div>
       <div class="key-cell"><span class="kbd">[</span> / <span class="kbd">]</span></div><div>Previous / next chapter</div>
       <div class="key-cell"><span class="kbd">f</span></div><div>Toggle All / Unconfirmed filter</div>
+      <div class="key-cell"><span class="kbd">a</span></div><div>Toggle the assist rail</div>
+      <div class="key-cell"><span class="kbd">Alt</span>+<span class="kbd">1</span>..<span class="kbd">3</span></div><div>Apply the nth TM match while editing</div>
       <div class="key-cell"><span class="kbd">Esc</span></div><div>Cancel an edit / clear the active row / close dialogs</div>
       <div class="key-cell"><span class="kbd">?</span></div><div>Show this help</div>
     </div>
     <div class="dialog-actions">
       <button type="button" class="btn-primary" id="shortcuts-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- "AI suggests" dialog: the stored machine rendering behind a kept chip.
+       Apply routes through the confirmDialog-gated revert-to-AI action. -->
+  <dialog id="ai-suggestion-dialog" class="dialog" aria-labelledby="ai-suggestion-title">
+    <h3 id="ai-suggestion-title">The AI suggests</h3>
+    <p class="muted ai-suggestion-note">Your text was kept through the last retranslate. The AI's current rendering of this paragraph:</p>
+    <div id="ai-suggestion-text" class="ai-suggestion-text"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="ai-suggestion-close">Dismiss</button>
+      <button type="button" class="btn-primary" id="ai-suggestion-apply">Apply AI text</button>
     </div>
   </dialog>
 </main>
@@ -86,6 +124,10 @@
 <script src="/static/js/command-palette.js"></script>
 <script src="/static/js/queue-panel.js"></script>
 <script src="/static/js/utils.js" defer></script>
-<script src="/static/js/editor.js" defer></script>
+<!-- Editor modules: ordered plain script tags (reader-*.js convention).
+     Core first owns the shared state; assist reads it and listens for the
+     editor:* CustomEvents core dispatches. -->
+<script src="/static/js/editor-core.js" defer></script>
+<script src="/static/js/editor-assist.js" defer></script>
 </body>
 </html>
