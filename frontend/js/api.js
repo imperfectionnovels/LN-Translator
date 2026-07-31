@@ -168,8 +168,6 @@ const api = {
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/attempts`),
   chapterLastPrompt: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/last-prompt`),
-  // F44 in-app diagnostics.
-  diagnostics: () => apiFetch("/api/diagnostics"),
   novel: (id) => apiFetch(`/api/novels/${id}`),
   chapterPreCheck: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/pre-check`),
   // Partial update for the novel record. Pass any subset of:
