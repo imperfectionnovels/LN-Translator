@@ -68,30 +68,35 @@ _OUTLIER_SHORT_FACTOR = 4
 _OUTLIER_MIN_GAP = 20
 
 
-def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | None:
-    """Order-preserving length-based alignment (Gale-Church-lite).
+def _expansion_ratio(src: list[str], tgt: list[str]) -> float:
+    """Whole-chapter English-to-Chinese character expansion ratio."""
+    total_src = sum(len(s) for s in src) or 1
+    total_tgt = sum(len(t) for t in tgt) or 1
+    return total_tgt / total_src
 
-    Returns the list of confident 1:1 `(source_index, target_index)`
-    matches, or None when too few paragraphs anchor to trust the result.
 
-    The model: a target paragraph's length is expected to be `ratio` times
-    its source paragraph's length, where `ratio` is the whole-chapter
-    English-to-Chinese character expansion. A 1:1 match costs the absolute
-    length discrepancy; skipping a paragraph (a pure insertion or deletion)
-    costs its length plus a penalty. A dynamic program finds the minimum-
-    cost order-preserving alignment, and we keep only its 1:1 anchors, so an
-    inserted beat the source lacks is dropped instead of mispaired.
+def _dp_moves(src: list[str], tgt: list[str]) -> list[tuple[str, int, int]]:
+    """Minimum-cost order-preserving alignment path (Gale-Church-lite DP).
+
+    Returns the COMPLETE move list in forward order. Each move is
+    (kind, i, j): 'match' pairs src[i] with tgt[j]; 'del' means src[i] has
+    no target counterpart (j is the target cursor, unused); 'ins' means
+    tgt[j] is a target-only paragraph (i is the source cursor, unused).
+
+    The cost model: a target paragraph's length is expected to be `ratio`
+    times its source paragraph's length, where `ratio` is the whole-chapter
+    expansion. A 1:1 match costs the absolute length discrepancy; skipping
+    a paragraph (a pure insertion or deletion) costs its length plus a
+    penalty.
     """
     m, n = len(src), len(tgt)
     src_len = [len(s) for s in src]
     tgt_len = [len(t) for t in tgt]
-    total_src = sum(src_len) or 1
-    total_tgt = sum(tgt_len) or 1
-    ratio = total_tgt / total_src
+    ratio = _expansion_ratio(src, tgt)
     # Skip penalty scales with the mean target paragraph so behavior is the
     # same regardless of paragraph size. It biases toward keeping a real 1:1
     # match rather than splitting it into a separate insert and delete.
-    penalty = 0.5 * (total_tgt / n)
+    penalty = 0.5 * (sum(tgt_len) or 1) / n if n else 0.0
 
     inf = float("inf")
     # dp[i][j] = min cost to align src[:i] with tgt[:j]; back[i][j] is the
@@ -125,39 +130,116 @@ def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | Non
             dp[i][j] = best
             back[i][j] = move
 
-    matches: list[tuple[int, int]] = []
+    moves: list[tuple[str, int, int]] = []
     i, j = m, n
     while i > 0 or j > 0:
         move = back[i][j]
         assert move is not None  # every non-origin cell has a predecessor
         kind, pi, pj = move
-        if kind == "match":
-            matches.append((pi, pj))
+        moves.append((kind, pi, pj))
         i, j = pi, pj
-    matches.reverse()
+    moves.reverse()
+    return moves
 
-    # Drop length-implausible anchors. The DP always prefers a 1:1 match over
-    # delete-plus-insert, so when a long source paragraph's real rendering was
-    # moved elsewhere and a tiny standalone beat ("Amitabha.") sits in its
-    # slot, the two get matched anyway. An anchor whose target runs far under
-    # its expected length is almost certainly that case, not a genuinely terse
-    # translation, so drop it rather than store a misleading pair.
-    matches = [
+
+def _drop_short_outliers(
+    matches: list[tuple[int, int]], src: list[str], tgt: list[str]
+) -> list[tuple[int, int]]:
+    """Drop length-implausible anchors. The DP always prefers a 1:1 match over
+    delete-plus-insert, so when a long source paragraph's real rendering was
+    moved elsewhere and a tiny standalone beat ("Amitabha.") sits in its
+    slot, the two get matched anyway. An anchor whose target runs far under
+    its expected length is almost certainly that case, not a genuinely terse
+    translation, so drop it rather than store a misleading pair."""
+    ratio = _expansion_ratio(src, tgt)
+    return [
         (i, j)
         for (i, j) in matches
         if not (
-            tgt_len[j] * _OUTLIER_SHORT_FACTOR < ratio * src_len[i]
-            and ratio * src_len[i] - tgt_len[j] > _OUTLIER_MIN_GAP
+            len(tgt[j]) * _OUTLIER_SHORT_FACTOR < ratio * len(src[i])
+            and ratio * len(src[i]) - len(tgt[j]) > _OUTLIER_MIN_GAP
         )
     ]
+
+
+def _length_align(src: list[str], tgt: list[str]) -> list[tuple[int, int]] | None:
+    """Order-preserving length-based alignment (Gale-Church-lite).
+
+    Returns the list of confident 1:1 `(source_index, target_index)`
+    matches, or None when too few paragraphs anchor to trust the result.
+    We keep only the DP path's 1:1 anchors, so an inserted beat the source
+    lacks is dropped instead of mispaired.
+    """
+    moves = _dp_moves(src, tgt)
+    matches = [(i, j) for kind, i, j in moves if kind == "match"]
+    matches = _drop_short_outliers(matches, src, tgt)
 
     # Confidence guard: if fewer than half the paragraphs on the longer side
     # found a 1:1 anchor, the two texts do not correspond well enough to
     # trust. Skip rather than store doubtful pairs (the conservative stance
     # the old delta gate took, now content-aware instead of count-based).
-    if len(matches) < 0.5 * max(m, n):
+    if len(matches) < 0.5 * max(len(src), len(tgt)):
         return None
     return matches
+
+
+def full_alignment_path(
+    src: list[str], tgt: list[str]
+) -> list[tuple[str, bool]] | None:
+    """Complete per-source alignment for the segment store (CAT Phase 2).
+
+    Where `_length_align` keeps only the confident 1:1 anchors, this walks
+    the same DP path and assigns EVERY source index a target string:
+
+      - a confident 1:1 anchor maps directly (aligned=True);
+      - a target-only paragraph ('ins' move) attaches to its nearest source
+        neighbor on the path (the source consumed just before it, or the
+        first source when inserts precede every source), joined with a blank
+        line, so the concatenation of all targets still reproduces the body;
+      - a source paragraph with no plausible target ('del' move) gets ""
+        and aligned=False;
+      - a length-implausible anchor (the same outlier rule `_length_align`
+        drops) keeps its target text but is demoted to aligned=False.
+
+    Returns a list of (target_text, aligned) tuples, one per source index,
+    or None below the same <50% confidence gate as `_length_align`: the
+    chapter is unalignable and none of the pairings should be trusted.
+    """
+    if not src or not tgt:
+        return None
+    moves = _dp_moves(src, tgt)
+    matches = [(i, j) for kind, i, j in moves if kind == "match"]
+    confident = set(_drop_short_outliers(matches, src, tgt))
+    if len(confident) < 0.5 * max(len(src), len(tgt)):
+        return None
+
+    # Assemble per-source target pieces by walking the path in order.
+    parts: list[list[str]] = [[] for _ in src]
+    clean_match: list[bool] = [False] * len(src)
+    has_extra: list[bool] = [False] * len(src)
+    pending: list[str] = []  # inserts seen before the first source index
+    last_src: int | None = None
+    for kind, i, j in moves:
+        if kind == "match":
+            parts[i].append(tgt[j])
+            clean_match[i] = (i, j) in confident
+            last_src = i
+        elif kind == "del":
+            last_src = i
+        else:  # 'ins'
+            if last_src is None:
+                pending.append(tgt[j])
+            else:
+                parts[last_src].append(tgt[j])
+                has_extra[last_src] = True
+    if pending:
+        parts[0] = pending + parts[0]
+        has_extra[0] = True
+
+    return [
+        ("\n\n".join(parts[i]), clean_match[i] and not has_extra[i])
+        for i in range(len(src))
+    ]
 
 
 def align_paragraphs(

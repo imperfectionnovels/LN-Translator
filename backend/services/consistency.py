@@ -41,6 +41,7 @@ from backend.models import GlossaryEntry
 from backend.services import glossary as glossary_svc
 from backend.services import tm as tm_svc
 from backend.services.glossary_filters import canonical_zh, split_aliases
+from backend.services.segments import displayed_body as _segments_displayed_body
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,13 @@ class ConsistencyResult:
 
 
 def _displayed_body(row) -> str | None:
-    """Mirror the reader's `_displayedEnglish`: refined when done, else draft."""
-    if (row["refinement_status"] or "none") == "done" and row["refined_text"]:
-        return row["refined_text"]
-    return row["translated_text"]
+    """Mirror the reader's `_displayedEnglish`: refined when done, else draft.
+
+    The rule itself lives in services/segments.py::displayed_body (the CAT
+    segment store must project the same body the reader shows); this wrapper
+    keeps the historical str-or-None shape for the callers here.
+    """
+    return _segments_displayed_body(row)[1] or None
 
 
 async def consistency_for_chapter(

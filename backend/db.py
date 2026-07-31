@@ -219,6 +219,16 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- fixup can no longer SILENTLY rewrite correct output. Writer:
     -- services/queue.py::_apply_text_fixups + _record_commit_provenance.
     fixup_audit TEXT,
+    -- 2026-07-30 CAT Phase 2 segment store. NULL = segments never built for
+    -- this chapter; 'ok' = every row is a confident 1:1 anchor; 'partial' =
+    -- built via the full alignment path with at least one aligned=0 row;
+    -- 'unaligned' = alignment fell below the confidence gate, zero rows.
+    -- Writer: services/segments.py::build_segments_from_alignment.
+    segments_state TEXT,
+    -- SEGMENTATION_VERSION (services/segmentation.py) in effect when this
+    -- chapter's segments were built. A version bump re-keys paragraph
+    -- positions, so a mismatch forces a lazy rebuild on the next editor open.
+    segmentation_version INTEGER,
     UNIQUE (novel_id, chapter_num)
 );
 
@@ -435,6 +445,43 @@ CREATE INDEX IF NOT EXISTS idx_tm_novel_hash
     ON tm_segments(novel_id, source_hash);
 CREATE INDEX IF NOT EXISTS idx_tm_chapter
     ON tm_segments(chapter_id);
+
+-- 2026-07-30 CAT Phase 2: the segment store (durability ledger). One row per
+-- effective source paragraph of a translated chapter; target_text mirrors the
+-- DISPLAYED body (refined when done, else draft) so join(target_text ORDER BY
+-- seg_index) reproduces what the reader shows. `machine_text` keeps the AI's
+-- rendering alongside a human edit (powers revert-to-AI + the before/after
+-- pair that supersedes style_edits in later phases). `status` is the CAT
+-- state machine; `origin` is provenance ('aligned_backfill' this phase;
+-- 'llm' / 'llm_refined' / 'tm_exact' / 'human' land with later phases).
+-- `aligned` = 0 marks a row the full alignment path could not pin as a
+-- confident 1:1 anchor (needs-review chip in the editor). Owned exclusively
+-- by services/segments.py.
+CREATE TABLE IF NOT EXISTS chapter_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+    chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    seg_index INTEGER NOT NULL,
+    source_text TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    target_text TEXT NOT NULL,
+    machine_text TEXT,
+    status TEXT NOT NULL DEFAULT 'machine'
+        CHECK (status IN ('machine', 'edited', 'confirmed')),
+    origin TEXT NOT NULL DEFAULT 'llm',
+    aligned INTEGER NOT NULL DEFAULT 1,
+    edited_at TEXT,
+    confirmed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (chapter_id, seg_index)
+);
+CREATE INDEX IF NOT EXISTS idx_chapter_segments_chapter
+    ON chapter_segments(chapter_id, seg_index);
+CREATE INDEX IF NOT EXISTS idx_chapter_segments_novel_hash
+    ON chapter_segments(novel_id, source_hash);
+CREATE INDEX IF NOT EXISTS idx_chapter_segments_nonmachine
+    ON chapter_segments(novel_id, status) WHERE status != 'machine';
 """
 
 
@@ -814,6 +861,37 @@ _ADDITIVE_MIGRATIONS = (
     " edited_text TEXT NOT NULL,"
     " prompt_config_snapshot TEXT,"
     " created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+    # 2026-07-30 CAT Phase 2 segment store. New table + per-chapter state
+    # columns; SCHEMA covers fresh installs, these entries upgrade existing
+    # user DBs on boot. See the SCHEMA comment on chapter_segments for the
+    # column semantics; services/segments.py is the only writer.
+    """CREATE TABLE IF NOT EXISTS chapter_segments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+        chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        seg_index INTEGER NOT NULL,
+        source_text TEXT NOT NULL,
+        source_hash TEXT NOT NULL,
+        target_text TEXT NOT NULL,
+        machine_text TEXT,
+        status TEXT NOT NULL DEFAULT 'machine'
+            CHECK (status IN ('machine', 'edited', 'confirmed')),
+        origin TEXT NOT NULL DEFAULT 'llm',
+        aligned INTEGER NOT NULL DEFAULT 1,
+        edited_at TEXT,
+        confirmed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (chapter_id, seg_index)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_chapter_segments_chapter "
+    "ON chapter_segments(chapter_id, seg_index)",
+    "CREATE INDEX IF NOT EXISTS idx_chapter_segments_novel_hash "
+    "ON chapter_segments(novel_id, source_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_chapter_segments_nonmachine "
+    "ON chapter_segments(novel_id, status) WHERE status != 'machine'",
+    "ALTER TABLE chapters ADD COLUMN segments_state TEXT",
+    "ALTER TABLE chapters ADD COLUMN segmentation_version INTEGER",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed
