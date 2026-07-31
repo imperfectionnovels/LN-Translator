@@ -8,8 +8,9 @@ One endpoint:
 
 The old GET /api/novels/{id}/tm/inconsistencies endpoint was removed
 2026-07-30 (no UI caller); the same drift signal reaches users via the
-tm_inconsistency observations queue.py writes on every translate
-(services/tm.py::find_inconsistencies is still the shared core).
+tm_inconsistency observations queue.py writes on every translate through
+its own inline SQL (services/tm.py::find_inconsistencies had no callers
+left after this removal and was deleted too).
 """
 
 from __future__ import annotations

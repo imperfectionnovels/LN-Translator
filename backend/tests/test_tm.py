@@ -9,8 +9,6 @@ Pins the contract the queue worker relies on:
    replaces rows entirely — no orphaned prior-translation rows.
 3. Concordance: case-sensitive on Chinese, case-insensitive on English,
    results in reading order, capped at the engine limit.
-4. Inconsistency: same source paragraph rendered ≥ 2 ways surfaces with
-   per-rendering chapter lists.
 """
 
 from __future__ import annotations
@@ -326,51 +324,3 @@ async def test_concordance_requires_minimum_query_length():
         # paragraph on a stray keystroke.
         hits = await tm_svc.search(conn, novel_id, "x")
     assert hits == []
-
-
-# ---- Inconsistency detection -------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_inconsistency_flags_same_source_different_targets():
-    """The same source paragraph rendered two ways across chapters
-    surfaces as one inconsistency group with both renderings."""
-    same_source = "他大笑。"
-    novel_id = await _seed([
-        (1, same_source, "He laughed loudly."),
-        (2, same_source, "He laughed loudly."),
-        (3, same_source, "He chuckled."),  # different rendering
-    ])
-    async with open_conn() as conn:
-        cur = await conn.execute("SELECT id FROM chapters ORDER BY chapter_num")
-        ids = [r["id"] for r in await cur.fetchall()]
-        targets = ["He laughed loudly.", "He laughed loudly.", "He chuckled."]
-        for cid, t in zip(ids, targets):
-            await tm_svc.replace_chapter_segments(
-                conn, novel_id, cid, same_source, t
-            )
-        await conn.commit()
-        groups = await tm_svc.find_inconsistencies(conn, novel_id)
-    assert len(groups) == 1
-    g = groups[0]
-    assert g.source_text == same_source
-    assert len(g.renderings) == 2
-    assert g.total_occurrences == 3
-
-
-@pytest.mark.asyncio
-async def test_inconsistency_silent_when_all_renderings_match():
-    novel_id = await _seed([
-        (1, "他大笑。", "He laughed."),
-        (2, "他大笑。", "He laughed."),
-    ])
-    async with open_conn() as conn:
-        cur = await conn.execute("SELECT id FROM chapters ORDER BY chapter_num")
-        ids = [r["id"] for r in await cur.fetchall()]
-        for cid in ids:
-            await tm_svc.replace_chapter_segments(
-                conn, novel_id, cid, "他大笑。", "He laughed."
-            )
-        await conn.commit()
-        groups = await tm_svc.find_inconsistencies(conn, novel_id)
-    assert groups == []

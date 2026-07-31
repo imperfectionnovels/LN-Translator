@@ -185,13 +185,20 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
 
 ## 2026-07-30: phase-0 hygiene sweep (CAT-pivot prep)
 
-- **Dead HTTP surfaces removed, their service cores kept.** `GET /api/cache/stats`
-  (whole router), `GET /api/novels/{id}/tm/inconsistencies`, the novel-rollup
+- **Dead HTTP surfaces removed; service cores kept only where actually
+  load-bearing.** `GET /api/cache/stats` (whole router), `GET
+  /api/novels/{id}/tm/inconsistencies`, the novel-rollup
   `GET /api/novels/{id}/observations`, and both observation bulk-dismiss POSTs had
-  zero UI callers (verified by grep over frontend/js). The engines stay:
-  `llm_cache.get_stats` still feeds `/api/diagnostics`, and
-  `services/tm.py::find_inconsistencies` still feeds the queue's tm_inconsistency
-  observations. Deleting a route is cheap to undo; the cores are load-bearing.
+  zero UI callers (verified by grep over frontend/js). `llm_cache.get_stats` stays:
+  it still feeds `/api/diagnostics`.
+- **Correction (same day): `services/tm.py::find_inconsistencies` was deleted
+  too.** The sweep's KEEP instruction claimed
+  queue.py::_emit_tm_inconsistency_observations calls it; that was a wrong
+  premise. The queue writes tm_inconsistency observations via its own inline SQL
+  and never imported the function, so after the route deletion it had zero
+  production callers (test-only coverage). Lesson: verify a claimed caller by
+  grep before treating "still feeds X" as a keep reason; the first sweep repeated
+  the plan's claim without checking.
 - **test_cache_stats.py was NOT deleted wholesale** even though the plan listed it:
   5 of its 6 tests pin the still-live llm_cache counter behavior (the only coverage
   of `get_stats`/`reset_stats`). Only the endpoint test died with the route. Same

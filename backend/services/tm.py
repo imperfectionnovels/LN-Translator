@@ -352,75 +352,7 @@ async def search(
     ]
 
 
-# ---------------------------------------------------------------------------
-# Inconsistency detection
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class InconsistencyGroup:
-    """One source paragraph that the model has rendered into ≥ 2 distinct
-    English forms across the novel. The renderings ARE the disagreement;
-    the reader's QA panel surfaces this as an observation kind so the
-    user can pick which rendering to standardize on."""
-
-    source_text: str
-    source_hash: str
-    renderings: list[dict]  # [{target_text, chapters: [{chapter_id, chapter_num, title_en}]}]
-    total_occurrences: int
-
-
-async def find_inconsistencies(
-    conn: aiosqlite.Connection, novel_id: int
-) -> list[InconsistencyGroup]:
-    """Group TM rows by source_hash and return groups where the same
-    source paragraph maps to multiple distinct target_text values.
-
-    Deliberately exact-match on target — a one-character casing
-    difference IS the kind of drift this is designed to surface. The
-    reader's QA panel can then offer "standardize on rendering X"
-    (which would invoke Initiative 4's find/replace engine)."""
-    cur = await conn.execute(
-        "SELECT source_hash, source_text, target_text, chapter_id, "
-        "       c.chapter_num, c.title_en "
-        "FROM tm_segments t "
-        "JOIN chapters c ON c.id = t.chapter_id "
-        "WHERE t.novel_id = ? "
-        "ORDER BY source_hash, target_text",
-        (novel_id,),
-    )
-    rows = await cur.fetchall()
-    # Group: source_hash → {target_text → [chapter_meta]}
-    by_hash: dict[str, dict] = {}
-    src_text_by_hash: dict[str, str] = {}
-    for r in rows:
-        h = r["source_hash"]
-        src_text_by_hash.setdefault(h, r["source_text"])
-        by_target = by_hash.setdefault(h, {})
-        by_target.setdefault(r["target_text"], []).append(
-            {
-                "chapter_id": r["chapter_id"],
-                "chapter_num": r["chapter_num"],
-                "title_en": r["title_en"],
-            }
-        )
-    out: list[InconsistencyGroup] = []
-    for h, by_target in by_hash.items():
-        if len(by_target) < 2:
-            continue
-        renderings = [
-            {"target_text": t, "chapters": chs}
-            for t, chs in sorted(by_target.items())
-        ]
-        total = sum(len(r["chapters"]) for r in renderings)
-        out.append(
-            InconsistencyGroup(
-                source_text=src_text_by_hash[h],
-                source_hash=h,
-                renderings=renderings,
-                total_occurrences=total,
-            )
-        )
-    # Surface highest-impact (most-occurring) inconsistencies first.
-    out.sort(key=lambda g: -g.total_occurrences)
-    return out
+# The old Inconsistency-detection block (InconsistencyGroup +
+# find_inconsistencies) was removed 2026-07-30: after its route died it had
+# zero production callers. The queue's tm_inconsistency observations come
+# from queue.py::_emit_tm_inconsistency_observations' own inline SQL.

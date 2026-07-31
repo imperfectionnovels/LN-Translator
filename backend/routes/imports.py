@@ -2,7 +2,7 @@
 
 Three small surfaces for the in-progress / paused / resume UX:
 
-- `GET /api/imports/{novel_id}/status` — poll the current import state.
+- `GET /api/imports/{novel_id}/status`: poll the current import state.
   No UI caller today (library card badges render from the /api/novels
   payload); kept as a standalone polling surface for scripts and
   external tooling.

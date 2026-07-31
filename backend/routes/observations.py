@@ -1,7 +1,7 @@
 """Routes for the QA dashboard (Initiative 1).
 
 Read/dismiss surfaces over the persisted chapter_observations rows:
-  * GET /api/observations/library-summary — per-novel undismissed counts
+  * GET /api/observations/library-summary, per-novel undismissed counts
     for the library page badges (one query, no N+1).
   * GET /api/novels/{id}/chapters/{n}/observations — full list for one
     chapter, ordered by id (stable insertion order).
