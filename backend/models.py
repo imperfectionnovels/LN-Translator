@@ -427,6 +427,47 @@ class SegmentListResponse(BaseModel):
     segments: list[Segment]
 
 
+class SegmentPatch(BaseModel):
+    """Body for PATCH .../segments/{seg_index}. `action` is validated by the
+    service (unknown -> 400, not 422, matching the documented contract).
+    `chapter_rev` is the displayed body's rev the page loaded with (stale-tab
+    guard); `before_target_hash` is the row's target hash at load time
+    (per-segment precision guard)."""
+
+    action: str
+    after_text: str | None = None
+    chapter_rev: str
+    before_target_hash: str
+
+
+class SegmentPatchResult(BaseModel):
+    """One segment write's outcome: the updated row plus the fresh chapter
+    rev (text-changing actions rematerialize the body) and the progress the
+    editor bar renders."""
+
+    segment: Segment
+    chapter_rev: str
+    segments_state: str | None
+    progress: SegmentProgress
+    next_unconfirmed_index: int | None
+
+
+class SegmentConfirmAll(BaseModel):
+    """Body for POST .../segments/confirm-all. `statuses` defaults to
+    ['machine', 'edited'] server-side."""
+
+    chapter_rev: str
+    statuses: list[str] | None = None
+
+
+class SegmentConfirmAllResult(BaseModel):
+    confirmed: int
+    chapter_rev: str
+    segments_state: str | None
+    progress: SegmentProgress
+    next_unconfirmed_index: int | None
+
+
 class DeleteCounts(BaseModel):
     """Response for GET /novels/{id}/delete-counts. Mirrors the
     `services.soft_delete.DeleteCounts` dataclass field-for-field so the

@@ -176,6 +176,7 @@ async def restore_snapshot(
 
     target = row["target"]
     chapters_restored = 0
+    restored_ids: list[int] = []
     await conn.execute("BEGIN IMMEDIATE")
     try:
         for chapter_id_str, before in payload.items():
@@ -197,6 +198,13 @@ async def restore_snapshot(
             )
             if (cur.rowcount or 0) > 0:
                 chapters_restored += 1
+                restored_ids.append(chapter_id)
+        # CAT Phase 3: re-sync each restored chapter's segment store in the
+        # same transaction, preserving segment statuses (a restore is a
+        # text-authoritative mutation like the commit it reverses).
+        from backend.services import segments as segments_svc  # noqa: PLC0415
+        for chapter_id in restored_ids:
+            await segments_svc.reproject_from_body(conn, chapter_id)
         await conn.execute(
             "UPDATE find_replace_snapshots SET restored_at = datetime('now') "
             "WHERE id = ?",

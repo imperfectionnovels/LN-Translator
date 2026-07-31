@@ -479,6 +479,7 @@ async def commit_preview(
     snapshot_payloads: dict[int, dict[str, dict]] = {}
     rows_translated = 0
     rows_refined = 0
+    body_changed_ids: list[int] = []
     for cid, (translated, refined) in current.items():
         new_translated = translated
         new_refined = refined
@@ -527,6 +528,15 @@ async def commit_preview(
             rows_translated += 1
         if change_refined:
             rows_refined += 1
+        body_changed_ids.append(cid)
+
+    # CAT Phase 3: re-sync each touched chapter's segment store to its new
+    # body IN THE SAME TRANSACTION (status-preserving: confirmed segments
+    # stay confirmed through a find-replace). No-op for chapters without
+    # segment rows.
+    from backend.services import segments as segments_svc  # noqa: PLC0415
+    for cid in body_changed_ids:
+        await segments_svc.reproject_from_body(conn, cid)
 
     # Record snapshots per touched novel — same transaction as the
     # UPDATEs so a crash between them can't leave un-restorable changes.
@@ -607,6 +617,7 @@ async def apply_in_place_for_glossary_term(
     rows_refined = 0
     rows_titles = 0
     chapters_touched: set[int] = set()
+    body_changed_ids: list[int] = []
     for r in rows:
         translated = r["translated_text"]
         refined = r["refined_text"]
@@ -635,6 +646,8 @@ async def apply_in_place_for_glossary_term(
         if not (change_translated or change_refined or change_title):
             continue
         chapters_touched.add(r["id"])
+        if change_translated or change_refined:
+            body_changed_ids.append(r["id"])
         # One UPDATE per chapter; assemble the SET clause from whichever
         # columns actually changed so we don't rewrite untouched bodies.
         set_parts: list[str] = []
@@ -659,6 +672,11 @@ async def apply_in_place_for_glossary_term(
             rows_refined += 1
         if change_title:
             rows_titles += 1
+    # CAT Phase 3: status-preserving segment re-sync in the same transaction
+    # (title-only changes never touch the displayed body, so they skip it).
+    from backend.services import segments as segments_svc  # noqa: PLC0415
+    for cid in body_changed_ids:
+        await segments_svc.reproject_from_body(conn, cid)
     await conn.commit()
     return CommitResult(
         chapters_updated=len(chapters_touched),

@@ -367,3 +367,66 @@ async def test_apply_in_place_title_only_match_still_counts_chapter():
     assert result.rows_updated_titles == 1
     assert result.rows_updated_translated == 0
     assert result.rows_updated_refined == 0
+
+
+# ---- CAT Phase 3: segment reproject hook ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_commit_reprojects_segment_store_preserving_statuses():
+    """The commit hook re-syncs the segment store in the same transaction:
+    targets pick up the substitution, statuses survive (a confirmed row is
+    NOT un-confirmed), and join(targets) still reproduces the body. Deep
+    coverage lives in test_segments_reproject.py; this pins the wiring."""
+    from backend.services import segments as segments_svc
+
+    src = "甲" * 29 + "。\n\n" + "乙" * 29 + "。"
+    body = "Bai Xiaochun bowed.\n\nThe elder nodded slowly."
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type) VALUES ('S', 'paste')"
+        )
+        novel_id = cur.lastrowid
+        cur = await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "translated_text, status) VALUES (?, 1, ?, ?, 'done')",
+            (novel_id, src, body),
+        )
+        chapter_id = cur.lastrowid
+        await conn.commit()
+
+    # Build the store, confirm row 0.
+    async with open_conn() as conn:
+        payload = await segments_svc.get_segments(conn, novel_id, 1)
+        await conn.commit()
+    seg0 = payload["segments"][0]
+    async with open_conn() as conn:
+        await segments_svc.update_segment(
+            conn, novel_id, 1, 0, action="confirm", after_text=None,
+            chapter_rev=payload["chapter_rev"],
+            before_target_hash=seg0["target_hash"],
+        )
+        await conn.commit()
+
+    query = fr.FindReplaceQuery(
+        find="Bai Xiaochun", replacement="Lord Bai",
+        scope_kind="novel", scope_ids=[novel_id],
+    )
+    async with open_conn() as conn:
+        preview = await fr.build_preview(conn, query)
+        await fr.commit_preview(conn, preview.token)
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT target_text, status FROM chapter_segments "
+            "WHERE chapter_id = ? ORDER BY seg_index",
+            (chapter_id,),
+        )
+        rows = list(await cur.fetchall())
+        cur = await conn.execute(
+            "SELECT translated_text FROM chapters WHERE id = ?", (chapter_id,)
+        )
+        ch = await cur.fetchone()
+    assert rows[0]["status"] == "confirmed"
+    assert rows[0]["target_text"] == "Lord Bai bowed."
+    assert ch["translated_text"] == "\n\n".join(r["target_text"] for r in rows)

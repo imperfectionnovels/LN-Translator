@@ -455,3 +455,497 @@ async def test_missing_chapter_returns_none():
     novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
     assert await _get(novel_id, ch=99) is None
     assert await _get(novel_id + 1000) is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: update_segment state machine
+# ---------------------------------------------------------------------------
+
+
+async def _patch(
+    novel_id: int,
+    seg_index: int,
+    action: str,
+    after: str | None = None,
+    ch: int = 1,
+    rev: str | None = None,
+    before_hash: str | None = None,
+) -> dict:
+    """Drive update_segment the way the route does: rev + hash from a fresh
+    GET unless the test overrides them to provoke a stale error."""
+    payload = await _get(novel_id, ch)
+    seg = next(
+        (s for s in payload["segments"] if s["index"] == seg_index), None
+    )
+    async with open_conn() as conn:
+        result = await segments_svc.update_segment(
+            conn, novel_id, ch, seg_index,
+            action=action,
+            after_text=after,
+            chapter_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
+            before_target_hash=(
+                before_hash if before_hash is not None
+                else (seg["target_hash"] if seg else "0" * 16)
+            ),
+        )
+        await conn.commit()
+    return result
+
+
+def _assert_i1(chapter_id: int) -> None:
+    """Invariant I1: join(non-empty targets) reproduces the displayed body,
+    and the stamped segments_rev matches it."""
+    from backend.services.segmentation import split_target_paragraphs
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        ch = conn.execute(
+            "SELECT translated_text, refined_text, refinement_status, "
+            "segments_rev FROM chapters WHERE id = ?",
+            (chapter_id,),
+        ).fetchone()
+        targets = [r[0] for r in conn.execute(
+            "SELECT target_text FROM chapter_segments "
+            "WHERE chapter_id = ? ORDER BY seg_index",
+            (chapter_id,),
+        ).fetchall()]
+    finally:
+        conn.close()
+    if (ch["refinement_status"] or "none") == "done" and ch["refined_text"]:
+        body = ch["refined_text"]
+    else:
+        body = ch["translated_text"] or ""
+    joined = "\n\n".join(t for t in targets if t)
+    assert joined == "\n\n".join(split_target_paragraphs(body))
+    assert ch["segments_rev"] == segments_svc.chapter_rev(body)
+
+
+def _db_body(chapter_id: int, column: str = "translated_text") -> str:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            f"SELECT {column} FROM chapters WHERE id = ?", (chapter_id,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+async def test_save_machine_row_edits_and_materializes():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    result = await _patch(novel_id, 1, "save", after="A better paragraph.")
+    seg = result["segment"]
+    assert seg["status"] == "edited"
+    assert seg["origin"] == "human"
+    assert seg["target_text"] == "A better paragraph."
+    assert seg["aligned"] is True
+    assert seg["confirmed_at"] is None
+    new_body = "First paragraph.\n\nA better paragraph.\n\nThird paragraph."
+    assert _db_body(chapter_id) == new_body
+    assert result["chapter_rev"] == segments_svc.chapter_rev(new_body)
+    assert result["segments_state"] == "ok"
+    assert result["progress"] == {"confirmed": 0, "total": 3}
+    assert result["next_unconfirmed_index"] == 0
+    _assert_i1(chapter_id)
+    # machine_text keeps the AI's version (revert anchor); edited_at stamped.
+    rows = _db_segments(chapter_id)
+    assert rows[1][4] == "Second paragraph."  # machine_text untouched
+
+
+async def test_save_strips_whitespace_and_rejects_empty():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    result = await _patch(novel_id, 0, "save", after="  Trimmed.  ")
+    assert result["segment"]["target_text"] == "Trimmed."
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, 0, "save", after="   ")
+    _assert_i1(chapter_id)
+
+
+async def test_confirm_machine_row_no_text_change():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    before_rev = (await _get(novel_id))["chapter_rev"]
+    result = await _patch(novel_id, 0, "confirm")
+    seg = result["segment"]
+    assert seg["status"] == "confirmed"
+    assert seg["confirmed_at"] is not None
+    assert seg["target_text"] == "First paragraph."
+    assert result["chapter_rev"] == before_rev  # body untouched
+    assert result["progress"] == {"confirmed": 1, "total": 3}
+    assert result["next_unconfirmed_index"] == 1
+    assert _db_body(chapter_id) == _TGT_3
+    _assert_i1(chapter_id)
+
+
+async def test_confirm_is_idempotent():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    first = await _patch(novel_id, 0, "confirm")
+    second = await _patch(novel_id, 0, "confirm")
+    assert second["segment"]["status"] == "confirmed"
+    # The original confirmed_at stands (no re-stamp on an idempotent hit).
+    assert second["segment"]["confirmed_at"] == first["segment"]["confirmed_at"]
+    assert second["progress"] == {"confirmed": 1, "total": 3}
+
+
+async def test_save_and_confirm_in_one_write():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    result = await _patch(novel_id, 2, "save_and_confirm", after="Final form.")
+    seg = result["segment"]
+    assert seg["status"] == "confirmed"
+    assert seg["origin"] == "human"
+    assert seg["confirmed_at"] is not None
+    assert _db_body(chapter_id).endswith("Final form.")
+    _assert_i1(chapter_id)
+
+
+async def test_save_demotes_confirmed_to_edited():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "confirm")
+    result = await _patch(novel_id, 1, "save", after="Changed after confirm.")
+    seg = result["segment"]
+    assert seg["status"] == "edited"
+    assert seg["confirmed_at"] is None
+    assert result["progress"] == {"confirmed": 0, "total": 3}
+    _assert_i1(chapter_id)
+
+
+async def test_unconfirm_only_from_confirmed():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 0, "confirm")
+    result = await _patch(novel_id, 0, "unconfirm")
+    assert result["segment"]["status"] == "edited"
+    assert result["segment"]["confirmed_at"] is None
+    # machine and edited rows refuse unconfirm.
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, 1, "unconfirm")
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, 0, "unconfirm")  # now 'edited'
+
+
+async def test_revert_machine_restores_ai_text():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save", after="Human version.")
+    result = await _patch(novel_id, 1, "revert_machine")
+    seg = result["segment"]
+    assert seg["status"] == "machine"
+    assert seg["target_text"] == "Second paragraph."
+    assert seg["confirmed_at"] is None
+    assert _db_body(chapter_id) == _TGT_3
+    _assert_i1(chapter_id)
+    # From machine it is a 400-style error.
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, 1, "revert_machine")
+
+
+async def test_revert_machine_from_confirmed():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 0, "save_and_confirm", after="Confirmed human.")
+    result = await _patch(novel_id, 0, "revert_machine")
+    assert result["segment"]["status"] == "machine"
+    assert result["segment"]["target_text"] == "First paragraph."
+    assert result["progress"] == {"confirmed": 0, "total": 3}
+    _assert_i1(chapter_id)
+
+
+async def test_unknown_action_rejected():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, 0, "obliterate")
+
+
+async def test_stale_chapter_rev_409():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    with pytest.raises(segments_svc.SegmentStaleError) as exc:
+        await _patch(novel_id, 0, "save", after="x", rev="f" * 16)
+    assert exc.value.kind == "stale_chapter"
+
+
+async def test_stale_segment_hash_409():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    with pytest.raises(segments_svc.SegmentStaleError) as exc:
+        await _patch(novel_id, 0, "save", after="x", before_hash="f" * 16)
+    assert exc.value.kind == "stale_segment"
+
+
+async def test_not_done_chapter_409_kind_chapter_translating():
+    for status in ("pending", "translating", "error"):
+        novel_id, chapter_id = await _seed_chapter(
+            _SRC_3, _TGT_3, status=status
+        )
+        async with open_conn() as conn:
+            with pytest.raises(segments_svc.SegmentStaleError) as exc:
+                await segments_svc.update_segment(
+                    conn, novel_id, 1, 0,
+                    action="save", after_text="x",
+                    chapter_rev=segments_svc.chapter_rev(_TGT_3),
+                    before_target_hash="0" * 16,
+                )
+        assert exc.value.kind == "chapter_translating"
+
+
+async def test_unaligned_chapter_refuses_writes():
+    src = "\n\n".join(_zh_para(c) for c in "甲乙丙丁戊己")
+    novel_id, _ = await _seed_chapter(src, "One lonely paragraph.")
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "unaligned"
+    async with open_conn() as conn:
+        with pytest.raises(segments_svc.SegmentStaleError) as exc:
+            await segments_svc.update_segment(
+                conn, novel_id, 1, 0,
+                action="save", after_text="x",
+                chapter_rev=payload["chapter_rev"],
+                before_target_hash="0" * 16,
+            )
+    assert exc.value.kind == "stale_chapter"
+
+
+async def test_missing_chapter_and_segment_raise_not_found():
+    novel_id, _ = await _seed_chapter(_SRC_3, _TGT_3)
+    await _get(novel_id)
+    async with open_conn() as conn:
+        with pytest.raises(segments_svc.SegmentNotFoundError):
+            await segments_svc.update_segment(
+                conn, novel_id, 99, 0, action="save", after_text="x",
+                chapter_rev="0" * 16, before_target_hash="0" * 16,
+            )
+        with pytest.raises(segments_svc.SegmentNotFoundError):
+            await segments_svc.update_segment(
+                conn, novel_id, 1, 99, action="save", after_text="x",
+                chapter_rev=segments_svc.chapter_rev(_TGT_3),
+                before_target_hash="0" * 16,
+            )
+
+
+async def test_refined_variant_save_materializes_refined_column():
+    refined = "Polished one.\n\nPolished two.\n\nPolished three."
+    novel_id, chapter_id = await _seed_chapter(
+        _SRC_3, _TGT_3, refined=refined, refinement_status="done",
+    )
+    result = await _patch(novel_id, 1, "save", after="Hand polished two.")
+    assert result["segment"]["status"] == "edited"
+    assert _db_body(chapter_id, "refined_text") == (
+        "Polished one.\n\nHand polished two.\n\nPolished three."
+    )
+    # The archival draft column is untouched.
+    assert _db_body(chapter_id) == _TGT_3
+    _assert_i1(chapter_id)
+
+
+async def test_partial_chapter_save_fills_empty_slot_and_flips_ok():
+    # 4 source paragraphs, 3 targets: one empty aligned=0 slot. Hand-filling
+    # it lands the paragraph at the right position in the body and, with
+    # every row now aligned, the chapter graduates to 'ok'.
+    src = "\n\n".join(
+        [_zh_para("甲"), _zh_para("乙"), _zh_para("丙"), _zh_para("丁")]
+    )
+    tgt = "\n\n".join(["A" * 60, "B" * 60, "C" * 60])
+    novel_id, chapter_id = await _seed_chapter(src, tgt)
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "partial"
+    empty_idx = next(
+        s["index"] for s in payload["segments"] if not s["target_text"]
+    )
+    result = await _patch(novel_id, empty_idx, "save", after="Filled by hand.")
+    assert result["segment"]["status"] == "edited"
+    assert result["segment"]["aligned"] is True
+    assert result["segments_state"] == "ok"
+    body = _db_body(chapter_id)
+    assert len(body.split("\n\n")) == 4
+    assert body.split("\n\n")[empty_idx] == "Filled by hand."
+    _assert_i1(chapter_id)
+    # Reverting re-opens the slot: body loses the paragraph, state back to
+    # partial, the needs-review flag returns.
+    result = await _patch(novel_id, empty_idx, "revert_machine")
+    assert result["segment"]["target_text"] == ""
+    assert result["segment"]["aligned"] is False
+    assert result["segments_state"] == "partial"
+    assert _db_body(chapter_id) == tgt
+    _assert_i1(chapter_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: confirm_all
+# ---------------------------------------------------------------------------
+
+
+async def _confirm_all(
+    novel_id: int,
+    ch: int = 1,
+    rev: str | None = None,
+    statuses: list[str] | None = None,
+) -> dict:
+    payload = await _get(novel_id, ch)
+    async with open_conn() as conn:
+        result = await segments_svc.confirm_all(
+            conn, novel_id, ch,
+            chapter_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
+            statuses=statuses,
+        )
+        await conn.commit()
+    return result
+
+
+async def test_confirm_all_default_confirms_machine_and_edited():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save", after="Edited two.")
+    result = await _confirm_all(novel_id)
+    assert result["confirmed"] == 3
+    assert result["progress"] == {"confirmed": 3, "total": 3}
+    assert result["next_unconfirmed_index"] is None
+    rows = _db_segments(chapter_id)
+    assert all(r[5] == "confirmed" for r in rows)
+    _assert_i1(chapter_id)
+
+
+async def test_confirm_all_statuses_filter_and_validation():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save", after="Edited two.")
+    result = await _confirm_all(novel_id, statuses=["edited"])
+    assert result["confirmed"] == 1
+    assert result["progress"] == {"confirmed": 1, "total": 3}
+    rows = _db_segments(chapter_id)
+    assert rows[1][5] == "confirmed"
+    assert rows[0][5] == "machine" and rows[2][5] == "machine"
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _confirm_all(novel_id, statuses=["confirmed"])
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _confirm_all(novel_id, statuses=[])
+
+
+async def test_confirm_all_rev_guard_and_empty_target_skip():
+    src = "\n\n".join(
+        [_zh_para("甲"), _zh_para("乙"), _zh_para("丙"), _zh_para("丁")]
+    )
+    tgt = "\n\n".join(["A" * 60, "B" * 60, "C" * 60])
+    novel_id, chapter_id = await _seed_chapter(src, tgt)
+    with pytest.raises(segments_svc.SegmentStaleError) as exc:
+        await _confirm_all(novel_id, rev="f" * 16)
+    assert exc.value.kind == "stale_chapter"
+    result = await _confirm_all(novel_id)
+    # The empty-target slot cannot be confirmed; the three real rows can.
+    assert result["confirmed"] == 3
+    assert result["progress"] == {"confirmed": 3, "total": 4}
+    assert result["next_unconfirmed_index"] is not None
+    _assert_i1(chapter_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: human-row preservation through rebuilds
+# ---------------------------------------------------------------------------
+
+
+async def test_self_heal_preserves_human_rows_positionally():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save", after="Human middle.")
+    await _patch(novel_id, 2, "save_and_confirm", after="Human end.")
+    row_ids_before = {r[1]: r[0] for r in _db_segments(chapter_id)}
+
+    # Out-of-band body edit (same paragraph count): the self-heal rebuild
+    # must keep the human rows' STATUS while the new body wins on text.
+    new_body = "OOB first.\n\nOOB second.\n\nOOB third."
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET translated_text = ? WHERE id = ?",
+        (new_body, chapter_id),
+    )
+    conn.commit()
+    conn.close()
+
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "ok"
+    segs = payload["segments"]
+    assert [s["target_text"] for s in segs] == [
+        "OOB first.", "OOB second.", "OOB third.",
+    ]
+    assert [s["status"] for s in segs] == ["machine", "edited", "confirmed"]
+    assert segs[1]["origin"] == "human"
+    # The human DB rows survived (same primary keys); machine row rebuilt.
+    row_ids_after = {r[1]: r[0] for r in _db_segments(chapter_id)}
+    assert row_ids_after[1] == row_ids_before[1]
+    assert row_ids_after[2] == row_ids_before[2]
+    _assert_i1(chapter_id)
+
+
+async def test_rebuild_reanchors_human_rows_by_source_hash():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save_and_confirm", after="Human for yi.")
+    human_id = _db_segments(chapter_id)[1][0]
+
+    # Swap the first two SOURCE paragraphs (and the body to match) and force
+    # a rebuild: the human row must follow its source paragraph to index 0.
+    paras = [_zh_para("乙"), _zh_para("甲"), _zh_para("丙")]
+    swapped_src = "\n\n".join(paras)
+    swapped_tgt = "Second paragraph.\n\nFirst paragraph.\n\nThird paragraph."
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET original_text = ?, translated_text = ?, "
+        "segmentation_version = 0 WHERE id = ?",
+        (swapped_src, swapped_tgt, chapter_id),
+    )
+    conn.commit()
+    conn.close()
+
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "ok"
+    seg0 = payload["segments"][0]
+    assert seg0["status"] == "confirmed"
+    assert seg0["source_text"] == _zh_para("乙")
+    assert seg0["target_text"] == "Second paragraph."  # body-canonical text
+    rows = _db_segments(chapter_id)
+    assert rows[0][0] == human_id  # same DB row, moved to index 0
+    assert [r[5] for r in rows] == ["confirmed", "machine", "machine"]
+    _assert_i1(chapter_id)
+
+
+async def test_alignment_failure_with_human_rows_retains_rows():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 0, "save_and_confirm", after="Kept work.")
+    ids_before = [r[0] for r in _db_segments(chapter_id)]
+
+    # Body collapses to one unalignable paragraph. Zero-row behavior would
+    # delete everything; with human rows present ALL rows must be retained.
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET translated_text = 'One lonely paragraph.' "
+        "WHERE id = ?",
+        (chapter_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "unaligned"
+    assert len(payload["segments"]) == 3  # nothing vanished from the editor
+    kept = payload["segments"][0]
+    assert kept["status"] == "confirmed"
+    assert kept["target_text"] == "Kept work."
+    assert [r[0] for r in _db_segments(chapter_id)] == ids_before
+
+    # The retained verdict is rev-gated: repeated reads are stable, no
+    # rebuild churn.
+    second = await _get(novel_id)
+    assert second == payload
+    assert [r[0] for r in _db_segments(chapter_id)] == ids_before
+
+
+async def test_vanished_source_with_human_rows_retains_rows():
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, _TGT_3)
+    await _patch(novel_id, 1, "save", after="Human work.")
+    ids_before = [r[0] for r in _db_segments(chapter_id)]
+
+    # The whole source is rewritten (every hash changes) and a rebuild is
+    # forced: no anchor exists for the human row, so everything is retained
+    # under an 'unaligned' verdict instead of rebuilding over it.
+    new_src = "\n\n".join([_zh_para("戊"), _zh_para("己"), _zh_para("庚")])
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET original_text = ?, segmentation_version = 0 "
+        "WHERE id = ?",
+        (new_src, chapter_id),
+    )
+    conn.commit()
+    conn.close()
+
+    payload = await _get(novel_id)
+    assert payload["segments_state"] == "unaligned"
+    assert len(payload["segments"]) == 3
+    assert payload["segments"][1]["status"] == "edited"
+    assert [r[0] for r in _db_segments(chapter_id)] == ids_before

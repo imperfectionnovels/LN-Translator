@@ -24,6 +24,7 @@ from backend.models import (
 from backend.services import consistency as consistency_svc
 from backend.services import learn_from_edits as learn_from_edits_svc
 from backend.services import queue as queue_svc
+from backend.services import segments as segments_svc
 from backend.services.pre_check import chapter_pre_check
 
 logger = logging.getLogger(__name__)
@@ -474,7 +475,16 @@ async def edit_paragraph(
     folds in as future "preferred rewrites" examples.
 
     Strict equality on `before_md` against the chosen body detects
-    concurrent retranslates / refinements (409)."""
+    concurrent retranslates / refinements (409).
+
+    CAT Phase 3: when the chapter has a clean segment store
+    (segments_state='ok' for the displayed body), the write routes THROUGH
+    `segments.update_segment` (action='save') so there is a single write
+    path and the segment row picks up status='edited'; the response shape,
+    the before/409 semantics, the style_edits write, and the observations
+    refresh are unchanged. Segment-less or non-'ok' chapters keep the
+    legacy direct-text splice (the segment store self-heals on the next
+    editor open)."""
     after_text = payload.after_text.strip()
     if not after_text:
         raise HTTPException(status_code=400, detail="after_text must not be whitespace-only")
@@ -482,7 +492,8 @@ async def edit_paragraph(
         return {"ok": True, "noop": True}
 
     cur = await conn.execute(
-        "SELECT id, translated_text, refined_text, refinement_status "
+        "SELECT id, status, segments_state, translated_text, refined_text, "
+        "refinement_status "
         "FROM chapters WHERE novel_id = ? AND chapter_num = ?",
         (novel_id, chapter_num),
     )
@@ -525,12 +536,16 @@ async def edit_paragraph(
         )
     chunks[payload.paragraph_index] = after_text
     new_body = "\n\n".join(chunks)
-    # f-string interpolating target_column is safe because it's hard-coded
-    # to one of two literal column names above — not user input.
-    await conn.execute(
-        f"UPDATE chapters SET {target_column} = ? WHERE id = ?",
-        (new_body, r["id"]),
-    )
+    if not await _edit_paragraph_via_segments(
+        conn, novel_id, chapter_num, r, payload, after_text, len(chunks)
+    ):
+        # Legacy direct-text path (no clean segment store for this body).
+        # f-string interpolating target_column is safe because it's
+        # hard-coded to one of two literal column names above, never input.
+        await conn.execute(
+            f"UPDATE chapters SET {target_column} = ? WHERE id = ?",
+            (new_body, r["id"]),
+        )
     await conn.execute(
         "INSERT INTO style_edits (novel_id, chapter_id, before_text, after_text) "
         "VALUES (?, ?, ?, ?)",
@@ -552,6 +567,73 @@ async def edit_paragraph(
         )
     await conn.commit()
     return {"ok": True}
+
+
+async def _edit_paragraph_via_segments(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_num: int,
+    r,
+    payload: EditParagraphRequest,
+    after_text: str,
+    paragraph_count: int,
+) -> bool:
+    """CAT Phase 3 reroute: apply a reader paragraph edit through
+    `segments.update_segment` so the segment row flips to status='edited'
+    and the body rematerializes from the store (single write path).
+
+    Only fires when the mapping display-paragraph -> seg_index is well
+    defined: the chapter is 'done' with segments_state='ok' for the SAME
+    variant the reader edited, the non-empty segment targets match the
+    body's raw paragraph split positionally, and the stored target at that
+    slot equals the `before_md` the client verified against. Anything else
+    returns False and the caller keeps the legacy direct-text splice (the
+    store self-heals on the next editor open). A stale-store race inside
+    the segment write surfaces as the endpoint's usual 409.
+    """
+    if r["status"] != "done" or r["segments_state"] != "ok":
+        return False
+    variant = "refined" if payload.source == "refined" else "draft"
+    disp_variant, body = segments_svc.displayed_body(r)
+    if variant != disp_variant:
+        # The reader edited the non-displayed column (e.g. the draft under a
+        # finished refinement); segments mirror the displayed body only.
+        return False
+    mapping = await segments_svc.seg_index_for_display_paragraph(
+        conn, r["id"], payload.paragraph_index, paragraph_count
+    )
+    if mapping is None:
+        return False
+    seg_index, stored_target = mapping
+    if stored_target != payload.before_md:
+        # Store and body disagree (whitespace drift, stale store): the body
+        # is canonical here, so splice it directly and let the next editor
+        # open self-heal the store.
+        return False
+    try:
+        await segments_svc.update_segment(
+            conn,
+            novel_id,
+            chapter_num,
+            seg_index,
+            action="save",
+            after_text=after_text,
+            chapter_rev=segments_svc.chapter_rev(body),
+            before_target_hash=segments_svc._hash16(stored_target),
+        )
+    except segments_svc.SegmentStaleError as e:
+        # Same recovery contract as the endpoint's own guards: the page is
+        # stale, the client refreshes and retries. Plain-string detail keeps
+        # the endpoint's existing response shape.
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except (
+        segments_svc.SegmentNotFoundError,
+        segments_svc.SegmentActionError,
+    ):
+        # Defensive: both are raised before any write, so the legacy path
+        # can still take over cleanly.
+        return False
+    return True
 
 
 async def _refresh_observations_for_chapter(
