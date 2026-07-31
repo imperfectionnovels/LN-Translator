@@ -78,8 +78,10 @@ def _chapter_body_for(ch: dict) -> str | None:
     (status != 'done' or both refined / translated empty)."""
     if ch.get("status") != "done":
         return None
+    # Presence keying (matches segments.displayed_body): refined text is
+    # canonical whenever it exists, including through a refinement retry.
     refined = ch.get("refined_text") or ""
-    if ch.get("refinement_status") == "done" and refined:
+    if refined:
         return refined
     translated = ch.get("translated_text") or ""
     return translated or None

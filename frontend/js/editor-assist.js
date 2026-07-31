@@ -29,6 +29,7 @@ const assistCloseBtn = document.getElementById("assist-close");
 const assistTmEl = document.getElementById("assist-tm");
 const assistGlossaryEl = document.getElementById("assist-glossary");
 const aiDialog = document.getElementById("ai-suggestion-dialog");
+const aiDialogNote = document.getElementById("ai-suggestion-note");
 const aiDialogText = document.getElementById("ai-suggestion-text");
 const aiDialogApply = document.getElementById("ai-suggestion-apply");
 const aiDialogClose = document.getElementById("ai-suggestion-close");
@@ -220,6 +221,11 @@ let aiDialogIdx = null;
 function openAiSuggestion(idx) {
   aiDialogIdx = idx;
   aiDialogApply.disabled = true;
+  // Contextual note: kept human rows vs TM-prefilled machine rows.
+  const seg = segByIndex(idx);
+  aiDialogNote.textContent = seg && seg.status !== "machine"
+    ? "Your text was kept through the last retranslate. The AI's current rendering of this paragraph:"
+    : "This segment was pre-filled from translation memory. The AI's own rendering of this paragraph:";
   aiDialogText.textContent = "Loading the stored AI translation...";
   aiDialog.showModal();
   fetchAssist(currentCh, idx).then(d => {

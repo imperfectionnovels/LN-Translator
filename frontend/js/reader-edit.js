@@ -295,16 +295,11 @@ let editMode = false;
 const editBtn = document.getElementById("edit-mode");
 
 function _editVariant(ch) {
-  // 'refined' when the reader is currently displaying refined_text (which
-  // happens iff refinement_status='done' AND refined_text is non-empty —
-  // same condition as the body-picker in renderChapterBody). Otherwise
-  // 'draft' for the translator's output.
-  if (
-    ch
-    && ch.refinement_status === "done"
-    && ch.refined_text
-    && ch.refined_text.length > 0
-  ) {
+  // 'refined' when the reader is currently displaying refined_text, which
+  // happens iff refined_text is non-empty (presence keying, the same
+  // condition as _displayedEnglish's body-picker and the backend's
+  // segments.displayed_body). Otherwise 'draft'.
+  if (ch && ch.refined_text && ch.refined_text.length > 0) {
     return "refined";
   }
   return "draft";

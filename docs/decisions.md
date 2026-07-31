@@ -442,6 +442,9 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   Refinement-stage `paragraph_count_drift` observations are now REPLACED
   on every clean re-refinement (they describe a refined_text that no
   longer exists); translation-stage rows are untouched.
+  (CORRECTED same day, see the spec-review addendum below: keeping
+  refined_text alone did NOT keep it displayed, and the retry window could
+  still destroy confirmed work through an editor-open rebuild.)
 - **Assist rail thresholds.** Exact tier = same-novel `chapter_segments`
   hash matches (full-text verified), ranked confirmed > edited > machine
   then recency, cap 5. Fuzzy tier = rapidfuzz over other chapters' segment
@@ -459,3 +462,47 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   fetches `machine_text` via the assist endpoint (one endpoint, cached by
   the rail) instead of a dedicated fetch or shipping it in the list
   payload.
+
+### Addendum (same day, spec-review round 2)
+
+- **CORRECTION: the retry-refinement window could destroy confirmed work,
+  and the original Phase 4 entry mischaracterized the fix.** Retaining
+  refined_text did not keep it displayed: displayed_body still keyed on
+  refinement_status=='done', so retry_refinement's status flip to
+  'pending' moved the DISPLAYED body to the draft for the whole window
+  (and permanently on a failed retry). An editor GET during that window
+  self-healed the store against the draft, text-authoritatively
+  overwriting confirmed rows' target_text with draft text, and the
+  subsequent refine merge then preserved that draft text as if the user
+  had written it. The earlier claim that "the fresh refinement commit
+  overwrites it anyway" was wrong about the store: the merge preserves
+  whatever the human rows carry at commit time, including the clobbered
+  text. The display flip also violated the standing no-draft-preview
+  product rule.
+- **Fix: displayed_body keys on refined_text PRESENCE, everywhere.**
+  Refined text is canonical whenever it is non-empty, regardless of
+  refinement_status: retained polish stays displayed through pending /
+  in_progress and after a failed retry; first-ever refinements (refined
+  NULL until commit) and retranslates (translate commit nulls refined)
+  still display the draft. The rule now matches the FTS index
+  (COALESCE(refined_text, translated_text)) exactly. Updated in one
+  sweep: segments.displayed_body (store + consistency), the reader's
+  _displayedEnglish / _paragraphTextAt / _editVariant, download_novel,
+  and epub_export, so no consumer drifts. Belt-and-suspenders:
+  get_segments now refuses to rebuild the store while refinement_status
+  is pending/in_progress (serves stored rows as-is; the refine commit
+  re-stamps them), mirroring the non-done chapter-status guard.
+- **revert_machine now reaches the AI rendering behind a TM prefill.** A
+  machine-status row whose target diverged from machine_text (tm_exact)
+  previously 400ed ("already shows the AI translation"), making the fresh
+  AI rendering unreachable. The swap is now allowed whenever machine_text
+  is non-empty and differs from the target; origin lands on 'llm' (the
+  worker merge is machine_text's producer and re-stamps on the next
+  merge). The editor's TM chip is now clickable (same AI-suggests dialog
+  as the kept chip, contextual note) and the Revert action covers these
+  rows.
+- **_anchor_human_rows verifies full source_text, not just the 16-hex
+  hash.** prefill_confirmed_exact already did the collision check; the
+  anchor path now applies the same verification, so a forged or colliding
+  prefix can never silently anchor a human row to the wrong source
+  paragraph (it retains-all and stamps 'unaligned' instead).

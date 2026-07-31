@@ -7,7 +7,7 @@ Pins the CAT Phase 2 contracts:
   - below the <50% confidence gate the chapter is 'unaligned' with ZERO rows;
   - segments are always built from the COMMITTED displayed body (self-heal
     rebuilds after an out-of-band edit; the displayed-body rule picks
-    refined only when refinement_status == 'done');
+    refined whenever refined_text is non-empty, the presence rule);
   - a SEGMENTATION_VERSION mismatch forces a rebuild;
   - chapter_rev tracks the body.
 """
@@ -110,18 +110,21 @@ def test_displayed_body_draft_by_default():
     assert segments_svc.displayed_body(row) == ("draft", "Draft.")
 
 
-def test_displayed_body_refined_only_when_done():
+def test_displayed_body_presence_keyed():
+    """2026-07-31 retry-window fix: refined text is canonical whenever it is
+    non-empty, REGARDLESS of refinement_status, so retained polish stays
+    displayed through a retry window (pending/in_progress) and after a
+    failed retry (error). Empty/NULL refined_text (never refined, initial
+    refinement in flight, or post-retranslate) displays the draft."""
     base = {"refined_text": "Polished.", "translated_text": "Draft."}
-    assert segments_svc.displayed_body({**base, "refinement_status": "done"}) \
-        == ("refined", "Polished.")
-    for st in ("none", "pending", "in_progress", "error", None):
+    for st in ("done", "none", "pending", "in_progress", "error", None):
         assert segments_svc.displayed_body({**base, "refinement_status": st}) \
-            == ("draft", "Draft.")
-    # done but empty refined text falls back to the draft.
-    assert segments_svc.displayed_body(
-        {"refinement_status": "done", "refined_text": "",
-         "translated_text": "Draft."}
-    ) == ("draft", "Draft.")
+            == ("refined", "Polished.")
+    for st in ("done", "none", "pending", "in_progress", "error", None):
+        assert segments_svc.displayed_body(
+            {"refinement_status": st, "refined_text": "",
+             "translated_text": "Draft."}
+        ) == ("draft", "Draft.")
 
 
 def test_displayed_body_never_returns_none_text():
@@ -410,14 +413,17 @@ async def test_refined_body_drives_segments_when_done():
     assert payload["chapter_rev"] == segments_svc.chapter_rev(refined)
 
 
-async def test_refined_text_ignored_unless_status_done():
+async def test_refined_text_displayed_whenever_present():
+    # 2026-07-31 retry-window fix: a retained refined body stays canonical
+    # even when refinement_status is 'error' (a failed RETRY of a
+    # previously good refinement must not demote the display to draft).
     refined = "Polished one.\n\nPolished two.\n\nPolished three."
     novel_id, _ = await _seed_chapter(
         _SRC_3, _TGT_3, refined=refined, refinement_status="error",
     )
     payload = await _get(novel_id)
-    assert payload["variant"] == "draft"
-    assert payload["segments"][0]["target_text"] == "First paragraph."
+    assert payload["variant"] == "refined"
+    assert payload["segments"][0]["target_text"] == "Polished one."
 
 
 async def test_segmentation_version_bump_forces_rebuild():
@@ -511,7 +517,7 @@ def _assert_i1(chapter_id: int) -> None:
         ).fetchall()]
     finally:
         conn.close()
-    if (ch["refinement_status"] or "none") == "done" and ch["refined_text"]:
+    if ch["refined_text"]:  # presence keying, matches displayed_body
         body = ch["refined_text"]
     else:
         body = ch["translated_text"] or ""

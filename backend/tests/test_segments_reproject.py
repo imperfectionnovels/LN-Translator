@@ -123,7 +123,7 @@ def _assert_i1(chapter_id: int) -> None:
         ).fetchone()
     finally:
         conn.close()
-    if (ch["refinement_status"] or "none") == "done" and ch["refined_text"]:
+    if ch["refined_text"]:  # presence keying, matches displayed_body
         body = ch["refined_text"]
     else:
         body = ch["translated_text"] or ""

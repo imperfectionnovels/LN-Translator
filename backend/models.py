@@ -86,9 +86,10 @@ class EditParagraphRequest(BaseModel):
       - 'refined' → chapters.refined_text (the refiner's polish pass)
 
     The reader sets this based on which body is currently being displayed
-    (refined_text when refinement_status='done', draft otherwise). Default
-    is 'draft' so older clients (and any caller that doesn't know about the
-    refiner) keep editing the translator's output."""
+    (refined_text whenever it is non-empty, draft otherwise; the
+    segments.displayed_body presence rule). Default is 'draft' so older
+    clients (and any caller that doesn't know about the refiner) keep
+    editing the translator's output."""
 
     paragraph_index: int = Field(ge=0)
     before_md: str = Field(min_length=1, max_length=_MAX_EDIT_PARAGRAPH_CHARS)

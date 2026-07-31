@@ -194,8 +194,8 @@ function _paragraphTextAt(side, idx) {
   if (side === "zh") {
     body = lastChapter.original_text || "";
   } else {
-    // Mirror renderChapterBody's body-picker: refined > translated.
-    body = (lastChapter.refinement_status === "done" && lastChapter.refined_text)
+    // Mirror _displayedEnglish's body-picker: refined whenever present.
+    body = lastChapter.refined_text
       ? lastChapter.refined_text
       : (lastChapter.translated_text || "");
   }
@@ -1125,16 +1125,24 @@ function _displayedEnglish(ch) {
   if (translationSource === "free_draft" && ch.free_draft_text) {
     return ch.free_draft_text;
   }
-  // 2026-05-27: when the novel has a refiner configured AND polishing
-  // is mid-flight, suppress the draft. The user explicitly does not want
-  // to see the draft body and then watch it get replaced by the refined
-  // version a minute later — they only want the polished output. The
-  // refinement banner still surfaces the "polishing in progress" status.
+  // 2026-07-31 presence keying (CAT Phase 4 retry-window fix): refined
+  // text is canonical whenever it exists, regardless of refinement_status.
+  // A refinement RETRY retains the previous refined_text through its
+  // pending/in_progress window (and after a failed retry), and that
+  // retained polish must stay on screen: flipping to the draft mid-window
+  // both violates the no-draft-preview rule and lets the editor's
+  // self-heal rebuild the segment store against the draft. Matches
+  // segments.displayed_body on the backend.
+  if (ch.refined_text) {
+    return ch.refined_text;
+  }
+  // 2026-05-27: first-ever polish mid-flight (no refined_text yet):
+  // suppress the draft. The user explicitly does not want to see the draft
+  // body and then watch it get replaced by the refined version a minute
+  // later — they only want the polished output. The refinement banner
+  // still surfaces the "polishing in progress" status.
   if (ch.refinement_status === "pending" || ch.refinement_status === "in_progress") {
     return "";
-  }
-  if (ch.refinement_status === "done" && ch.refined_text) {
-    return ch.refined_text;
   }
   if (ch.translated_text) return ch.translated_text;
   // 2026-05-26 — free-tier rough draft fallback. When the LLM translation

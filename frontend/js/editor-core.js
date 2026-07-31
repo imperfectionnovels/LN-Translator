@@ -173,11 +173,11 @@ function rowHtml(s) {
       }</div>
       <div class="seg-meta">
         <span class="seg-badge seg-badge-${escapeHtml(s.status)}">${statusLabel(s.status)}</span>
-        ${s.origin === "tm_exact" ? `<span class="seg-chip-tm" title="Pre-filled from translation memory, exact source match">TM</span>` : ""}
+        ${s.origin === "tm_exact" ? `<button type="button" class="seg-chip-tm" data-act="ai-suggest" title="Pre-filled from translation memory, exact source match. Click to view the AI's own rendering.">TM</button>` : ""}
         ${s.status !== "machine" && s.machine_differs ? `<button type="button" class="seg-chip-kept" data-act="ai-suggest" title="Your text kept through retranslate; the AI suggests differently">kept</button>` : ""}
         ${s.aligned ? "" : `<span class="seg-chip-review" title="Automatic alignment could not pin this row to a single source paragraph. Check it against the source.">needs review</span>`}
         ${failed ? `<button type="button" class="seg-save-retry" data-act="retry">Save failed. Retry</button>` : ""}
-        ${s.status !== "machine" && !readOnly ? `<button type="button" class="seg-revert" data-act="revert" title="Replace your text with the AI translation">Revert to AI</button>` : ""}
+        ${(s.status !== "machine" || s.machine_differs) && !readOnly ? `<button type="button" class="seg-revert" data-act="revert" title="Replace this text with the stored AI translation">Revert to AI</button>` : ""}
       </div>
     </div>`;
 }
@@ -573,10 +573,12 @@ function revertSegment(idx) {
   if (!canEdit()) return;
   const chapterNum = currentCh;
   const seg = segByIndex(idx);
-  if (!seg || seg.status === "machine") return;
+  // Human rows always; machine rows only when the target diverged from the
+  // stored AI rendering (a tm_exact prefill), matching the backend guard.
+  if (!seg || (seg.status === "machine" && !seg.machine_differs)) return;
   confirmDialog({
     title: "Revert to AI translation?",
-    body: "<p>Your text for this segment will be replaced by the AI's stored translation. This cannot be undone.</p>",
+    body: "<p>The current text for this segment will be replaced by the AI's stored translation. This cannot be undone.</p>",
     okText: "Revert",
     danger: true,
   }).then(ok => {

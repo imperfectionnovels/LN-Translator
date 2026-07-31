@@ -173,6 +173,7 @@
 /* Provenance chips (Phase 4): TM = pre-filled from an exact confirmed match;
    kept = a human row whose stored AI rendering differs (click to preview). */
 .seg-chip-tm {
+  font-family: var(--font-family-sans);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -182,6 +183,7 @@
   border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   white-space: nowrap;
+  cursor: pointer;
 }
 .seg-chip-kept {
   font-family: var(--font-family-sans);

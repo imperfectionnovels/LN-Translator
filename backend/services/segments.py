@@ -4,8 +4,9 @@ writes `chapter_segments`.
 A segment row is one effective source paragraph of a translated chapter
 (`segmentation.effective_source_paragraphs` over `original_text`) paired with
 the paragraph of the DISPLAYED body that renders it. The displayed body (the
-chapter text column the reader shows: refined when refinement is done, else
-the draft) stays canonical; segments are a projection of it plus durable
+chapter text column the reader shows: refined whenever refined_text is
+non-empty, else the draft; see `displayed_body`) stays canonical; segments
+are a projection of it plus durable
 status/provenance state, so `join(target_text ORDER BY seg_index)` always
 reproduces the displayed paragraphs.
 
@@ -105,12 +106,20 @@ def hash16(text: str) -> str:
 def displayed_body(row) -> tuple[str, str]:
     """(variant, text) for the body the reader displays.
 
-    'refined' iff refinement_status == 'done' AND refined_text is non-empty;
-    'draft' with translated_text otherwise. Mirrors the reader's
+    'refined' iff refined_text is non-empty, REGARDLESS of
+    refinement_status (presence keying, 2026-07-31 retry-window fix):
+    retained refined content stays displayed through a refinement retry
+    window (status 'pending'/'in_progress') and after a failed retry
+    ('error'), so confirmed segment work never vanishes from the reader and
+    the store is never rebuilt against a mid-transition draft. First-ever
+    refinements carry refined_text NULL until they commit, so the draft
+    displays there; the translate success commit nulls refined_text, so a
+    retranslate falls back to the draft too. Matches the FTS rule
+    (COALESCE(refined_text, translated_text)) and the reader's
     `_displayedEnglish`; consistency.py imports this so the two stacks
     cannot drift. Text is "" (never None) when the chapter has no English.
     """
-    if (row["refinement_status"] or "none") == "done" and row["refined_text"]:
+    if row["refined_text"]:
         return ("refined", row["refined_text"])
     return ("draft", row["translated_text"] or "")
 
@@ -153,7 +162,8 @@ async def _fetch_human_rows(
     conn: aiosqlite.Connection, chapter_id: int
 ) -> list[aiosqlite.Row]:
     cur = await conn.execute(
-        "SELECT id, seg_index, source_hash, status, target_text, machine_text "
+        "SELECT id, seg_index, source_hash, source_text, status, "
+        "target_text, machine_text "
         "FROM chapter_segments "
         "WHERE chapter_id = ? AND status != 'machine' ORDER BY seg_index",
         (chapter_id,),
@@ -189,16 +199,19 @@ async def _retain_rows_stamp_unaligned(
 
 
 def _anchor_human_rows(
-    human_rows: list, new_hashes: list[str]
+    human_rows: list, new_hashes: list[str], new_sources: list[str]
 ) -> dict[int, int] | None:
     """Map each human row id to its seg_index in the NEW source list.
 
-    Anchor by source_hash; when the source list is unchanged the row's own
+    Anchor by source_hash AND full source_text equality (the 16-hex prefix
+    alone could collide; prefill_confirmed_exact applies the same
+    verification). When the source list is unchanged the row's own
     seg_index still carries the same hash, so position is the natural first
     candidate. Duplicate source paragraphs resolve to the nearest unclaimed
     index. Returns None when any human row cannot be anchored (its source
-    paragraph vanished): the caller must retain all rows instead of
-    rebuilding, because a rebuild would have no slot for the human work.
+    paragraph vanished, or only a colliding hash matched): the caller must
+    retain all rows instead of rebuilding, because a rebuild would have no
+    slot for the human work.
     """
     used: set[int] = set()
     anchors: dict[int, int] = {}
@@ -207,6 +220,7 @@ def _anchor_human_rows(
         if (
             0 <= i < len(new_hashes)
             and new_hashes[i] == r["source_hash"]
+            and new_sources[i] == r["source_text"]
             and i not in used
         ):
             anchors[r["id"]] = i
@@ -214,7 +228,9 @@ def _anchor_human_rows(
             continue
         candidates = [
             j for j, h in enumerate(new_hashes)
-            if h == r["source_hash"] and j not in used
+            if h == r["source_hash"]
+            and new_sources[j] == r["source_text"]
+            and j not in used
         ]
         if not candidates:
             return None
@@ -294,7 +310,9 @@ async def build_segments_from_alignment(
         entries = path
 
     new_hashes = [hash16(s) for s in src]
-    anchors = _anchor_human_rows(human_rows, new_hashes) if human_rows else {}
+    anchors = (
+        _anchor_human_rows(human_rows, new_hashes, src) if human_rows else {}
+    )
     if anchors is None:
         return await _retain_rows_stamp_unaligned(
             conn, chapter_id, rev, "human row's source paragraph vanished"
@@ -411,6 +429,14 @@ async def get_segments(
         # Pending / translating / error (or a done row with no text, which
         # should not happen): report state, write nothing.
         return _payload(row, variant, body, row["segments_state"], [])
+    if (row["refinement_status"] or "none") in ("pending", "in_progress"):
+        # Refinement mid-transition (initial pass or a retry): the refine
+        # worker's merge commit is about to re-stamp the store, so a rebuild
+        # here would be against a body with seconds to live, and a
+        # text-authoritative rebuild mid-window could overwrite human rows.
+        # Serve the stored rows exactly as they are; write nothing.
+        seg_rows = await _fetch_segment_rows(conn, row["id"])
+        return _payload(row, variant, body, row["segments_state"], seg_rows)
 
     seg_rows = await _fetch_segment_rows(conn, row["id"])
     state = row["segments_state"]
@@ -582,9 +608,12 @@ async def update_segment(
                           on an already-confirmed row.
       - save_and_confirm: both in one write (status -> 'confirmed').
       - unconfirm:        confirmed -> 'edited' (other states are a 400).
-      - revert_machine:   edited|confirmed -> 'machine', target_text :=
-                          machine_text (400 when machine_text is NULL or the
-                          row is already machine).
+      - revert_machine:   target_text := machine_text, status -> 'machine',
+                          origin -> 'llm'. Allowed on edited|confirmed rows
+                          and on machine rows whose target diverged from
+                          machine_text (tm_exact prefill); 400 when
+                          machine_text is NULL/empty or the target already
+                          equals it.
 
     Guards (409 via SegmentStaleError): chapter must be status='done';
     `client_rev` must match the displayed body's current rev; the row's
@@ -660,10 +689,6 @@ async def update_segment(
             (seg["id"],),
         )
     else:  # revert_machine
-        if status == "machine":
-            raise SegmentActionError(
-                "segment already shows the AI translation."
-            )
         if not seg["machine_text"]:
             # NULL or "" alike: an empty machine_text means the aligner had
             # no paragraph for this slot, so a revert would empty it (and on
@@ -673,13 +698,19 @@ async def update_segment(
             raise SegmentActionError(
                 "no AI translation is stored for this segment."
             )
+        if status == "machine" and seg["target_text"] == seg["machine_text"]:
+            raise SegmentActionError(
+                "segment already shows the AI translation."
+            )
+        # Allowed on human rows AND on machine rows whose target diverged
+        # from machine_text (a tm_exact prefill): the swap is the only way
+        # to reach the fresh AI rendering behind a TM-prefilled row. Origin
+        # becomes 'llm' (the worker merge is machine_text's producer; the
+        # next merge re-stamps real provenance anyway).
         text_changing = True
-        # Origin returns to 'aligned_backfill' (the machine text's producer
-        # in this phase; the Phase 4 worker merge re-stamps real provenance
-        # when it refreshes machine rows).
         await conn.execute(
             "UPDATE chapter_segments SET target_text = machine_text, "
-            "status = 'machine', origin = 'aligned_backfill', "
+            "status = 'machine', origin = 'llm', "
             "edited_at = NULL, confirmed_at = NULL, "
             "updated_at = datetime('now') WHERE id = ?",
             (seg["id"],),
@@ -965,7 +996,10 @@ async def apply_machine_translation(
         entries = path
 
     new_hashes = [hash16(s) for s in src_paras]
-    anchors = _anchor_human_rows(human_rows, new_hashes) if human_rows else {}
+    anchors = (
+        _anchor_human_rows(human_rows, new_hashes, src_paras)
+        if human_rows else {}
+    )
     if anchors is None:
         return await _retain_all_rows_unaligned(
             conn, chapter_id, new_paragraphs,

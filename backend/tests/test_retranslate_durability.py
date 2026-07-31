@@ -655,6 +655,148 @@ async def test_refiner_merge_keeps_human_rows(monkeypatch):
     assert joined == ch["refined_text"]
 
 
+async def test_retry_window_editor_get_leaves_confirmed_rows(monkeypatch):
+    """Mid-retry editor GET must not rebuild the store against a
+    mid-transition body: refined stays displayed (presence keying) and
+    confirmed rows keep their text (the pre-fix chain flipped the display
+    to draft and text-authoritatively clobbered confirmed targets)."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, (chapter_id,) = await _seed_novel(
+        [_SRC], refinement_provider_id=refiner_id
+    )
+    _stub_translate(monkeypatch, "one")
+    _stub_refine(monkeypatch, "r1")
+    await _translate(novel_id, chapter_id)
+    await _refine(novel_id, chapter_id)
+    human = "CONFIRMED ON THE REFINED VARIANT."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", human)
+    before_rows = await _rows(chapter_id)
+    refined_before = (await _chapter(chapter_id))["refined_text"]
+
+    # Enter the retry window (retry_refinement semantics: status flips to
+    # pending, refined_text retained).
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'pending', "
+            "refined_at = NULL WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+        payload = await segments_svc.get_segments(conn, novel_id, 1)
+        await conn.commit()
+    # Displayed body stays refined; the GET served stored rows untouched.
+    assert payload["variant"] == "refined"
+    assert payload["chapter_rev"] == segments_svc.chapter_rev(refined_before)
+    assert await _rows(chapter_id) == before_rows
+    seg = next(s for s in payload["segments"] if s["index"] == 1)
+    assert seg["status"] == "confirmed"
+    assert seg["target_text"] == human
+
+
+async def test_failed_retry_keeps_refined_display_and_store(monkeypatch):
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, (chapter_id,) = await _seed_novel(
+        [_SRC], refinement_provider_id=refiner_id
+    )
+    _stub_translate(monkeypatch, "one")
+    _stub_refine(monkeypatch, "r1")
+    await _translate(novel_id, chapter_id)
+    await _refine(novel_id, chapter_id)
+    human = "CONFIRMED SURVIVES A FAILED RETRY."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", human)
+    before_rows = await _rows(chapter_id)
+    refined_before = (await _chapter(chapter_id))["refined_text"]
+
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'pending', "
+            "refined_at = NULL WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("refiner exploded")
+    monkeypatch.setattr("backend.services.queue.refine_chapter", _boom)
+    await _refine(novel_id, chapter_id)
+
+    ch = await _chapter(chapter_id)
+    assert ch["refinement_status"] == "error"  # failure surfaced (retry UI)
+    assert ch["refinement_error"]
+    assert ch["refined_text"] == refined_before  # polish not vanished
+    assert segments_svc.displayed_body(ch) == ("refined", refined_before)
+    assert await _rows(chapter_id) == before_rows
+    # And the store still mirrors the displayed body (stable state).
+    joined = "\n\n".join(
+        r["target_text"] for r in before_rows if r["target_text"]
+    )
+    assert joined == refined_before
+
+
+async def test_revert_machine_reaches_ai_text_behind_tm_prefill(monkeypatch):
+    await _seed_translator_provider()
+    src_a = "\n\n".join([_SHARED, _zh("乙")])
+    src_b = "\n\n".join([_zh("丁"), _SHARED, _zh("戊")])
+    novel_id, (ch_a, ch_b) = await _seed_novel([src_a, src_b])
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, ch_a)
+    await _segment_action(novel_id, 1, 0, "save_and_confirm", "CANON LINE.")
+    _stub_translate(monkeypatch, "two")
+    await _translate(novel_id, ch_b)
+    rows = await _rows(ch_b)
+    assert rows[1]["origin"] == "tm_exact"
+
+    # Revert the tm_exact machine row: target swaps to the fresh AI text.
+    await _segment_action(novel_id, 2, 1, "revert_machine")
+    rows = await _rows(ch_b)
+    assert rows[1]["status"] == "machine"
+    assert rows[1]["origin"] == "llm"
+    assert rows[1]["target_text"] == _machine_para("two", 1)
+    ch = await _chapter(ch_b)
+    assert _paras(ch["translated_text"])[1] == _machine_para("two", 1)
+
+    # Second revert: target already equals machine_text -> 400.
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _segment_action(novel_id, 2, 1, "revert_machine")
+
+
+async def test_anchor_rejects_source_hash_collision(monkeypatch):
+    """A human row whose source_hash matches a source paragraph but whose
+    FULL source_text differs (forged 16-hex collision) must not silently
+    anchor: the merge retains every row and stamps 'unaligned'."""
+    await _seed_translator_provider()
+    novel_id, (chapter_id,) = await _seed_novel([_SRC])
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, chapter_id)
+    human = "CONFIRMED LINE ON A FORGED ROW."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", human)
+    # Forge the collision: same hash, different full source text.
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapter_segments SET source_text = '完全不同的原文。' "
+            "WHERE chapter_id = ? AND seg_index = 1",
+            (chapter_id,),
+        )
+        await conn.commit()
+
+    await _requeue(novel_id, chapter_id)
+    _stub_translate(monkeypatch, "two")
+    await _translate(novel_id, chapter_id)
+
+    ch = await _chapter(chapter_id)
+    assert ch["segments_state"] == "unaligned"
+    rows = await _rows(chapter_id)
+    kept = next(r for r in rows if r["status"] == "confirmed")
+    assert kept["target_text"] == human  # retained, not clobbered
+    assert all(r["aligned"] == 0 for r in rows)
+    # The machine output is the displayed body (retention fallback).
+    assert _paras(ch["translated_text"]) == [
+        _machine_para("two", i) for i in range(3)
+    ]
+
+
 async def test_stale_refinement_drift_rows_replaced(monkeypatch):
     await _seed_translator_provider()
     refiner_id = await _seed_refiner_provider()

@@ -712,10 +712,11 @@ async def download_novel(
             async for ch in cur:
                 body = None
                 if ch["status"] == "done":
-                    # Prefer refined text when refinement landed. Mirrors
-                    # the reader's _displayedEnglish: refined IS the
-                    # canonical English once a successful refinement exists.
-                    if ch["refinement_status"] == "done" and ch["refined_text"]:
+                    # Prefer refined text whenever it exists (presence
+                    # keying, matches segments.displayed_body and the
+                    # reader's _displayedEnglish): refined IS the canonical
+                    # English, including through a refinement retry window.
+                    if ch["refined_text"]:
                         body = ch["refined_text"]
                     elif ch["translated_text"]:
                         body = ch["translated_text"]
