@@ -252,3 +252,41 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   sources already give each speaker their own paragraph). The in-paragraph
   recomposition license and every WW-register rule are untouched.
   PROMPT_TEMPLATE_VERSION -> phase18-cat-1to1-1.
+
+## 2026-07-31: CAT-pivot Phase 2, segment store + read-only editor
+
+- **Lazy backfill on GET.** The segment rows for a chapter are built on the
+  first `GET .../segments` (the editor open), not by a boot-time migration or
+  a queue hook. Rationale: a local single-user app has no concurrency pressure
+  on the read path, the build is a pure function of stored text (re-runnable
+  any time), and building only what the user actually opens keeps a
+  2,000-chapter back catalog from paying alignment cost it may never need.
+  The route commits before returning; `backend/scripts/backfill_segments.py`
+  is the optional bulk pre-warmer (same service, no duplicate logic).
+- **Wholesale rebuild this phase, preservation seam for Phase 3.** Rebuild
+  (version bump, self-heal, first build) is DELETE+INSERT of the whole
+  chapter. That is correct now because every row this phase writes is
+  status='machine' / origin='aligned_backfill'; nothing user-authored exists
+  to lose. Phase 3 adds row preservation at the marked `_preserve_human_rows`
+  seam in `segments.build_segments_from_alignment` (snapshot non-machine rows
+  before the DELETE, merge back by seg_index/source_hash), rather than
+  spreading merge logic across callers.
+- **Positional mapping when counts match; full DP path otherwise.** When
+  `effective_source_paragraphs` and the target split agree on count, position
+  IS the alignment (the Phase 1 contract's whole point) and every row is a
+  confident anchor; the length-DP would only add noise. Only mismatched
+  counts go through `tm.full_alignment_path`, which extends `_length_align`'s
+  DP to a total mapping: merged targets join onto their source with a blank
+  line, sources with no plausible target get "" (aligned=0), inserted targets
+  attach to the preceding source on the path, and outlier anchors are demoted
+  to aligned=0 instead of dropped (the full path must place every target
+  somewhere; hiding the text would break join(targets) == body). Below the
+  existing <50% anchor gate the chapter is 'unaligned' with zero rows and a
+  retranslate CTA.
+- **Segments key off the COMMITTED displayed text, never a validated count**
+  (the Phase 1 review lesson: post-validation fixups can change the committed
+  paragraph count). Consequence: the self-heal check compares the stored
+  targets against the NORMALIZED split of the displayed body (empty targets
+  skipped) rather than raw string equality with the column, so CRLF bodies
+  and 'partial' chapters do not force a rebuild on every read; the check
+  still catches every out-of-band content edit.

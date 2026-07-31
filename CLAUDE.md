@@ -40,7 +40,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── db.py                  # SCHEMA, _ADDITIVE_MIGRATIONS, init_db, _drop_dead_columns, drain_on_startup hooks
 │   ├── models.py              # Pydantic models
 │   ├── genres.py              # GENRES registry + resolve_genre()
-│   ├── routes/                # 15 routers, mounted under /api
+│   ├── routes/                # 16 routers, mounted under /api
 │   │   ├── translate.py           # /paste, /upload, /bulk + /append/* + /insert (mid-novel) + /scrape
 │   │   ├── novels.py              # /novels list/get/patch/delete + downloads
 │   │   ├── chapters.py            # /chapters, /retranslate, /edit-paragraph, /retry-refinement
@@ -53,6 +53,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── imports.py             # resumable scrape/import job status feed
 │   │   ├── stats.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
 │   │   ├── quality.py             # cockpit: /novels/{id}/quality + /consistency + /chapters/{n}/quality (read-only); chapters.py adds /learn-edits (+/commit)
+│   │   ├── segments.py            # CAT editor feed: GET /novels/{id}/chapters/{n}/segments (lazy backfill on read, commits before returning)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
 │   │   ├── uploads.py             # file decode (txt/docx/epub/html) + transactional novel/chapter insert
@@ -60,6 +61,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── queue.py               # the translator worker (single asyncio.Lock, serial)
 │   │   ├── refiner.py             # Phase-4 refinement worker (chains off queue under same lock)
 │   │   ├── segmentation.py        # 1:1 paragraph contract: pre-joined effective source paragraphs + target split; owns the frozen split/heading helpers (SEGMENTATION_VERSION)
+│   │   ├── segments.py            # CAT segment store (sole owner of chapter_segments): displayed_body rule, lazy build from the COMMITTED text, self-heal on read, version-bump rebuild
 │   │   ├── glossary.py, glossary_filters.py, glossary_casing.py   # admit / lock / cased normalization
 │   │   ├── global_glossary.py, tm.py, find_replace.py             # cross-novel helpers
 │   │   ├── text_fixups.py         # deterministic enforce_* transforms (em-dash, brackets, casing)
@@ -107,6 +109,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── quality_metrics.py          # tracked port of the ww_metrics rule-category scorers (pure, importable)
 │   │   ├── quality_report.py           # multi-chapter quality scorecard: per-category matrix + observation harvest + group-by prompt_config_snapshot + A/B diff
 │   │   ├── realign_tm.py               # re-run TM paragraph alignment over stored chapters after an aligner change
+│   │   ├── backfill_segments.py        # bulk-build the CAT segment store over done chapters (same service as the lazy read path)
 │   │   ├── reapply_term_casing.py      # re-apply current glossary casing to committed chapters, no LLM (dry-run default)
 │   │   ├── glossary_cleanup_casing.py  # corpus-wide cleanup of stored Title-Case pollution on generic abstracts
 │   │   ├── glossary_register_audit.py  # read-only corpus audit of glossary lifecycle + fixup layer
@@ -116,17 +119,18 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, quality.html, find-replace.html, novel-overview.html, onboarding.html
+│   ├── editor.html            # CAT editor (read-only segment grid this phase; /editor?novel=N&ch=M[&seg=K])
 │   ├── css/
 │   │   ├── base.css           # shared (imports fonts.css first)
 │   │   ├── fonts.css          # @font-face for the self-hosted faces (audit 6.1)
 │   │   └── home.css, library.css, reader.css, glossary.css, queue.css, settings.css,
-│   │       stats.css, quality.css, find-replace.css, novel-overview.css, onboarding.css
+│   │       stats.css, quality.css, find-replace.css, novel-overview.css, onboarding.css, editor.css
 │   ├── fonts/                 # self-hosted subsetted woff2: fraunces/, spectral/, noto-serif-sc/ (+ OFL.txt each; regenerate via scripts/fetch_fonts.py)
 │   └── js/
 │       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
 │       ├── reader-core.js, reader-toc.js, reader-glossary.js, reader-consistency.js, reader-chapter.js, reader-edit.js, reader-quality.js  # reader.js split into ordered modules (plain <script> tags, source-order = concat-identical; core first owns shared state, quality last = cockpit badge + learn-from-edits panel)
 │       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
-│       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js
+│       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js, editor.js
 │       └── vendor/            # marked + DOMPurify (reader Markdown rendering only)
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
@@ -271,7 +275,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1590 tests across 138 modules.
+- `pytest backend/tests`. Currently 1668 tests across 143 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 
