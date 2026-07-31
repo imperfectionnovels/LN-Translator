@@ -25,6 +25,7 @@ import aiosqlite
 
 from backend.config import (
     PREVIOUS_CONTEXT_ENABLED,
+    PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
     PROMPT_INCLUDE_FREE_DRAFT,
     PROMPT_INCLUDE_REFINER,
     PROMPT_INCLUDE_STYLE_EDITS,
@@ -33,6 +34,7 @@ from backend.config import (
 from backend.db import open_conn
 from backend.services import global_glossary as global_glossary_svc
 from backend.services import glossary as glossary_svc
+from backend.services import segments as segments_svc
 from backend.services import tm as tm_svc
 from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services.observations import (
@@ -103,6 +105,7 @@ def _build_prompt_config_snapshot(
     previous_context_included: bool,
     style_note_included: bool,
     style_edits_included: bool,
+    approved_translations_included: bool,
 ) -> str:
     """JSON blob recording the prompt-assembly config that produced this
     chapter. Stamped onto chapters.prompt_config_snapshot in the same
@@ -125,11 +128,14 @@ def _build_prompt_config_snapshot(
         "previous_context_included": previous_context_included,
         "style_note_included": style_note_included,
         "style_edits_included": style_edits_included,
+        "approved_translations_included": approved_translations_included,
         "flags": {
             "PROMPT_INCLUDE_FREE_DRAFT": PROMPT_INCLUDE_FREE_DRAFT,
             "PROMPT_INCLUDE_STYLE_NOTE": PROMPT_INCLUDE_STYLE_NOTE,
             "PROMPT_INCLUDE_STYLE_EDITS": PROMPT_INCLUDE_STYLE_EDITS,
             "PROMPT_INCLUDE_REFINER": PROMPT_INCLUDE_REFINER,
+            "PROMPT_INCLUDE_APPROVED_TRANSLATIONS":
+                PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
             "PREVIOUS_CONTEXT_ENABLED": PREVIOUS_CONTEXT_ENABLED,
         },
     }, sort_keys=True)
@@ -584,6 +590,7 @@ async def _record_commit_provenance(
     previous_context: str | None,
     style_note: str | None,
     style_edits: list[tuple[str, str]] | None,
+    approved_pairs: list[tuple[int, str, str]] | None = None,
     fixup_counts: dict | None = None,
 ) -> None:
     """Post-commit diagnostics for a successful chapter translate: the
@@ -649,6 +656,7 @@ async def _record_commit_provenance(
         ),
         style_note_included=bool(style_note and style_note.strip()),
         style_edits_included=bool(style_edits),
+        approved_translations_included=bool(approved_pairs),
     )
     # Fixup self-audit: record which deterministic enforce_* fixups rewrote the
     # model output and by how much, in the same UPDATE as the snapshot. Makes
@@ -873,6 +881,17 @@ async def _translate_chapter_in_db(
             # verbatim prompt and skip the count validation.
             prompt_source = marker_stripped_source
             expected_paragraph_count = None
+        # CAT Phase 4: APPROVED TRANSLATIONS block feed. Human rows of this
+        # chapter plus cross-chapter exact confirmed matches, listed in the
+        # prompt with a verbatim-reuse instruction. Coherence aid only; the
+        # deterministic merge below is the enforcement, so this pre-LLM read
+        # racing an editor write is harmless (the merge re-reads inside the
+        # commit transaction).
+        approved_pairs: list[tuple[int, str, str]] | None = None
+        if PROMPT_INCLUDE_APPROVED_TRANSLATIONS and source_paragraphs:
+            approved_pairs = await segments_svc.approved_prompt_pairs(
+                conn, novel_id, chapter_id, source_paragraphs
+            ) or None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,
@@ -886,6 +905,7 @@ async def _translate_chapter_in_db(
             free_draft=free_draft,
             source_language=novel_meta["source_language"],
             expected_paragraph_count=expected_paragraph_count,
+            approved_pairs=approved_pairs,
         )
         logger.info(
             "queue: chapter %d translate stage %.1fs",
@@ -907,29 +927,6 @@ async def _translate_chapter_in_db(
             result, glossary, r["chapter_num"], title_zh=r["title_zh"],
         )
 
-        # Observations only — no retry, no degraded mark. The single-pass
-        # thesis is that noticing happens inside the translator's thinking
-        # phase; a retry is just two shallow passes for the same deficit.
-        observation_messages = list(body_correctness_observations(
-            r["original_text"], cleaned_text, glossary,
-        ))
-        for zh, en in glossary_svc.missing_translator_terms(
-            r["title_zh"] or "", title_en or "", glossary, atomic_only=True,
-        ):
-            observation_messages.append(f'missing title glossary term {zh!r} → {en!r}')
-        observation_messages.extend(
-            detect_glossary_predicate_loss(
-                r["title_zh"] or "", title_en or "", glossary,
-                source_label="chapter title",
-            )
-        )
-        if observation_messages:
-            logger.info(
-                "queue: chapter %d translation observations (logged, not retried) [%d]: %s",
-                r["chapter_num"], len(observation_messages),
-                "; ".join(observation_messages[:5]),
-            )
-
         # translation_degraded now reflects ONLY the plain-text fallback case.
         # Guardrail hits log but do not flag.
         translation_degraded = result.degraded
@@ -938,55 +935,6 @@ async def _translate_chapter_in_db(
                 "queue: chapter %d marked degraded (translator fallback path)",
                 r["chapter_num"],
             )
-
-        # Persist the normalized observation set. translation_degraded gets
-        # its own synthetic row so the panel renders it uniformly with the
-        # detect_* hits. The DELETE-then-INSERT happens inside the same
-        # transaction as the chapter UPDATE below — atomic replacement, no
-        # mixed-generation window.
-        normalized_observations: list[NormalizedObservation] = list(
-            normalize_observer_outputs(observation_messages)
-        )
-        if translation_degraded:
-            normalized_observations.append(
-                implicit_observation_translation_degraded()
-            )
-        # 1:1 drift signal (CAT Phase 1): the deterministic fixups run AFTER
-        # the count validation, so the committed body can diverge from the
-        # validated count (accepted double miss, or a fixup weld/strip that
-        # changed the count). Observation only, no retry: keeps the violation
-        # rate measurable and marks the chapter as positionally unmappable.
-        if expected_paragraph_count is not None:
-            committed_count = len(split_target_paragraphs(cleaned_text))
-            if committed_count != expected_paragraph_count:
-                logger.info(
-                    "queue: chapter %d paragraph count drift after fixups "
-                    "(%d committed, %d expected)",
-                    r["chapter_num"], committed_count, expected_paragraph_count,
-                )
-                normalized_observations.append(
-                    implicit_observation_paragraph_count_drift(
-                        got=committed_count,
-                        expected=expected_paragraph_count,
-                        stage="translation",
-                    )
-                )
-        # F26 (2026-05-25): per-novel observer mute. Read
-        # novels.disabled_observers (JSON array of kinds) and filter the
-        # observation list before persistence. Lets users mute false-
-        # positive observer categories per-novel without losing the
-        # other observers' signal.
-        cur = await conn.execute(
-            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
-        )
-        mute_row = await cur.fetchone()
-        muted = parse_disabled_observers(
-            mute_row["disabled_observers"] if mute_row else None
-        )
-        if muted:
-            normalized_observations = [
-                o for o in normalized_observations if o.kind not in muted
-            ]
 
         # Token usage. Only present on a fresh translation (cache hits and
         # providers that don't emit usage leave it None); preserve the
@@ -1050,50 +998,10 @@ async def _translate_chapter_in_db(
             + " WHERE id = ? AND novel_id = ? AND status = 'translating'",
             tuple(params),
         )
-        # Observation replacement runs in the SAME transaction as the chapter
-        # UPDATE — atomic swap, no panel-side mixed-generation view. Done only
-        # when the claim succeeded; a lost-claim branch below skips this.
-        if (upd.rowcount or 0) > 0:
-            await conn.execute(
-                "DELETE FROM chapter_observations WHERE chapter_id = ?",
-                (chapter_id,),
-            )
-            if normalized_observations:
-                await conn.executemany(
-                    "INSERT INTO chapter_observations "
-                    "(chapter_id, kind, severity, paragraph_index, excerpt) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    [
-                        (
-                            chapter_id, obs.kind, obs.severity,
-                            obs.paragraph_index, obs.excerpt,
-                        )
-                        for obs in normalized_observations
-                    ],
-                )
-            # Best-effort post-commit diagnostics (attempt log +
-            # prompt_config_snapshot provenance + TM-segment refresh), all in
-            # this same transaction. Extracted so the claim/translate/commit
-            # spine stays readable; the helper never fails the commit.
-            await _record_commit_provenance(
-                conn,
-                novel_id=novel_id,
-                chapter_id=chapter_id,
-                chapter_num=r["chapter_num"],
-                provider=provider,
-                novel_meta=novel_meta,
-                result=result,
-                translation_degraded=translation_degraded,
-                original_text=r["original_text"],
-                cleaned_text=cleaned_text,
-                free_draft=free_draft,
-                previous_context=previous_context,
-                style_note=style_note,
-                style_edits=style_edits,
-                fixup_counts=fixup_counts,
-            )
-        await conn.commit()
         if (upd.rowcount or 0) == 0:
+            # Lost the claim (concurrent state change). Nothing may commit:
+            # roll the transaction back and discard the result.
+            await conn.rollback()
             logger.info(
                 "translate ch %d completed but row was no longer 'translating'; "
                 "discarding result",
@@ -1101,6 +1009,152 @@ async def _translate_chapter_in_db(
             )
             await _clear_translate_queue(conn, chapter_id)
             return
+
+        # CAT Phase 4 worker merge, INSIDE the claim-guarded success
+        # transaction (the claim UPDATE above opened the write transaction,
+        # so the merge re-reads human rows after the claim and an editor
+        # write cannot interleave). Human rows keep their target_text
+        # VERBATIM and only refresh machine_text; machine rows regenerate
+        # with origin 'llm'; cross-chapter exact confirmed matches pre-fill
+        # as origin 'tm_exact'. The FINAL committed body is the merged join,
+        # so a retranslate can no longer clobber confirmed work.
+        final_text = cleaned_text
+        if source_paragraphs:
+            merge_prefill = await segments_svc.prefill_confirmed_exact(
+                conn, novel_id, chapter_id, source_paragraphs
+            )
+            merged = await segments_svc.apply_machine_translation(
+                conn,
+                novel_id=novel_id,
+                chapter_id=chapter_id,
+                new_paragraphs=split_target_paragraphs(cleaned_text),
+                kind="llm",
+                src_paras=source_paragraphs,
+                prefill=merge_prefill,
+            )
+            final_text = segments_svc.join_paragraphs(merged)
+            if final_text != cleaned_text:
+                await conn.execute(
+                    "UPDATE chapters SET translated_text = ? "
+                    "WHERE id = ? AND novel_id = ?",
+                    (final_text, chapter_id, novel_id),
+                )
+
+        # Observations only — no retry, no degraded mark. Computed on the
+        # FINAL merged body (invariant: observers see what the reader sees).
+        # The single-pass thesis is that noticing happens inside the
+        # translator's thinking phase; a retry is just two shallow passes
+        # for the same deficit.
+        observation_messages = list(body_correctness_observations(
+            r["original_text"], final_text, glossary,
+        ))
+        for zh, en in glossary_svc.missing_translator_terms(
+            r["title_zh"] or "", title_en or "", glossary, atomic_only=True,
+        ):
+            observation_messages.append(f'missing title glossary term {zh!r} → {en!r}')
+        observation_messages.extend(
+            detect_glossary_predicate_loss(
+                r["title_zh"] or "", title_en or "", glossary,
+                source_label="chapter title",
+            )
+        )
+        if observation_messages:
+            logger.info(
+                "queue: chapter %d translation observations (logged, not retried) [%d]: %s",
+                r["chapter_num"], len(observation_messages),
+                "; ".join(observation_messages[:5]),
+            )
+
+        # Persist the normalized observation set. translation_degraded gets
+        # its own synthetic row so the panel renders it uniformly with the
+        # detect_* hits. The DELETE-then-INSERT rides the same transaction
+        # as the chapter UPDATE above — atomic replacement, no
+        # mixed-generation window.
+        normalized_observations: list[NormalizedObservation] = list(
+            normalize_observer_outputs(observation_messages)
+        )
+        if translation_degraded:
+            normalized_observations.append(
+                implicit_observation_translation_degraded()
+            )
+        # 1:1 drift signal (CAT Phase 1): the deterministic fixups and the
+        # worker merge run AFTER the count validation, so the committed body
+        # can diverge from the validated count (accepted double miss, or a
+        # fixup weld/strip that changed the count). Observation only, no
+        # retry: keeps the violation rate measurable and marks the chapter
+        # as positionally unmappable.
+        if expected_paragraph_count is not None:
+            committed_count = len(split_target_paragraphs(final_text))
+            if committed_count != expected_paragraph_count:
+                logger.info(
+                    "queue: chapter %d paragraph count drift after fixups "
+                    "(%d committed, %d expected)",
+                    r["chapter_num"], committed_count, expected_paragraph_count,
+                )
+                normalized_observations.append(
+                    implicit_observation_paragraph_count_drift(
+                        got=committed_count,
+                        expected=expected_paragraph_count,
+                        stage="translation",
+                    )
+                )
+        # F26 (2026-05-25): per-novel observer mute. Read
+        # novels.disabled_observers (JSON array of kinds) and filter the
+        # observation list before persistence. Lets users mute false-
+        # positive observer categories per-novel without losing the
+        # other observers' signal.
+        cur = await conn.execute(
+            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+        )
+        mute_row = await cur.fetchone()
+        muted = parse_disabled_observers(
+            mute_row["disabled_observers"] if mute_row else None
+        )
+        if muted:
+            normalized_observations = [
+                o for o in normalized_observations if o.kind not in muted
+            ]
+
+        await conn.execute(
+            "DELETE FROM chapter_observations WHERE chapter_id = ?",
+            (chapter_id,),
+        )
+        if normalized_observations:
+            await conn.executemany(
+                "INSERT INTO chapter_observations "
+                "(chapter_id, kind, severity, paragraph_index, excerpt) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        chapter_id, obs.kind, obs.severity,
+                        obs.paragraph_index, obs.excerpt,
+                    )
+                    for obs in normalized_observations
+                ],
+            )
+        # Best-effort post-commit diagnostics (attempt log +
+        # prompt_config_snapshot provenance + TM-segment refresh), all in
+        # this same transaction. Extracted so the claim/translate/commit
+        # spine stays readable; the helper never fails the commit.
+        await _record_commit_provenance(
+            conn,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            chapter_num=r["chapter_num"],
+            provider=provider,
+            novel_meta=novel_meta,
+            result=result,
+            translation_degraded=translation_degraded,
+            original_text=r["original_text"],
+            cleaned_text=final_text,
+            free_draft=free_draft,
+            previous_context=previous_context,
+            style_note=style_note,
+            style_edits=style_edits,
+            approved_pairs=approved_pairs,
+            fixup_counts=fixup_counts,
+        )
+        await conn.commit()
 
         # Glossary merge runs after success commit so a merge failure does
         # not bury the translation. The merge can still fail (SQLite write
@@ -1149,6 +1203,14 @@ async def _translate_chapter_in_db(
                 logger.exception("could not even persist glossary_merge_error")
     except Exception as e:
         logger.exception("translate ch %d failed: %s", r["chapter_num"], e)
+        # A failed translation must not touch the segment store (invariant):
+        # discard any uncommitted success-transaction writes (claim UPDATE,
+        # partial Phase 4 merge) before writing the error state. No-op when
+        # no transaction is open.
+        try:
+            await conn.rollback()
+        except Exception:
+            logger.exception("translate error-path rollback failed")
         # Audit 3.2: zero queue_priority on error so a translate-next priority
         # does not persist on a failed chapter that the user later re-queues.
         await conn.execute(
@@ -1388,31 +1450,6 @@ async def _refine_chapter_in_db(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",
         r["chapter_num"], elapsed, provider.name, len(draft), len(refined),
     )
-    # 1:1 drift signal (CAT Phase 1), mirror of the translate path: the
-    # fixups above run AFTER refine_chapter's count validation, so the
-    # committed refined body can still diverge from the draft's paragraph
-    # count. Observation only, no retry; honors the per-novel observer mute.
-    drift_observation: NormalizedObservation | None = None
-    refined_count = len(split_target_paragraphs(refined))
-    if refined_count != expected_paragraphs:
-        logger.info(
-            "refine ch %d: paragraph count drift after fixups "
-            "(%d committed, %d expected)",
-            r["chapter_num"], refined_count, expected_paragraphs,
-        )
-        drift_observation = implicit_observation_paragraph_count_drift(
-            got=refined_count, expected=expected_paragraphs,
-            stage="refinement",
-        )
-        cur = await conn.execute(
-            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
-        )
-        mute_row = await cur.fetchone()
-        muted = parse_disabled_observers(
-            mute_row["disabled_observers"] if mute_row else None
-        )
-        if drift_observation.kind in muted:
-            drift_observation = None
     # Extend the prompt-config snapshot so the refined chapter records which
     # refiner produced the final visible English. Tolerant of a missing /
     # malformed translator-side snapshot so legacy rows still get refiner
@@ -1433,10 +1470,75 @@ async def _refine_chapter_in_db(
         "WHERE id = ? AND refinement_status = 'in_progress'",
         (refined, provider.id, merged_snapshot, chapter_id),
     )
-    # The drift observation rides the same transaction as the refinement
-    # commit (and only when the claim held), so the row always describes the
-    # refined_text the reader actually sees.
-    if drift_observation is not None and (upd.rowcount or 0) > 0:
+    if (upd.rowcount or 0) == 0:
+        # Lost the claim (concurrent state change): discard everything.
+        await conn.rollback()
+        return
+
+    # CAT Phase 4 refiner merge, inside the claim-guarded commit transaction.
+    # This commit flips the displayed variant to 'refined', so the store must
+    # mirror the REFINED body from here on: human rows keep their target_text
+    # verbatim (the refiner saw the full draft for context; its rewrites of
+    # protected rows are discarded, machine_text records its suggestion) and
+    # machine rows take the refined paragraphs with origin 'llm_refined'.
+    # refined_text is then materialized from the merged set.
+    final_refined = refined
+    src_paras = effective_source_paragraphs(
+        strip_heading_update_marker(r["original_text"] or "")
+    )
+    if src_paras:
+        merged = await segments_svc.apply_machine_translation(
+            conn,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            new_paragraphs=split_target_paragraphs(refined),
+            kind="llm_refined",
+            src_paras=src_paras,
+        )
+        final_refined = segments_svc.join_paragraphs(merged)
+        if final_refined != refined:
+            await conn.execute(
+                "UPDATE chapters SET refined_text = ? WHERE id = ?",
+                (final_refined, chapter_id),
+            )
+
+    # Refinement-stage drift observations are REPLACED, not appended (Phase 1
+    # leftover, on record): a prior refinement's drift row describes a
+    # refined_text that no longer exists once a clean re-refinement lands.
+    # Translation-stage drift rows are left untouched.
+    await conn.execute(
+        "DELETE FROM chapter_observations "
+        "WHERE chapter_id = ? AND kind = 'paragraph_count_drift' "
+        "  AND excerpt LIKE 'Paragraph count drift (refinement)%'",
+        (chapter_id,),
+    )
+    # 1:1 drift signal (CAT Phase 1), mirror of the translate path: the
+    # fixups and merge above run AFTER refine_chapter's count validation, so
+    # the committed refined body can still diverge from the draft's
+    # paragraph count. Observation only, no retry; honors the per-novel
+    # observer mute. Computed on the FINAL merged refined body.
+    drift_observation: NormalizedObservation | None = None
+    refined_count = len(split_target_paragraphs(final_refined))
+    if refined_count != expected_paragraphs:
+        logger.info(
+            "refine ch %d: paragraph count drift after fixups "
+            "(%d committed, %d expected)",
+            r["chapter_num"], refined_count, expected_paragraphs,
+        )
+        drift_observation = implicit_observation_paragraph_count_drift(
+            got=refined_count, expected=expected_paragraphs,
+            stage="refinement",
+        )
+        cur = await conn.execute(
+            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+        )
+        mute_row = await cur.fetchone()
+        muted = parse_disabled_observers(
+            mute_row["disabled_observers"] if mute_row else None
+        )
+        if drift_observation.kind in muted:
+            drift_observation = None
+    if drift_observation is not None:
         await conn.execute(
             "INSERT INTO chapter_observations "
             "(chapter_id, kind, severity, paragraph_index, excerpt) "

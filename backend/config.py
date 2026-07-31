@@ -196,6 +196,18 @@ PROMPT_INCLUDE_STYLE_EDITS = _bool_env("PROMPT_INCLUDE_STYLE_EDITS", True)
 # remains the long-term product gate; this flag is the testing instrument
 # for an A/B arm that removes the refiner pass across the board.
 PROMPT_INCLUDE_REFINER = _bool_env("PROMPT_INCLUDE_REFINER", True)
+# CAT Phase 4: APPROVED TRANSLATIONS block. Lists the chapter's human-owned
+# segment renderings (edited/confirmed rows plus cross-chapter exact
+# confirmed matches) with a verbatim-reuse instruction, so the model writes
+# the surrounding prose coherently around them. Coherence aid only: the
+# deterministic worker merge re-inserts human rows regardless, so model
+# disobedience is harmless. The block rides the user prompt, so it folds
+# into the llm_cache key on purpose: confirming a segment changes the
+# prompt, and a later retranslate is a cache MISS by design (the approved
+# text must reach the model, and the merge must run against fresh output).
+PROMPT_INCLUDE_APPROVED_TRANSLATIONS = _bool_env(
+    "PROMPT_INCLUDE_APPROVED_TRANSLATIONS", True
+)
 
 # Cap on the embedded free-draft REFERENCE TRANSLATION block, in characters.
 # The free draft is a full mechanical translation of the same chapter, so

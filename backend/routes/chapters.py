@@ -287,11 +287,15 @@ async def retry_refinement(
             detail=f"refinement already {current}; nothing to retry.",
         )
     # 'none' / 'done' / 'error' all allowed — flip back to 'pending' and let
-    # the worker re-run. Clears refined_text + refinement_error so the
-    # previous outcome doesn't show through during the retry window.
+    # the worker re-run. Clears refinement_error + refined_at only:
+    # refined_text is KEPT through the retry window (CAT Phase 4), because
+    # confirmed segment work lives in the refined body and nulling it here
+    # would vanish that work from the displayed body (and desync the segment
+    # store) before the new refinement even runs. The worker's refinement
+    # commit overwrites refined_text with the freshly merged result.
     await conn.execute(
         "UPDATE chapters SET refinement_status = 'pending', "
-        "refined_text = NULL, refinement_error = NULL, refined_at = NULL "
+        "refinement_error = NULL, refined_at = NULL "
         "WHERE id = ?",
         (r["id"],),
     )

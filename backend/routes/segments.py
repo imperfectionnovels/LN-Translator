@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db import get_conn
 from backend.models import (
+    SegmentAssist,
     SegmentConfirmAll,
     SegmentConfirmAllResult,
     SegmentListResponse,
@@ -47,6 +48,27 @@ async def get_chapter_segments(
     # Persist any lazy backfill the read performed (no-op otherwise).
     await conn.commit()
     return SegmentListResponse(**payload)
+
+
+@router.get(
+    "/novels/{novel_id}/chapters/{chapter_num}/segments/{seg_index}/assist"
+)
+async def get_segment_assist(
+    novel_id: int,
+    chapter_num: int,
+    seg_index: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> SegmentAssist:
+    """Assist-rail feed for one segment (Phase 4): exact TM matches (same
+    source_hash in other chapters, full-text verified, confirmed first),
+    fuzzy TM matches (rapidfuzz over chapter_segments sources, threshold
+    0.80, cap 5), and the row's stored machine rendering. Read-only."""
+    payload = await segments_svc.segment_assist(
+        conn, novel_id, chapter_num, seg_index
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="segment not found")
+    return SegmentAssist(**payload)
 
 
 @router.patch("/novels/{novel_id}/chapters/{chapter_num}/segments/{seg_index}")

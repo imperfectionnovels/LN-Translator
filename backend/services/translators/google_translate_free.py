@@ -160,6 +160,7 @@ class GoogleTranslateFreeTranslator(BaseTranslator):
         free_draft: str | None = None,
         source_language: str | None = None,
         expected_paragraph_count: int | None = None,
+        approved_pairs: list[tuple[int, str, str]] | None = None,
     ) -> TranslationResult:
         """Translate ``chapter_zh`` via Google Translate and return the result.
 

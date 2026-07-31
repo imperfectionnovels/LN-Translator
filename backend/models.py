@@ -387,7 +387,11 @@ class Segment(BaseModel):
     paragraph of the displayed body that renders it. `target_hash` is the
     16-hex sha256 of target_text (the per-segment stale guard the Phase 3
     PATCH will echo back); `aligned` False marks a row the alignment path
-    could not pin as a confident 1:1 anchor (needs-review chip)."""
+    could not pin as a confident 1:1 anchor (needs-review chip).
+    `machine_differs` (Phase 4) is the cheap server-side flag that the
+    stored AI rendering differs from the displayed target; the editor keys
+    the human-row "kept" chip on it and fetches the full machine_text via
+    the assist endpoint only on demand."""
 
     index: int
     source_text: str
@@ -398,6 +402,7 @@ class Segment(BaseModel):
     origin: str
     aligned: bool
     confirmed_at: str | None = None
+    machine_differs: bool = False
 
 
 class SegmentProgress(BaseModel):
@@ -466,6 +471,40 @@ class SegmentConfirmAllResult(BaseModel):
     segments_state: str | None
     progress: SegmentProgress
     next_unconfirmed_index: int | None
+
+
+class SegmentAssistExact(BaseModel):
+    """One exact TM match in the assist rail: a same-novel segment row from
+    another chapter whose source paragraph is byte-identical (hash + full
+    text verified). Confirmed rows rank first, then edited, then machine."""
+
+    chapter_num: int
+    seg_index: int
+    target_text: str
+    status: str
+    confirmed_at: str | None = None
+
+
+class SegmentAssistFuzzy(BaseModel):
+    """One fuzzy TM match: a near-duplicate source paragraph elsewhere in
+    the novel (rapidfuzz over script-folded Han, assist threshold 0.80).
+    `score` is 0..1."""
+
+    score: float
+    chapter_num: int
+    source_text: str
+    target_text: str
+
+
+class SegmentAssist(BaseModel):
+    """Response for GET .../segments/{seg_index}/assist: the editor's assist
+    rail feed. `machine_text` is the row's stored AI rendering (None when
+    the aligner had no paragraph for the slot); the "AI suggests" dialog
+    reads it from here so the list payload stays lean."""
+
+    tm_exact: list[SegmentAssistExact]
+    tm_fuzzy: list[SegmentAssistFuzzy]
+    machine_text: str | None = None
 
 
 class DeleteCounts(BaseModel):

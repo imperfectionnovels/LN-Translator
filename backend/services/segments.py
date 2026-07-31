@@ -29,6 +29,20 @@ Phase 3 adds the single write path:
     wins on TEXT, rows keep their STATUS (a novel-wide find-replace across
     confirmed segments must not un-confirm them).
 
+Phase 4 makes the WORKER segments-authoritative for human rows:
+  - `apply_machine_translation`: the translate/refine commit merge. Human
+    rows (edited|confirmed) keep target_text VERBATIM and only refresh
+    machine_text with the new AI rendering; machine rows regenerate; the
+    returned merged paragraph list becomes the committed body, so a
+    retranslate can no longer clobber confirmed work (closes the Phase 3
+    "text-authoritative rebuild" interim defect).
+  - `prefill_confirmed_exact`: cross-chapter exact-hash pre-fill of
+    confirmed renderings (origin 'tm_exact').
+  - `approved_prompt_pairs`: the APPROVED TRANSLATIONS prompt block feed
+    (coherence aid only; the deterministic merge is the enforcement).
+  - `segment_assist`: the editor's per-segment assist rail feed (TM exact +
+    fuzzy + the stored machine rendering).
+
 Async, aiosqlite. No route logic; callers own the commit.
 """
 
@@ -38,8 +52,10 @@ import hashlib
 import logging
 
 import aiosqlite
+from rapidfuzz import fuzz, process
 
 from backend.services import tm as tm_svc
+from backend.services.glossary_filters import canonical_zh
 from backend.services.segmentation import (
     SEGMENTATION_VERSION,
     effective_source_paragraphs,
@@ -137,11 +153,19 @@ async def _fetch_human_rows(
     conn: aiosqlite.Connection, chapter_id: int
 ) -> list[aiosqlite.Row]:
     cur = await conn.execute(
-        "SELECT id, seg_index, source_hash, status FROM chapter_segments "
+        "SELECT id, seg_index, source_hash, status, target_text, machine_text "
+        "FROM chapter_segments "
         "WHERE chapter_id = ? AND status != 'machine' ORDER BY seg_index",
         (chapter_id,),
     )
     return list(await cur.fetchall())
+
+
+def join_paragraphs(paragraphs: list[str]) -> str:
+    """Displayed-body join: blank-line joined, empty entries skipped (the
+    same empty-skip rule as `_materialize_body` / `_segments_match_body`,
+    invariant I1)."""
+    return "\n\n".join(p for p in paragraphs if p)
 
 
 async def _retain_rows_stamp_unaligned(
@@ -332,8 +356,8 @@ async def _fetch_segment_rows(
     conn: aiosqlite.Connection, chapter_id: int
 ) -> list[aiosqlite.Row]:
     cur = await conn.execute(
-        "SELECT seg_index, source_text, source_hash, target_text, status, "
-        "       origin, aligned, confirmed_at "
+        "SELECT seg_index, source_text, source_hash, target_text, "
+        "       machine_text, status, origin, aligned, confirmed_at "
         "FROM chapter_segments WHERE chapter_id = ? ORDER BY seg_index",
         (chapter_id,),
     )
@@ -341,20 +365,7 @@ async def _fetch_segment_rows(
 
 
 def _payload(row, variant: str, body: str, state, seg_rows) -> dict:
-    segments = [
-        {
-            "index": r["seg_index"],
-            "source_text": r["source_text"],
-            "target_text": r["target_text"],
-            "source_hash": r["source_hash"],
-            "target_hash": hash16(r["target_text"]),
-            "status": r["status"],
-            "origin": r["origin"],
-            "aligned": bool(r["aligned"]),
-            "confirmed_at": r["confirmed_at"],
-        }
-        for r in seg_rows
-    ]
+    segments = [_segment_dict(r) for r in seg_rows]
     confirmed = sum(1 for s in segments if s["status"] == "confirmed")
     next_unconfirmed = next(
         (s["index"] for s in segments if s["status"] != "confirmed"), None
@@ -451,6 +462,12 @@ def _segment_dict(r) -> dict:
         "origin": r["origin"],
         "aligned": bool(r["aligned"]),
         "confirmed_at": r["confirmed_at"],
+        # Cheap server-side diff flag: the stored AI rendering differs from
+        # the displayed target. The editor keys the "kept" chip on it for
+        # human rows (full machine_text ships via the assist endpoint, not
+        # the list payload).
+        "machine_differs": bool(r["machine_text"])
+        and r["machine_text"] != r["target_text"],
     }
 
 
@@ -830,3 +847,452 @@ async def seg_index_for_display_paragraph(
         return None
     r = non_empty[paragraph_index]
     return r["seg_index"], r["target_text"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: worker merge, exact-hash prefill, approved-pairs feed, assist rail
+# ---------------------------------------------------------------------------
+
+_MACHINE_KINDS = frozenset({"llm", "llm_refined"})
+
+
+async def _retain_all_rows_unaligned(
+    conn: aiosqlite.Connection,
+    chapter_id: int,
+    new_paragraphs: list[str],
+    reason: str,
+) -> list[str]:
+    """Merge fallback when the new machine output cannot be reconciled with
+    the existing rows (alignment below the gate, or a human row's source
+    paragraph vanished). Every row is RETAINED (invariant I3) and demoted to
+    aligned=0 (zero confidence against the new body); the chapter is stamped
+    'unaligned' so the editor shows the preserved rows read-only with a
+    retranslate CTA. The machine output still becomes the displayed body:
+    the human text survives in the STORE, recoverable, but cannot be
+    positioned in the new body."""
+    rev = chapter_rev(join_paragraphs(new_paragraphs))
+    await _retain_rows_stamp_unaligned(conn, chapter_id, rev, reason)
+    await conn.execute(
+        "UPDATE chapter_segments SET aligned = 0, "
+        "updated_at = datetime('now') WHERE chapter_id = ?",
+        (chapter_id,),
+    )
+    return new_paragraphs
+
+
+async def apply_machine_translation(
+    conn: aiosqlite.Connection,
+    *,
+    novel_id: int,
+    chapter_id: int,
+    new_paragraphs: list[str],
+    kind: str,
+    src_paras: list[str],
+    prefill: dict[int, str] | None = None,
+) -> list[str]:
+    """The worker-commit merge (translate kind='llm', refine
+    kind='llm_refined'): reconcile the new machine paragraphs with the
+    existing segment store, PRESERVING human rows, and return the merged
+    paragraph list the caller commits as the displayed body.
+
+    Per seg index (keyed to `src_paras`, the effective source paragraphs the
+    1:1 pipeline fed the model):
+
+      - Human rows (edited|confirmed): target_text kept VERBATIM; only
+        machine_text refreshes with the new AI rendering for that index (so
+        the editor can show "the AI suggests differently"); status / origin /
+        timestamps untouched (invariant I2). Re-anchored by source_hash via
+        `_anchor_human_rows` (position-first, so an unchanged source maps
+        positionally).
+      - Machine rows: regenerated from the new text (target_text +
+        machine_text), origin=`kind`; missing rows insert; a chapter with no
+        store at all gets a fresh full build.
+      - `prefill` (index -> confirmed rendering from `prefill_confirmed_exact`)
+        overrides machine rows only: target_text takes the confirmed
+        rendering, origin='tm_exact', status stays 'machine', machine_text
+        keeps the fresh AI rendering.
+
+    Mapping: equal counts map positionally; on drift (a fixup welded or
+    dropped a paragraph) `tm.full_alignment_path` aligns the MACHINE side,
+    demoting uncertain rows to aligned=0. When the alignment fails outright,
+    or a human row's source paragraph vanished (stored rows predating
+    SEGMENTATION_VERSION, or a source edit), every row is RETAINED and the
+    chapter stamps 'unaligned' (see `_retain_all_rows_unaligned`); the
+    machine paragraphs are returned unmerged.
+
+    All writes ride the caller's transaction (the worker's success-commit
+    transaction, so human rows are re-read AFTER the claim and editor writes
+    cannot interleave). Stamps segments_state / segmentation_version /
+    segments_rev against the merged body. The caller must commit
+    `join_paragraphs(return value)` as the displayed body (invariant I1).
+    """
+    if kind not in _MACHINE_KINDS:
+        raise ValueError(f"unknown machine translation kind {kind!r}")
+    human_rows = await _fetch_human_rows(conn, chapter_id)
+
+    if not src_paras or not new_paragraphs:
+        if human_rows:
+            return await _retain_all_rows_unaligned(
+                conn, chapter_id, new_paragraphs,
+                "empty source or machine paragraph list",
+            )
+        await _clear_and_stamp(
+            conn, chapter_id, "unaligned",
+            chapter_rev(join_paragraphs(new_paragraphs)),
+        )
+        return new_paragraphs
+
+    if len(new_paragraphs) == len(src_paras):
+        entries: list[tuple[str, bool]] = [(t, True) for t in new_paragraphs]
+    else:
+        path = tm_svc.full_alignment_path(src_paras, new_paragraphs)
+        if path is None:
+            reason = (
+                f"{len(src_paras)} src vs {len(new_paragraphs)} machine "
+                "paragraphs below the confidence gate"
+            )
+            if human_rows:
+                return await _retain_all_rows_unaligned(
+                    conn, chapter_id, new_paragraphs, reason
+                )
+            await _clear_and_stamp(
+                conn, chapter_id, "unaligned",
+                chapter_rev(join_paragraphs(new_paragraphs)),
+            )
+            logger.info("segments: chapter %d merge unalignable (%s)",
+                        chapter_id, reason)
+            return new_paragraphs
+        entries = path
+
+    new_hashes = [hash16(s) for s in src_paras]
+    anchors = _anchor_human_rows(human_rows, new_hashes) if human_rows else {}
+    if anchors is None:
+        return await _retain_all_rows_unaligned(
+            conn, chapter_id, new_paragraphs,
+            "human row's source paragraph vanished",
+        )
+
+    merged: list[str] = [t for t, _a in entries]
+    aligned_flags: list[bool] = [a for _t, a in entries]
+    by_id = {r["id"]: r for r in human_rows}
+    prefill = prefill or {}
+
+    # Same two-step re-key as build_segments_from_alignment: drop the machine
+    # rows, shift the human rows out of the index space, then land each on
+    # its anchored slot.
+    await conn.execute(
+        "DELETE FROM chapter_segments "
+        "WHERE chapter_id = ? AND status = 'machine'",
+        (chapter_id,),
+    )
+    if anchors:
+        await conn.execute(
+            "UPDATE chapter_segments SET seg_index = seg_index + ? "
+            "WHERE chapter_id = ?",
+            (_REKEY_OFFSET, chapter_id),
+        )
+        for row_id, j in anchors.items():
+            row = by_id[row_id]
+            new_machine, _a = entries[j]
+            # Keep the prior stored rendering when the aligner had no
+            # paragraph for this slot; an empty refresh would break
+            # revert-to-AI for no gain.
+            machine_text = new_machine or row["machine_text"] or ""
+            await conn.execute(
+                "UPDATE chapter_segments SET seg_index = ?, source_text = ?, "
+                "source_hash = ?, machine_text = ?, aligned = 1, "
+                "updated_at = datetime('now') WHERE id = ?",
+                (j, src_paras[j], new_hashes[j], machine_text, row_id),
+            )
+            merged[j] = row["target_text"]
+            aligned_flags[j] = True
+    human_indexes = set(anchors.values())
+
+    inserts: list[tuple] = []
+    for i, (text, aligned) in enumerate(entries):
+        if i in human_indexes:
+            continue
+        pre = prefill.get(i)
+        if pre:
+            inserts.append(
+                (novel_id, chapter_id, i, src_paras[i], new_hashes[i],
+                 pre, text, "tm_exact", 1)
+            )
+            merged[i] = pre
+            aligned_flags[i] = True
+        else:
+            inserts.append(
+                (novel_id, chapter_id, i, src_paras[i], new_hashes[i],
+                 text, text, kind, 1 if aligned else 0)
+            )
+    await conn.executemany(
+        "INSERT INTO chapter_segments "
+        "(novel_id, chapter_id, seg_index, source_text, source_hash, "
+        " target_text, machine_text, status, origin, aligned) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'machine', ?, ?)",
+        inserts,
+    )
+    state = "ok" if all(aligned_flags) else "partial"
+    await conn.execute(
+        "UPDATE chapters SET segments_state = ?, segmentation_version = ?, "
+        "segments_rev = ? WHERE id = ?",
+        (state, SEGMENTATION_VERSION, chapter_rev(join_paragraphs(merged)),
+         chapter_id),
+    )
+    return merged
+
+
+# IN-clause chunk size (SQLite parameter cap safety; matches queue.py).
+_PREFILL_CHUNK = 500
+
+
+async def prefill_confirmed_exact(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_id: int,
+    src_paras: list[str],
+) -> dict[int, str]:
+    """index -> confirmed rendering for every src paragraph that some OTHER
+    chapter of this novel has already CONFIRMED with the exact same source
+    text. One indexed query on idx_chapter_segments_novel_hash; the 16-hex
+    prefix is verified against full source_text equality so a hash collision
+    cannot smuggle in a wrong rendering. Most-recently-confirmed wins.
+
+    NOTE: chapter_segments hashes pre-joined EFFECTIVE paragraphs (see the
+    hash16 docstring on the tm_segments divergence), so `src_paras` must be
+    the effective_source_paragraphs list, hashed with the same convention.
+    """
+    if not src_paras:
+        return {}
+    unique_hashes = list({hash16(p) for p in src_paras})
+    rows: list = []
+    for i in range(0, len(unique_hashes), _PREFILL_CHUNK):
+        chunk = unique_hashes[i : i + _PREFILL_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        cur = await conn.execute(
+            f"SELECT id, source_hash, source_text, target_text, confirmed_at "
+            f"FROM chapter_segments "
+            f"WHERE novel_id = ? AND chapter_id != ? AND status = 'confirmed' "
+            f"  AND target_text != '' AND source_hash IN ({placeholders})",
+            [novel_id, chapter_id, *chunk],
+        )
+        rows.extend(await cur.fetchall())
+    if not rows:
+        return {}
+    # Most-recently-confirmed first; id breaks ties deterministically.
+    rows.sort(key=lambda r: ((r["confirmed_at"] or ""), r["id"]), reverse=True)
+    by_source: dict[str, str] = {}
+    for r in rows:
+        if r["source_text"] not in by_source:
+            by_source[r["source_text"]] = r["target_text"]
+    return {
+        i: by_source[p] for i, p in enumerate(src_paras) if p in by_source
+    }
+
+
+async def approved_prompt_pairs(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_id: int,
+    src_paras: list[str],
+    *,
+    max_pairs: int = 30,
+    max_chars: int = 8000,
+) -> list[tuple[int, str, str]]:
+    """(seg_index, source, approved_en) pairs for the APPROVED TRANSLATIONS
+    prompt block: this chapter's human rows (anchored to `src_paras` by
+    source_hash, position-first) plus cross-chapter exact confirmed matches
+    at the remaining indexes. Sorted by index, capped at `max_pairs` entries
+    and ~`max_chars` total characters.
+
+    Coherence aid only: the deterministic `apply_machine_translation` merge
+    is the enforcement, so a row this skips (stale, over-cap) still survives
+    the retranslate verbatim.
+    """
+    if not src_paras:
+        return []
+    new_hashes = [hash16(p) for p in src_paras]
+    pairs: dict[int, str] = {}
+    used: set[int] = set()
+    cur = await conn.execute(
+        "SELECT seg_index, source_hash, target_text FROM chapter_segments "
+        "WHERE chapter_id = ? AND status != 'machine' AND target_text != '' "
+        "ORDER BY seg_index",
+        (chapter_id,),
+    )
+    for r in await cur.fetchall():
+        i = r["seg_index"]
+        if (
+            0 <= i < len(new_hashes)
+            and new_hashes[i] == r["source_hash"]
+            and i not in used
+        ):
+            j = i
+        else:
+            candidates = [
+                k for k, h in enumerate(new_hashes)
+                if h == r["source_hash"] and k not in used
+            ]
+            if not candidates:
+                continue  # stale row; the merge owns retention, not the prompt
+            j = min(candidates, key=lambda c: abs(c - i))
+        used.add(j)
+        pairs[j] = r["target_text"]
+    exact = await prefill_confirmed_exact(conn, novel_id, chapter_id, src_paras)
+    for i, text in exact.items():
+        pairs.setdefault(i, text)
+    out: list[tuple[int, str, str]] = []
+    total = 0
+    for i in sorted(pairs):
+        entry_chars = len(src_paras[i]) + len(pairs[i])
+        if len(out) >= max_pairs or total + entry_chars > max_chars:
+            break
+        out.append((i, src_paras[i], pairs[i]))
+        total += entry_chars
+    return out
+
+
+# Assist-rail knobs. Same conventions as services/consistency.py's edit-mode
+# rail (canonical_zh folding, length-band prefilter, rapidfuzz ratio), with a
+# looser 0.80 threshold: the rail suggests, the consistency rail flags drift.
+_ASSIST_CAP = 5
+_ASSIST_FUZZY_THRESHOLD = 0.80
+_ASSIST_MIN_SOURCE_LEN = 6
+_ASSIST_MAX_CANDIDATES = 100
+_STATUS_RANK = {"confirmed": 0, "edited": 1, "machine": 2}
+
+
+async def segment_assist(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_num: int,
+    seg_index: int,
+) -> dict | None:
+    """Assist-rail feed for one segment: exact TM matches (same-novel
+    chapter_segments rows sharing this source_hash, full-text verified,
+    confirmed first), fuzzy TM matches (rapidfuzz over other chapters'
+    segment sources, threshold 0.80, tiny sources skipped), and the row's
+    stored machine rendering (the "AI suggests" dialog body). Read-only.
+    Returns None when the chapter or segment is missing (route -> 404)."""
+    cur = await conn.execute(
+        "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+        (novel_id, chapter_num),
+    )
+    ch = await cur.fetchone()
+    if ch is None:
+        return None
+    chapter_id = ch["id"]
+    cur = await conn.execute(
+        "SELECT source_text, source_hash, target_text, machine_text "
+        "FROM chapter_segments WHERE chapter_id = ? AND seg_index = ?",
+        (chapter_id, seg_index),
+    )
+    seg = await cur.fetchone()
+    if seg is None:
+        return None
+
+    # Exact tier: same source_hash in OTHER chapters, full-text verified.
+    cur = await conn.execute(
+        "SELECT cs.seg_index, cs.source_text, cs.target_text, cs.status, "
+        "       cs.confirmed_at, cs.updated_at, cs.id, c.chapter_num "
+        "FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
+        "WHERE cs.novel_id = ? AND cs.source_hash = ? "
+        "  AND cs.chapter_id != ? AND cs.target_text != ''",
+        (novel_id, seg["source_hash"], chapter_id),
+    )
+    exact_rows = [
+        r for r in await cur.fetchall()
+        if r["source_text"] == seg["source_text"]
+    ]
+    # Newest first, then a stable re-sort into status bands, so inside each
+    # band (confirmed, edited, machine) recency still wins.
+    exact_rows.sort(
+        key=lambda r: ((r["confirmed_at"] or r["updated_at"] or ""), r["id"]),
+        reverse=True,
+    )
+    exact_rows.sort(key=lambda r: _STATUS_RANK.get(r["status"], 3))
+    tm_exact = [
+        {
+            "chapter_num": r["chapter_num"],
+            "seg_index": r["seg_index"],
+            "target_text": r["target_text"],
+            "status": r["status"],
+            "confirmed_at": r["confirmed_at"],
+        }
+        for r in exact_rows[:_ASSIST_CAP]
+    ]
+
+    tm_fuzzy = await _assist_fuzzy(conn, novel_id, chapter_id, seg)
+    return {
+        "tm_exact": tm_exact,
+        "tm_fuzzy": tm_fuzzy,
+        "machine_text": seg["machine_text"] or None,
+    }
+
+
+async def _assist_fuzzy(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    chapter_id: int,
+    seg,
+) -> list[dict]:
+    """Fuzzy tier of `segment_assist`: near-duplicate sources elsewhere in
+    the novel, scored over script-folded Han (canonical_zh), length-band
+    prefiltered, capped. Skips the exact-hash rows (the exact tier owns
+    them) and trivially short sources (they match everything)."""
+    own_canon = canonical_zh(seg["source_text"])
+    if len(own_canon) < _ASSIST_MIN_SOURCE_LEN:
+        return []
+    cur = await conn.execute(
+        "SELECT cs.source_text, cs.source_hash, cs.target_text, cs.status, "
+        "       c.chapter_num "
+        "FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
+        "WHERE cs.novel_id = ? AND cs.chapter_id != ? AND cs.target_text != ''",
+        (novel_id, chapter_id),
+    )
+    rows = await cur.fetchall()
+    # Dedup by folded source; keep the best-status (then earliest-chapter)
+    # rendering per distinct source.
+    by_canon: dict[str, dict] = {}
+    for r in rows:
+        if r["source_hash"] == seg["source_hash"]:
+            continue
+        canon = canonical_zh(r["source_text"] or "")
+        if len(canon) < _ASSIST_MIN_SOURCE_LEN:
+            continue
+        lo, hi = len(own_canon) * 0.85, len(own_canon) * 1.15
+        if not (lo <= len(canon) <= hi):
+            continue
+        entry = {
+            "chapter_num": r["chapter_num"],
+            "source_text": r["source_text"],
+            "target_text": r["target_text"],
+            "rank": _STATUS_RANK.get(r["status"], 3),
+        }
+        prev = by_canon.get(canon)
+        if prev is None or (entry["rank"], entry["chapter_num"]) < (
+            prev["rank"], prev["chapter_num"]
+        ):
+            by_canon[canon] = entry
+    if not by_canon:
+        return []
+    candidates = list(by_canon.keys())
+    if len(candidates) > _ASSIST_MAX_CANDIDATES:
+        candidates.sort(key=lambda c: abs(len(c) - len(own_canon)))
+        candidates = candidates[:_ASSIST_MAX_CANDIDATES]
+    scored = process.extract(
+        own_canon, candidates,
+        scorer=fuzz.ratio,
+        score_cutoff=_ASSIST_FUZZY_THRESHOLD * 100.0,
+        limit=_ASSIST_CAP,
+    )
+    out = []
+    for choice, score, _key in scored:
+        e = by_canon[choice]
+        out.append({
+            "score": round(score / 100.0, 3),
+            "chapter_num": e["chapter_num"],
+            "source_text": e["source_text"],
+            "target_text": e["target_text"],
+        })
+    return out

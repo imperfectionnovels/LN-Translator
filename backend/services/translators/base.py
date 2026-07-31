@@ -551,6 +551,39 @@ TITLE_EN: <the English chapter title on one line>
 <a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...]; categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
 
 
+def format_approved_translations(
+    approved_pairs: list[tuple[int, str, str]] | None,
+) -> str:
+    """Render the APPROVED TRANSLATIONS block (CAT Phase 4).
+
+    Each tuple is (seg_index, source_paragraph, approved_english); the
+    ordinal shown is 1-based to match the editor's row numbering. The block
+    is a coherence aid: the deterministic worker merge re-inserts the
+    approved text verbatim regardless of what the model returns, so the
+    instruction asks for verbatim reuse purely so the surrounding prose is
+    written to fit it."""
+    if not approved_pairs:
+        return ""
+    lines: list[str] = []
+    for idx, zh, en in approved_pairs:
+        z = (zh or "").strip()
+        e = (en or "").strip()
+        if not z or not e:
+            continue
+        lines.append(f"Paragraph {idx + 1}:\n  SOURCE: {z}\n  APPROVED: {e}")
+    if not lines:
+        return ""
+    return (
+        "APPROVED TRANSLATIONS (renderings the user has already approved for "
+        "specific paragraphs of this chapter, numbered by their position in "
+        "the source below. Reuse each APPROVED text verbatim as the full "
+        "translation of its paragraph, and write the surrounding paragraphs "
+        "so they read coherently with it):\n"
+        + "\n\n".join(lines)
+        + "\n\n"
+    )
+
+
 def build_prompt(
     chapter_zh: str,
     title_zh: str | None,
@@ -560,6 +593,7 @@ def build_prompt(
     output_instruction: str | None = None,
     style_note: str | None = None,
     free_draft: str | None = None,
+    approved_pairs: list[tuple[int, str, str]] | None = None,
 ) -> str:
     # Both locked (user-curated) and unlocked (auto-detected) entries are
     # filtered to ones whose `term_zh` appears in this chapter — terms absent
@@ -627,6 +661,10 @@ def build_prompt(
             "The output is YOUR translation, not a copy of the reference, not a "
             "simple polish of the reference.\n\n"
         )
+    # APPROVED TRANSLATIONS rides the prompt body, so it folds into the
+    # llm_cache key automatically: confirming a segment changes the prompt
+    # and a later retranslate is a cache miss by design.
+    approved_block = format_approved_translations(approved_pairs)
     instruction = (
         output_instruction if output_instruction is not None
         else DELIMITED_OUTPUT_INSTRUCTION
@@ -637,7 +675,7 @@ def build_prompt(
 GLOSSARY THIS CHAPTER (auto-detected terms appearing here):
 {chapter_block}
 
-{style_block}{context_block}{free_draft_block}{title_line}CHAPTER (Chinese):
+{style_block}{context_block}{free_draft_block}{approved_block}{title_line}CHAPTER (Chinese):
 {chapter_zh}
 
 {instruction}
@@ -801,6 +839,7 @@ class BaseTranslator(ABC):
         genre: str | None,
         custom_brief: str | None,
         free_draft: str | None,
+        approved_pairs: list[tuple[int, str, str]] | None = None,
     ) -> tuple[str, str]:
         """Shared translate_chapter prologue: reset the per-chapter call
         counter + usage accumulator, stash the genre-aware system instruction,
@@ -818,6 +857,7 @@ class BaseTranslator(ABC):
             chapter_zh, title_zh, glossary, previous_context, style_edits,
             style_note=style_note,
             free_draft=free_draft,
+            approved_pairs=approved_pairs,
         )
         cache_key = llm_cache.translation_key(
             backend_id=self.cache_identity(),
@@ -882,6 +922,7 @@ class BaseTranslator(ABC):
         free_draft: str | None = None,
         source_language: str | None = None,
         expected_paragraph_count: int | None = None,
+        approved_pairs: list[tuple[int, str, str]] | None = None,
     ) -> TranslationResult:
         # ``source_language`` is accepted by the BaseTranslator surface so
         # downstream MT-only backends can route it to their underlying
@@ -891,6 +932,9 @@ class BaseTranslator(ABC):
         # ``expected_paragraph_count`` arms the 1:1 paragraph-count check:
         # when set, the parsed body must split into exactly that many
         # blank-line paragraphs (one corrective retry, then accept-and-flag).
+        # ``approved_pairs`` is the APPROVED TRANSLATIONS block feed (CAT
+        # Phase 4): human-approved paragraph renderings the prompt asks the
+        # model to reuse verbatim (the worker merge enforces regardless).
 
         # Reset the per-chapter call counter + usage accumulator, stash the
         # genre-aware system instruction, build the prompt, and derive the
@@ -904,7 +948,7 @@ class BaseTranslator(ABC):
         prompt, cache_key = self._begin_chapter(
             chapter_zh, title_zh, glossary, previous_context, style_edits,
             style_note=style_note, genre=genre, custom_brief=custom_brief,
-            free_draft=free_draft,
+            free_draft=free_draft, approved_pairs=approved_pairs,
         )
         if use_cache:
             cached = llm_cache.load_translation(cache_key)

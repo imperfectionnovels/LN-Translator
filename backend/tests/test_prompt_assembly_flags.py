@@ -112,6 +112,7 @@ def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
         previous_context_included=True,
         style_note_included=True,
         style_edits_included=True,
+        approved_translations_included=True,
     )
     parsed = json.loads(blob)
     assert parsed["translator_provider_id"] == 7
@@ -128,6 +129,8 @@ def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
     assert parsed["flags"]["PROMPT_INCLUDE_STYLE_EDITS"] is True
     assert parsed["flags"]["PROMPT_INCLUDE_REFINER"] is True
     assert parsed["flags"]["PREVIOUS_CONTEXT_ENABLED"] is True
+    assert parsed["approved_translations_included"] is True
+    assert parsed["flags"]["PROMPT_INCLUDE_APPROVED_TRANSLATIONS"] is True
     assert "prompt_template_version" in parsed
 
 
@@ -143,10 +146,12 @@ def test_build_prompt_config_snapshot_records_flag_off_separately(monkeypatch):
         previous_context_included=False,
         style_note_included=False,
         style_edits_included=False,
+        approved_translations_included=False,
     )
     parsed = json.loads(blob)
     assert parsed["flags"]["PROMPT_INCLUDE_FREE_DRAFT"] is False
     assert parsed["free_draft_included"] is False
+    assert parsed["approved_translations_included"] is False
     assert parsed["translator_provider_id"] is None
     assert parsed["custom_brief_present"] is False
 

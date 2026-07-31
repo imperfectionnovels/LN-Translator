@@ -86,8 +86,10 @@ async def _seed_refiner_provider() -> int:
 
 # Default fixture body is comfortably above _REFINEMENT_MIN_DRAFT_CHARS so
 # the refinement path runs end-to-end. Tests that need to exercise the
-# tiny-draft skip path pass a short body explicitly.
-_FIXTURE_DRAFT_BODY = "A normal-length draft paragraph " * 12
+# tiny-draft skip path pass a short body explicitly. Strip-stable on purpose:
+# the Phase 4 worker merge commits the normalized paragraph join, so a body
+# with trailing whitespace would come back stripped.
+_FIXTURE_DRAFT_BODY = ("A normal-length draft paragraph " * 12).strip()
 
 
 def _stub_translate(monkeypatch, body: str = _FIXTURE_DRAFT_BODY) -> None:
