@@ -53,7 +53,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── imports.py             # resumable scrape/import job status feed
 │   │   ├── stats.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
 │   │   ├── quality.py             # cockpit: /novels/{id}/quality + /consistency + /chapters/{n}/quality (read-only); chapters.py adds /learn-edits (+/commit)
-│   │   ├── segments.py            # CAT editor feed: GET /novels/{id}/chapters/{n}/segments (lazy backfill on read, commits before returning)
+│   │   ├── segments.py            # CAT editor: GET segments feed (lazy backfill on read) + PATCH {seg_index} / POST confirm-all writes (structured 409s: stale_segment/stale_chapter/chapter_translating)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
 │   │   ├── uploads.py             # file decode (txt/docx/epub/html) + transactional novel/chapter insert
@@ -61,7 +61,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── queue.py               # the translator worker (single asyncio.Lock, serial)
 │   │   ├── refiner.py             # Phase-4 refinement worker (chains off queue under same lock)
 │   │   ├── segmentation.py        # 1:1 paragraph contract: pre-joined effective source paragraphs + target split; owns the frozen split/heading helpers (SEGMENTATION_VERSION)
-│   │   ├── segments.py            # CAT segment store (sole owner of chapter_segments): displayed_body rule, lazy build from the COMMITTED text, self-heal on read, version-bump rebuild
+│   │   ├── segments.py            # CAT segment store (sole owner of chapter_segments): displayed_body rule, lazy build from the COMMITTED text, self-heal on read, update_segment/confirm_all state machine (body rematerialized from join(targets) same-transaction), human-row-preserving rebuilds, reproject_from_body hook for text-authoritative mutators
 │   │   ├── glossary.py, glossary_filters.py, glossary_casing.py   # admit / lock / cased normalization
 │   │   ├── global_glossary.py, tm.py, find_replace.py             # cross-novel helpers
 │   │   ├── text_fixups.py         # deterministic enforce_* transforms (em-dash, brackets, casing)
@@ -119,7 +119,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, quality.html, find-replace.html, novel-overview.html, onboarding.html
-│   ├── editor.html            # CAT editor (read-only segment grid this phase; /editor?novel=N&ch=M[&seg=K])
+│   ├── editor.html            # CAT editor (segment grid + editing loop; /editor?novel=N&ch=M[&seg=K])
 │   ├── css/
 │   │   ├── base.css           # shared (imports fonts.css first)
 │   │   ├── fonts.css          # @font-face for the self-hosted faces (audit 6.1)
@@ -275,7 +275,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1673 tests across 143 modules.
+- `pytest backend/tests`. Currently 1720 tests across 144 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

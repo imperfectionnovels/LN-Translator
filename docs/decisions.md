@@ -299,3 +299,62 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   stale-tab guard anyway, so the column pays twice. Also dropped the
   redundant (chapter_id, seg_index) index (the UNIQUE constraint already
   provides it) via an appended DROP INDEX migration.
+
+## 2026-07-31: CAT-pivot Phase 3, editing loop + single write path
+
+- **One write path; edit-paragraph becomes an adapter.** The reader's
+  `/edit-paragraph` now routes through `segments.update_segment` whenever the
+  chapter has a clean store (`segments_state='ok'` for the SAME variant the
+  reader edited). The display-paragraph index maps onto seg_index by walking
+  the non-empty targets in order (empty-target rows do not render as reader
+  paragraphs, per the I1 join's empty-skip); the mapping is used only when
+  the non-empty row count equals the body's raw split count, no stored
+  target spans multiple paragraphs, and the stored target at the slot equals
+  the client's `before_md` verbatim. Anything else falls back to the legacy
+  direct splice, and the store self-heals on the next editor open. Falling
+  back (rather than 500ing or force-rebuilding inline) keeps the reader's
+  contract byte-identical and makes the reroute purely additive.
+- **Rebuilds are text-authoritative; "preserve" means status, not text.**
+  When a rebuild or self-heal runs, the body already changed out of band, so
+  the body wins on TEXT while human rows keep their status / origin /
+  timestamps / machine_text and re-anchor by source_hash (their own
+  seg_index is the first candidate, so an unchanged source maps
+  positionally). Keeping human target TEXT verbatim instead would break I1
+  (join(targets) == body) and put the store in a permanent rebuild loop.
+  The opposite direction (segments win, body regenerated) is exactly the
+  Phase 4 worker/refiner merge; rebuild deliberately does not do its job.
+- **I3 implemented literally: human rows are never DELETEd.** The
+  preservation rebuild deletes machine rows only, shifts the surviving human
+  rows out of the seg_index space (offset re-key under the UNIQUE
+  constraint), then moves each onto its anchored slot; the DB primary keys
+  survive, which the tests pin. When alignment fails (below the <50% gate,
+  empty splits, or a human row's source paragraph vanished) on a chapter
+  that HAS human rows, every row is retained untouched under a rev-gated
+  'unaligned' verdict; the editor renders them read-only with a
+  preservation banner. Only human-row-free chapters keep the Phase 2
+  zero-row unaligned behavior.
+- **Writes to an 'unaligned' chapter 409 as `stale_chapter`.** A segment
+  write against retained rows would rematerialize a stale body over the new
+  one. Rather than mint a fourth error kind, the guard reuses
+  `stale_chapter` because its recovery (re-GET) is exactly right: the
+  reload renders the read-only unaligned banner.
+- **reproject_from_body fast path is positional and conservative.** In-place
+  target updates (status preserved, machine_text refreshed only for machine
+  rows) require the body's paragraph count to equal the non-empty row count
+  AND every stored target to be single-paragraph; any merged row or count
+  drift falls back to the preservation-aware rebuild. Wired inside the same
+  transaction of `find_replace.commit_preview`,
+  `apply_in_place_for_glossary_term`, and `fr_snapshots.restore_snapshot`;
+  chapters with zero segment rows are left alone (the lazy read builds them
+  later against whatever body then exists).
+- **revert_machine stamps origin='aligned_backfill'.** The pre-edit origin
+  is not stored, and every machine_text in this phase came from the
+  aligned backfill; the Phase 4 worker merge re-stamps real provenance when
+  it refreshes machine rows. Reverting a hand-filled empty slot re-opens it
+  (aligned=0, body drops the paragraph): revert is the escape hatch that
+  save's no-empty rule points at.
+- **Editor writes are serialized client-side.** Every PATCH rides one
+  promise chain and resolves `chapter_rev` / `before_target_hash` at send
+  time from the freshest payload, so rapid-fire edits cannot race each
+  other into spurious 409s, and a retry after a conflict reload reuses the
+  reloaded guards instead of the stale ones captured at focus time.
