@@ -26,6 +26,12 @@ build/
 dist/
 # Side-channel distpath used when dist/ is locked by the running EXE.
 dist-release/
+build_new/
+dist_new/
+# Dev-server / EXE-build log dumps written to the repo root.
+data_*.log
+# Playwright MCP browser console dumps.
+.playwright-mcp/
 # Working directories for parallel agents — never represent committed state.
 .codex-temp/
 # Per-run migration-check scratch dirs (random suffix per run).
