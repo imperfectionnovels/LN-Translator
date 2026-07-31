@@ -53,7 +53,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── imports.py             # resumable scrape/import job status feed
 │   │   ├── stats.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
 │   │   ├── quality.py             # cockpit: /novels/{id}/quality + /consistency + /chapters/{n}/quality (read-only); chapters.py adds /learn-edits (+/commit)
-│   │   ├── segments.py            # CAT editor: GET segments feed (lazy backfill on read) + PATCH {seg_index} / POST confirm-all writes (structured 409s: stale_segment/stale_chapter/chapter_translating)
+│   │   ├── segments.py            # CAT editor: GET segments feed (lazy backfill on read) + PATCH {seg_index} / POST confirm-all writes (structured 409s: stale_segment/stale_chapter/chapter_translating) + GET {seg_index}/assist (TM exact/fuzzy + machine_text)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
 │   │   ├── uploads.py             # file decode (txt/docx/epub/html) + transactional novel/chapter insert
@@ -61,7 +61,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── queue.py               # the translator worker (single asyncio.Lock, serial)
 │   │   ├── refiner.py             # Phase-4 refinement worker (chains off queue under same lock)
 │   │   ├── segmentation.py        # 1:1 paragraph contract: pre-joined effective source paragraphs + target split; owns the frozen split/heading helpers (SEGMENTATION_VERSION)
-│   │   ├── segments.py            # CAT segment store (sole owner of chapter_segments): displayed_body rule, lazy build from the COMMITTED text, self-heal on read, update_segment/confirm_all state machine (body rematerialized from join(targets) same-transaction), human-row-preserving rebuilds, reproject_from_body hook for text-authoritative mutators
+│   │   ├── segments.py            # CAT segment store (sole owner of chapter_segments): displayed_body rule, lazy build from the COMMITTED text, self-heal on read, update_segment/confirm_all state machine (body rematerialized from join(targets) same-transaction), human-row-preserving rebuilds, reproject_from_body hook for text-authoritative mutators; Phase 4: apply_machine_translation worker/refiner merge (human rows verbatim, machine_text refresh), prefill_confirmed_exact, approved_prompt_pairs, segment_assist
 │   │   ├── glossary.py, glossary_filters.py, glossary_casing.py   # admit / lock / cased normalization
 │   │   ├── global_glossary.py, tm.py, find_replace.py             # cross-novel helpers
 │   │   ├── text_fixups.py         # deterministic enforce_* transforms (em-dash, brackets, casing)
@@ -130,7 +130,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
 │       ├── reader-core.js, reader-toc.js, reader-glossary.js, reader-consistency.js, reader-chapter.js, reader-edit.js, reader-quality.js  # reader.js split into ordered modules (plain <script> tags, source-order = concat-identical; core first owns shared state, quality last = cockpit badge + learn-from-edits panel)
 │       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
-│       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js, editor.js
+│       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js
+│       ├── editor-core.js, editor-assist.js  # /editor split into ordered modules (same convention as reader-*.js; core first owns state + editing loop and dispatches editor:* CustomEvents, assist adds the TM/glossary rail + AI-suggests dialog)
 │       └── vendor/            # marked + DOMPurify (reader Markdown rendering only)
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
@@ -192,10 +193,11 @@ The worker (`_translate_chapter_in_db` in `services/queue.py`):
 2. Gathers prompt inputs: glossary, previous-chapter tail (within `PREVIOUS_CONTEXT_MAX_GAP` chapters back), captured style edits, per-novel style note, plus the resolved Provider and the novel's `genre` + `custom_style_brief` for the genre-aware system instruction. Author update-count / vote-begging markers (（第四更！）, 求月票) are stripped from the prompt's title line and the body's heading line (`parser.strip_title_update_marker`; prompt-time only, stored source stays verbatim).
 3. Single LLM call via `translate_chapter` → backend's `_complete(prompt)` → `parse_delimited_response`. On parse failure: one retry, then plain-text fallback (sets `translation_degraded=1`, the only remaining degraded signal).
 4. Pure text fixups (`services/text_fixups.py`): `strip_leading_title_line`, `enforce_locked_term_casing`, `enforce_lowercase_locked_terms`, `enforce_stem_branch_casing`, `strip_chapter_end_marker`, `enforce_em_dash`, `enforce_spaced_hyphen_dash`, `enforce_brackets`, `enforce_balanced_emphasis`, `enforce_sentence_initial_capitalization`, `enforce_mid_sentence_comma_break`. Each rule's change count is captured and persisted as `chapters.fixup_audit` JSON (`{"rules": {name: count}, "total": N}`) on the success commit, so this deterministic post-LLM override layer is queryable per chapter (a fixup can no longer silently rewrite correct output without a record). `quality_report.py` surfaces fixup churn + glossary force-case collisions from it; behavior is unchanged (visibility, not suppression).
-5. **Observations only** (`services/text_observers.py`; no retry, no degraded mark): `body_correctness_observations` runs `missing_translator_terms`, `detect_mt_texture`, `detect_double_possessive`, `detect_intensifier_inflation_on_glossary_term`, `detect_mid_sentence_paragraph_break`, `detect_glossary_predicate_loss`. Hits are logged at INFO. The single-pass thesis is that noticing has to happen inside the translator's thinking phase; a retry would be the same shallow pass twice.
-6. `normalize_title_en` rewrites the model's title into the canonical `Chapter N: Title` form using the authoritative `chapter_num`; when `title_zh` carried an author update marker, a trailing parenthetical in the model's title is dropped (zh-gated backstop). The dash fixups keep interruption / suspension dashes (dash before punctuation, a closing quote, or a paragraph end) and rewrite only clause-splicing dashes.
-7. Atomic success commit: one UPDATE writes `title_en`, `translated_text`, `status='done'`, clears `translate_queued` / `force_retranslate`. If the novel has `refinement_provider_id` set, the same UPDATE flags `refinement_status='pending'` and the worker chains into `_refine_chapter_in_db` under the same lock acquisition.
-8. Glossary merge runs after the success commit — failures stamp `glossary_merge_error` so the reader can surface a banner without losing the translation.
+5. **CAT worker merge (Phase 4)**: inside the claim-guarded success transaction (the claim UPDATE opens it, so human rows are re-read after the claim and editor writes cannot interleave), `segments.apply_machine_translation(kind='llm')` reconciles the fixed-up machine paragraphs with the `chapter_segments` store: human rows (edited|confirmed) keep `target_text` VERBATIM and only refresh `machine_text` with the new AI rendering; machine rows regenerate (origin `llm`); cross-chapter exact confirmed matches pre-fill as `origin='tm_exact'` (`prefill_confirmed_exact`: indexed hash lookup, full source-text equality against 16-hex collisions, most-recently-confirmed wins). The COMMITTED body is the merged join, so a retranslate can never clobber confirmed work. A storeless chapter gets a fresh build; on paragraph-count drift the machine side aligns via `tm.full_alignment_path` (uncertain rows `aligned=0`); an unalignable merge RETAINS every row (I3) and stamps `unaligned`. A failed translation rolls the transaction back and never touches the store.
+6. **Observations only** (`services/text_observers.py`; no retry, no degraded mark): `body_correctness_observations` runs `missing_translator_terms`, `detect_mt_texture`, `detect_double_possessive`, `detect_intensifier_inflation_on_glossary_term`, `detect_mid_sentence_paragraph_break`, `detect_glossary_predicate_loss`, computed on the FINAL merged body (observers see what the reader sees). Hits are logged at INFO. The single-pass thesis is that noticing has to happen inside the translator's thinking phase; a retry would be the same shallow pass twice.
+7. `normalize_title_en` rewrites the model's title into the canonical `Chapter N: Title` form using the authoritative `chapter_num`; when `title_zh` carried an author update marker, a trailing parenthetical in the model's title is dropped (zh-gated backstop). The dash fixups keep interruption / suspension dashes (dash before punctuation, a closing quote, or a paragraph end) and rewrite only clause-splicing dashes.
+8. Atomic success commit: the claim UPDATE writes `title_en`, `status='done'`, clears `translate_queued` / `force_retranslate`; the merge's segment writes plus the merged-body UPDATE ride the same transaction (I1: `join(targets)` == displayed body). If the novel has `refinement_provider_id` set, the same UPDATE flags `refinement_status='pending'` and the worker chains into `_refine_chapter_in_db` under the same lock acquisition; the refinement commit merges via `apply_machine_translation(kind='llm_refined')` (human rows untouched: the refiner's rewrites of protected rows are discarded into `machine_text`; `refined_text` materialized from the merged set so the store mirrors the DISPLAYED refined body) and REPLACES refinement-stage `paragraph_count_drift` observations instead of appending. `retry_refinement` keeps `refined_text` through the retry window.
+9. Glossary merge runs after the success commit — failures stamp `glossary_merge_error` so the reader can surface a banner without losing the translation.
 
 ### Prompt-assembly A/B knobs
 
@@ -206,6 +208,7 @@ The runtime user prompt stacks several dynamic blocks on top of the static `base
   - `PROMPT_INCLUDE_STYLE_NOTE` — STYLE NOTE block (per-novel voice anchor).
   - `PROMPT_INCLUDE_STYLE_EDITS` — USER STYLE PREFERENCES block (captured paragraph edits).
   - `PROMPT_INCLUDE_REFINER` — global refiner kill-switch (overrides per-novel `refinement_provider_id` when false).
+  - `PROMPT_INCLUDE_APPROVED_TRANSLATIONS` — APPROVED TRANSLATIONS block (CAT Phase 4: this chapter's human segment renderings + cross-chapter exact confirmed matches, verbatim-reuse instruction, cap 30 pairs / 8k chars). Defaults `true`. Coherence aid only: the deterministic worker merge enforces durability regardless, so flipping this off changes prose flow around kept lines, never the kept lines themselves. The block rides the prompt body, so confirming a segment intentionally busts the llm_cache for later retranslates.
 - **Product settings** (defaults chosen for product reasons, **not** part of the A/B grid):
   - `PREVIOUS_CONTEXT_ENABLED` — previous-chapter tail is doing real continuity work (pronoun reference, honorific consistency) that the glossary does not carry. Stays default `true`; do not put it in the A/B sequence.
   - `novels.refinement_provider_id` — per-novel column; long-term opt-in surface for the refiner.
@@ -275,7 +278,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1724 tests across 144 modules.
+- `pytest backend/tests`. Currently 1747 tests across 146 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

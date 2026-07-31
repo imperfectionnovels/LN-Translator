@@ -389,3 +389,73 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   the chapter at call time and guard rollback, conflict reload, and
   response application on it (matching applyPatchResponse's existing
   guard).
+
+## 2026-07-31: CAT-pivot Phase 4, retranslation durability + pre-fill + assist rail
+
+- **The worker merge is segments-authoritative for human rows (closes the
+  Phase 3 interim defect).** `apply_machine_translation` runs INSIDE the
+  claim-guarded success transaction of both the translate and the refine
+  commit: human rows (edited|confirmed) keep `target_text` verbatim and
+  only refresh `machine_text` with the new AI rendering; machine rows
+  regenerate with origin `llm` / `llm_refined`; the COMMITTED body is the
+  merged join. The claim UPDATE opens the write transaction BEFORE the
+  merge reads human rows, so an editor write cannot interleave between the
+  read and the commit; a lost claim or a failed translation rolls the
+  transaction back, so an errored run never touches the store.
+- **Merge fallback keeps everything (I3).** When the machine output cannot
+  be aligned to the source list (below the DP confidence gate) or a human
+  row's source paragraph vanished (stored rows predating
+  SEGMENTATION_VERSION, or a source edit), the merge retains EVERY row,
+  demotes them to aligned=0, and stamps `unaligned`; the machine output
+  still becomes the displayed body. Deliberate deviation from a per-row
+  "retain just the unanchorable rows" reading of the spec: a retained
+  extra row with text would break invariant I1 (join == body), so
+  retention is all-or-nothing, matching the Phase 3 rebuild seam.
+- **Committed bodies are normalized.** The merged body is the
+  paragraph-stripped blank-line join, so I1 holds as exact string equality
+  (a body with trailing whitespace or triple newlines comes back
+  normalized). One test fixture with a trailing space was updated; the
+  reader renders identically.
+- **Prefill semantics.** `prefill_confirmed_exact` pre-fills machine rows
+  from CONFIRMED rows of other chapters sharing the source hash: full
+  source-text equality guards the 16-hex prefix against collisions,
+  most-recently-confirmed wins, status stays `machine` with
+  origin='tm_exact' (a TM chip, not silent authority: the user still
+  confirms it in the new chapter), and `machine_text` keeps the fresh AI
+  rendering so revert-to-AI shows the model's own take.
+- **APPROVED TRANSLATIONS is a coherence aid; the merge is the
+  enforcement.** The block (human rows + exact confirmed matches, cap 30
+  pairs / 8k chars, `PROMPT_INCLUDE_APPROVED_TRANSLATIONS` default true)
+  exists so the model writes surrounding prose that flows into the kept
+  lines; disobedience is harmless. Because it rides the prompt body it
+  folds into the llm_cache key: confirming a segment intentionally busts
+  the cache for a later retranslate (the approved text must reach the
+  model and the merge must run against fresh output).
+- **Refiner interplay: the store always mirrors the DISPLAYED body.** The
+  refinement commit flips the displayed variant to refined, so the merge
+  runs at that commit with kind='llm_refined' and `refined_text` is
+  materialized from the merged set; the refiner's rewrites of protected
+  rows are discarded from the body but recorded in `machine_text`.
+  `retry_refinement` no longer nulls `refined_text`: confirmed work lives
+  in the refined body and must not vanish (or desync the store) during
+  the retry window; the fresh refinement commit overwrites it anyway.
+  Refinement-stage `paragraph_count_drift` observations are now REPLACED
+  on every clean re-refinement (they describe a refined_text that no
+  longer exists); translation-stage rows are untouched.
+- **Assist rail thresholds.** Exact tier = same-novel `chapter_segments`
+  hash matches (full-text verified), ranked confirmed > edited > machine
+  then recency, cap 5. Fuzzy tier = rapidfuzz over other chapters' segment
+  sources at 0.80 (vs the consistency rail's 0.90: the rail SUGGESTS,
+  consistency FLAGS drift), same canonical_zh folding / length-band /
+  tiny-source conventions, cap 5. The fuzzy scorer lives in segments.py
+  rather than importing consistency.py (which imports segments.py:
+  ownership rule "only segments.py touches chapter_segments" wins over
+  code reuse of ~20 lines).
+- **"kept" chip keys on machine_differs, which is true for ANY human row
+  whose stored AI rendering differs, including fresh edits.** Accepted per
+  spec: the affordance ("view the AI's suggestion, apply = revert") is
+  equally useful on a fresh edit, and distinguishing "refreshed by a later
+  retranslate" would need extra state for no behavioral gain. The dialog
+  fetches `machine_text` via the assist endpoint (one endpoint, cached by
+  the rail) instead of a dedicated fetch or shipping it in the list
+  payload.
