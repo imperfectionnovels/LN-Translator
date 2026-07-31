@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="rice">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Editor · LN Translator</title>
+<script src="/static/js/boot.js"></script>
+<link rel="stylesheet" href="/static/css/base.css?v=4">
+<link rel="stylesheet" href="/static/css/editor.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<aside class="ink-spine"><!-- stamped by /static/js/spine.js --></aside>
+
+<main id="main" tabindex="-1">
+  <!-- Sticky editor bar: crumbs + chapter nav + progress + reader link.
+       Phase 2 is read-only; the Phase 3 editing loop adds its controls here. -->
+  <div class="editor-bar" id="editor-bar">
+    <nav class="crumbs editor-crumbs" aria-label="Breadcrumb">
+      <a href="/library">Library</a>
+      <span class="sep">›</span>
+      <a href="#" id="editor-crumb-novel">…</a>
+      <span class="sep">›</span>
+      <span class="here" id="editor-crumb-ch">Ch. …</span>
+    </nav>
+    <div class="editor-nav">
+      <button type="button" class="icon-btn arrow" id="prev-ch" title="Previous chapter" aria-label="Previous chapter">‹</button>
+      <select id="ch-select" aria-label="Chapter"></select>
+      <button type="button" class="icon-btn arrow" id="next-ch" title="Next chapter" aria-label="Next chapter">›</button>
+    </div>
+    <div class="editor-progress" title="Confirmed segments in this chapter">
+      <span class="progress-label" id="progress-label">0 / 0 confirmed</span>
+      <div class="progress-track" id="progress-bar" role="progressbar"
+           aria-label="Confirmed segments" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
+        <span class="progress-fill" id="progress-fill"></span>
+      </div>
+    </div>
+    <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
+  </div>
+
+  <!-- Empty / error state banner (pending, translating, error, unaligned). -->
+  <div class="status editor-status" id="editor-status" hidden></div>
+
+  <!-- Segment grid. Column header is static; rows are stamped by editor.js as
+       .seg-row[data-seg][data-status][data-provenance] (no per-row ids: row
+       interaction is event delegation on #seg-grid). -->
+  <div class="seg-grid-head" id="seg-grid-head" hidden>
+    <span class="seg-h seg-h-idx">#</span>
+    <span class="seg-h">Source · 中文</span>
+    <span class="seg-h">Translation · English</span>
+    <span class="seg-h seg-h-status">Status</span>
+  </div>
+  <div class="seg-grid" id="seg-grid" aria-busy="true" aria-label="Chapter segments"></div>
+</main>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/spine.js"></script>
+<script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
+<script src="/static/js/utils.js" defer></script>
+<script src="/static/js/editor.js" defer></script>
+</body>
+</html>

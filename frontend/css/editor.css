@@ -1,0 +1,170 @@
+/* CAT editor page (Phase 2: read-only segment grid). Reuses base.css design
+   tokens (var(--...)) so every theme, light and dark, colors it correctly. */
+
+/* ---- Sticky editor bar ---- */
+.editor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  margin-bottom: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.editor-crumbs { margin: 0; min-width: 0; }
+#editor-crumb-novel {
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+.editor-nav { display: flex; align-items: center; gap: 6px; }
+.editor-nav .arrow { padding: 4px 10px; font-size: 15px; line-height: 1; }
+#ch-select { max-width: 30ch; }
+
+.editor-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 180px;
+}
+.progress-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.progress-track {
+  flex: 1;
+  min-width: 90px;
+  height: 6px;
+  background: var(--bg-tint);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--signal-ok, #3f7a64);
+  transition: width 0.25s ease;
+}
+.editor-reader-link { white-space: nowrap; }
+
+/* ---- Status banner cards ---- */
+.editor-status { margin: 14px 0; }
+.editor-status .banner-actions { margin-top: 8px; }
+
+/* ---- Segment grid ---- */
+.seg-grid-head,
+.seg-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 110px;
+  gap: 0 14px;
+  align-items: start;
+}
+.seg-grid-head {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  /* Sits under the editor bar; the bar wraps on narrow screens, so use a
+     generous offset only on wide layouts (media query below resets it). */
+  top: 52px;
+  background: var(--bg);
+  z-index: 10;
+}
+.seg-h {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.seg-h-idx { text-align: right; }
+.seg-h-status { text-align: left; }
+
+.seg-grid { display: flex; flex-direction: column; }
+.seg-row {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.seg-row:hover { background: var(--bg-tint); }
+.seg-row.active {
+  background: var(--bg-tint);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.seg-idx {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  padding-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.seg-src, .seg-tgt {
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.seg-src { color: var(--muted); }
+.seg-empty { color: var(--muted); font-style: italic; }
+
+.seg-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding-top: 2px;
+}
+.seg-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--bg-tint);
+  white-space: nowrap;
+}
+.seg-badge-edited {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.seg-badge-confirmed {
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.seg-chip-review {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--r-md);
+  color: var(--signal-error, #7a3030);
+  border: 1px solid color-mix(in srgb, var(--signal-error, #7a3030) 55%, transparent);
+  background: color-mix(in srgb, var(--signal-error, #7a3030) 10%, transparent);
+  white-space: nowrap;
+}
+
+/* ---- Narrow screens: stack source above target ---- */
+@media (max-width: 900px) {
+  .seg-grid-head { display: none; }
+  .seg-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 4px 14px;
+  }
+  .seg-src { grid-column: 2; }
+  .seg-tgt { grid-column: 2; }
+  .seg-meta { grid-column: 2; flex-direction: row; align-items: center; }
+  .editor-progress { min-width: 140px; }
+}

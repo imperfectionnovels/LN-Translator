@@ -537,6 +537,13 @@ async def quality_page() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "quality.html")
 
 
+@app.get("/editor")
+async def editor_page() -> FileResponse:
+    """CAT editor surface (Phase 2: read-only segment grid). URL shape
+    /editor?novel=N&ch=M[&seg=K], matching the reader's param names."""
+    return FileResponse(FRONTEND_DIR / "editor.html")
+
+
 @app.get("/settings")
 async def settings_page() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "settings.html")

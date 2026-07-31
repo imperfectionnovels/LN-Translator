@@ -235,6 +235,10 @@ const api = {
   qualityConsistency: (novelId) => apiFetch(`/api/novels/${novelId}/consistency`),
   chapterQuality: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/quality`),
+  // CAT editor (Phase 2): one chapter's segment feed. The backend lazily
+  // builds / self-heals the segment store on this read.
+  chapterSegments: (novelId, chapterNum) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments`),
   // Learn-from-edits: stage derives a proposal from captured edits (no writes);
   // commit applies the confirmed subset (selection = {brief, glossary_casing, save_ground_truth}).
   learnEditsStage: (novelId, chapterNum) =>
