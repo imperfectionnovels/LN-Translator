@@ -211,3 +211,40 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   with Queue); Global glossary is `g b`. Spine placement: Quality joins the
   novel-scoped trio (reader/glossary/quality, /library fallback when no lastNovel);
   Global glossary sits in the Studio foot (cross-novel = app-level).
+
+## 2026-07-30: CAT-pivot Phase 1, the 1:1 paragraph contract
+
+- **Count validation, not paragraph numbering.** The alternative (numbering each
+  source paragraph and asking the model to echo `[[P7]]` markers) was rejected up
+  front: markers leak into prose (the same failure class as the old 【】 bracket
+  echoes), every text_fixup and observer would need marker-awareness to avoid
+  counting or mangling them, and stripping them adds one more deterministic
+  rewrite layer on top of model output. A bare count check is invisible to the
+  model on the happy path, needs zero output post-processing, and still gives the
+  Phase 2 segment store the invariant it needs (position IS the key when counts
+  match and order is preserved).
+- **Pre-join is deterministic code, not prompt guidance.** The old base.md rule
+  ("join mid-sentence breaks") made paragraph structure a model judgment call,
+  which is exactly what a positional segment key cannot tolerate: two runs could
+  legitimately join differently and re-key every downstream row.
+  `services/segmentation.py::effective_source_paragraphs` now owns the join
+  (heading dropped via tm.py's detector, blank-line split via tm.py's splitter,
+  terminal-punctuation heuristic frozen under SEGMENTATION_VERSION), so the model
+  only ever sees text whose paragraph boundaries are already final. Prompt-time
+  only; stored original_text stays verbatim.
+- **Ladders differ by cost of discard.** Translator: one corrective retry, then
+  ACCEPT the violating body flagged (`count_mismatch_accepted` on the attempt
+  row); throwing away a whole translation over a paragraph miscount punishes the
+  user, and the flag lets Phase 2 skip unmapped chapters. Refiner: one corrective
+  retry, then DISCARD (`refinement_status='error'`, reader falls back to the
+  draft); the draft is already good text, so a discarded polish costs nothing.
+  Neither path ever caches a violating body (validation sits before every
+  llm_cache store, including a violating pre-guard cache entry on the refiner
+  read path).
+- **base.md scope.** Only the paragraph-boundary contract changed: the two
+  boundary rules were replaced by "one paragraph in, one paragraph out", and the
+  adjacent "New paragraph when the speaker changes" clause was deleted with them
+  because it mandates splitting, which the 1:1 contract forbids (CJK webnovel
+  sources already give each speaker their own paragraph). The in-paragraph
+  recomposition license and every WW-register rule are untouched.
+  PROMPT_TEMPLATE_VERSION -> phase18-cat-1to1-1.
