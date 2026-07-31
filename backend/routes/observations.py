@@ -1,14 +1,17 @@
 """Routes for the QA dashboard (Initiative 1).
 
-Three endpoints:
-  * GET /api/novels/{id}/observations — aggregate counts per chapter, plus
-    a novel-wide total. Powers the reader TOC dots and the library badge.
+Read/dismiss surfaces over the persisted chapter_observations rows:
+  * GET /api/observations/library-summary — per-novel undismissed counts
+    for the library page badges (one query, no N+1).
   * GET /api/novels/{id}/chapters/{n}/observations — full list for one
     chapter, ordered by id (stable insertion order).
   * POST /api/observations/{id}/dismiss — soft-dismiss one observation.
     Dismissal does NOT survive a chapter retranslation (the worker's
     DELETE+INSERT in the success-commit transaction wipes all prior rows
     for the chapter).
+
+(The novel-rollup GET and the two bulk-dismiss POSTs were removed
+2026-07-30: no UI caller ever wired them.)
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from backend.db import get_conn
-from backend.models import Observation, ObservationsSummary
+from backend.models import Observation
 from backend.services.observations import severity_tier_for
 
 logger = logging.getLogger(__name__)
@@ -44,32 +47,6 @@ async def library_observations_summary(
     )
     rows = await cur.fetchall()
     return {r["novel_id"]: r["n"] for r in rows}
-
-
-@router.get("/novels/{novel_id}/observations")
-async def list_novel_observations(
-    novel_id: int,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> ObservationsSummary:
-    """Aggregate undismissed-observation counts per chapter for one novel.
-
-    Returns chapter_num → count (skipping chapters with zero) plus the
-    sum. The reader's TOC paints a dot on chapters present in the map; the
-    library's per-novel badge uses `total_undismissed`."""
-    cur = await conn.execute(
-        "SELECT c.chapter_num, COUNT(o.id) AS n "
-        "FROM chapters c "
-        "JOIN chapter_observations o ON o.chapter_id = c.id "
-        "WHERE c.novel_id = ? AND o.dismissed_at IS NULL "
-        "GROUP BY c.chapter_num",
-        (novel_id,),
-    )
-    rows = await cur.fetchall()
-    by_chapter: dict[int, int] = {r["chapter_num"]: r["n"] for r in rows}
-    return ObservationsSummary(
-        total_undismissed=sum(by_chapter.values()),
-        by_chapter=by_chapter,
-    )
 
 
 @router.get("/novels/{novel_id}/chapters/{chapter_num}/observations")
@@ -121,55 +98,6 @@ async def list_chapter_observations(
         )
         for r in rows
     ]
-
-
-# F26 (2026-05-25): bulk-dismiss endpoints. Per-chapter dismisses many
-# rows at once; per-novel-by-kind dismisses every undismissed obs of one
-# kind across a novel ("dismiss all MT-texture observations across this
-# novel"). Both close out the per-row-click tedium.
-
-@router.post("/novels/{novel_id}/chapters/{chapter_num}/observations/bulk-dismiss")
-async def bulk_dismiss_chapter_observations(
-    novel_id: int,
-    chapter_num: int,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
-    """Dismiss every undismissed observation on one chapter. Returns the
-    count. Idempotent: a chapter with no undismissed obs returns 0."""
-    cur = await conn.execute(
-        "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
-        (novel_id, chapter_num),
-    )
-    ch = await cur.fetchone()
-    if ch is None:
-        raise HTTPException(status_code=404, detail="chapter not found")
-    cur = await conn.execute(
-        "UPDATE chapter_observations SET dismissed_at = datetime('now') "
-        "WHERE chapter_id = ? AND dismissed_at IS NULL",
-        (ch["id"],),
-    )
-    await conn.commit()
-    return {"dismissed_count": cur.rowcount or 0}
-
-
-@router.post("/novels/{novel_id}/observations/bulk-dismiss-by-kind/{kind}")
-async def bulk_dismiss_by_kind(
-    novel_id: int,
-    kind: str,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
-    """Dismiss every undismissed observation of one kind across an entire
-    novel. Use when a stylistic observer is producing chronic false
-    positives for a novel — pairs with the per-novel disabled_observers
-    setting to silence future hits too."""
-    cur = await conn.execute(
-        "UPDATE chapter_observations SET dismissed_at = datetime('now') "
-        "WHERE chapter_id IN (SELECT id FROM chapters WHERE novel_id = ?) "
-        "AND kind = ? AND dismissed_at IS NULL",
-        (novel_id, kind),
-    )
-    await conn.commit()
-    return {"dismissed_count": cur.rowcount or 0, "kind": kind}
 
 
 @router.get("/diagnostics")

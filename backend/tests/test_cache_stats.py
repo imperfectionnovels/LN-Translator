@@ -1,4 +1,8 @@
-"""Section 6.7: cache stats counter + /api/cache/stats endpoint."""
+"""In-process llm_cache hit/miss counters (get_stats / reset_stats).
+
+The counters feed the /api/diagnostics payload (Settings About card). The
+old standalone /api/cache/stats route was removed 2026-07-30 (no UI caller);
+the service-level counter behavior pinned here is still live."""
 
 from __future__ import annotations
 
@@ -67,26 +71,3 @@ def test_reset_stats_clears_counters(tmp_path, monkeypatch):
     assert llm_cache.get_stats()["translator"]["misses"] == 1
     llm_cache.reset_stats()
     assert llm_cache.get_stats()["translator"]["misses"] == 0
-
-
-@pytest.mark.asyncio
-async def test_cache_stats_endpoint(monkeypatch):
-    """GET /api/cache/stats returns the snapshot shape the settings JS expects."""
-    from fastapi.testclient import TestClient
-    async def _no_probe(_default):
-        return None
-    async def _no_drain():
-        return None
-    monkeypatch.setattr("backend.main._probe_backends", _no_probe)
-    monkeypatch.setattr("backend.services.queue.drain_on_startup", _no_drain)
-
-    from backend.main import app
-    with TestClient(app) as client:
-        r = client.get("/api/cache/stats")
-    assert r.status_code == 200
-    body = r.json()
-    for top_key in ("translator", "refiner", "on_disk_bytes", "on_disk_files"):
-        assert top_key in body, f"missing top-level key {top_key!r}"
-    for inner in ("hits", "misses", "hit_rate"):
-        assert inner in body["translator"]
-        assert inner in body["refiner"]

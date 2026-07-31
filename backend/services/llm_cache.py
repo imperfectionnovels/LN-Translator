@@ -37,9 +37,9 @@ class CacheStageStats(TypedDict):
 
 
 class CacheStats(TypedDict):
-    """Fixed shape returned by `get_stats`, consumed by the cache-stats route
-    and the dashboard. Naming it makes a dropped/renamed nested key a
-    type-check failure rather than a runtime surprise in the UI."""
+    """Fixed shape returned by `get_stats`, consumed by the /api/diagnostics
+    payload (Settings About card). Naming it makes a dropped/renamed nested
+    key a type-check failure rather than a runtime surprise in the UI."""
     translator: CacheStageStats
     refiner: CacheStageStats
     on_disk_bytes: int
@@ -85,7 +85,7 @@ def _compute_key(parts: list[str]) -> str:
 
 # In-process hit/miss counters since boot. Bumped by load_translation /
 # load_refinement; the value never persists across restarts (that would be
-# misleading after a config change). Exposed via /api/cache/stats so the
+# misleading after a config change). Exposed via /api/diagnostics so the
 # settings UI can show "78% cache hit rate (last 100 calls saved ~$X)".
 _STATS = {
     "translator_hits": 0,

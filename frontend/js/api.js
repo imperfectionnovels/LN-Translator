@@ -168,26 +168,10 @@ const api = {
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/attempts`),
   chapterLastPrompt: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/last-prompt`),
-  // F26 bulk-dismiss observations.
-  bulkDismissChapterObservations: (novelId, chapterNum) =>
-    apiFetch(
-      `/api/novels/${novelId}/chapters/${chapterNum}/observations/bulk-dismiss`,
-      { method: "POST" },
-    ),
-  bulkDismissObservationsByKind: (novelId, kind) =>
-    apiFetch(
-      `/api/novels/${novelId}/observations/bulk-dismiss-by-kind/${encodeURIComponent(kind)}`,
-      { method: "POST" },
-    ),
   // F44 in-app diagnostics.
   diagnostics: () => apiFetch("/api/diagnostics"),
   novel: (id) => apiFetch(`/api/novels/${id}`),
-  cacheStats: () => apiFetch(`/api/cache/stats`),
   chapterPreCheck: (id, n) => apiFetch(`/api/novels/${id}/chapters/${n}/pre-check`),
-  renameNovel: (id, title) => apiFetch(`/api/novels/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ title }),
-  }),
   // Partial update for the novel record. Pass any subset of:
   //   title, style_note
   // The backend rejects a body with no fields set (400).
@@ -305,7 +289,6 @@ const api = {
     method: "POST",
     body: JSON.stringify({ value }),
   }),
-  deleteProviderSecret: (id) => apiFetch(`/api/providers/${id}/secret`, { method: "DELETE" }),
   providerStats: (id) => apiFetch(`/api/providers/${id}/stats`),
   providerRoutedNovels: (id, limit = 12) =>
     apiFetch(`/api/providers/${id}/routed-novels?limit=${limit}`),
@@ -352,7 +335,6 @@ const api = {
     }),
 
   // ----- Observations (Initiative 1 QA dashboard) -----
-  novelObservations: (novelId) => apiFetch(`/api/novels/${novelId}/observations`),
   chapterObservations: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/observations`),
   observationsLibrarySummary: () => apiFetch(`/api/observations/library-summary`),
@@ -407,6 +389,4 @@ const api = {
   // ----- Translation memory (Initiative 5) -----
   tmConcordance: (novelId, q, side = "both") =>
     apiFetch(`/api/novels/${novelId}/tm/concordance?q=${encodeURIComponent(q)}&side=${side}`),
-  tmInconsistencies: (novelId) =>
-    apiFetch(`/api/novels/${novelId}/tm/inconsistencies`),
 };

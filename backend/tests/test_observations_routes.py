@@ -1,11 +1,11 @@
 """HTTP-level tests for routes/observations.py (the QA dashboard endpoints).
 
 The unit suite (test_phase3_observers.py) covers the detect_* observers and
-the normalizer; this file pins the three reader-facing HTTP endpoints that
+the normalizer; this file pins the reader-facing HTTP endpoints that
 read/dismiss the persisted chapter_observations rows:
 
-  * GET  /api/novels/{id}/observations, per-chapter
-        undismissed counts + novel-wide total (ObservationsSummary).
+  * GET  /api/observations/library-summary, per-novel undismissed
+        counts for the library page badges.
   * GET  /api/novels/{id}/chapters/{n}/observations, the ordered
         per-chapter list (only undismissed by default).
   * POST /api/observations/{id}/dismiss, soft-dismiss
@@ -94,18 +94,6 @@ def _seed() -> tuple[int, int, list[int]]:
         conn.close()
 
 
-def test_novel_observations_summary(client: TestClient) -> None:
-    """GET /api/novels/{id}/observations returns per-chapter counts keyed by
-    chapter_num plus the novel-wide total."""
-    novel_id, chapter_num, obs_ids = _seed()
-    resp = client.get(f"/api/novels/{novel_id}/observations")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["total_undismissed"] == 3
-    # by_chapter is keyed by chapter_num. JSON object keys are strings.
-    assert body["by_chapter"] == {str(chapter_num): 3}
-
-
 def test_chapter_observations_ordered_list(client: TestClient) -> None:
     """GET /api/novels/{id}/chapters/{n}/observations returns the full
     per-chapter list, ordered by id (insertion order), undismissed only."""
@@ -130,7 +118,7 @@ def test_chapter_observations_unknown_chapter_404(client: TestClient) -> None:
 
 def test_dismiss_observation_drops_open_count(client: TestClient) -> None:
     """POST /api/observations/{id}/dismiss stamps dismissed_at, removes the
-    row from the undismissed summary, and is reflected in the per-chapter
+    row from the library summary, and is reflected in the per-chapter
     list (which hides dismissed rows by default)."""
     novel_id, chapter_num, obs_ids = _seed()
     target = obs_ids[0]
@@ -139,10 +127,9 @@ def test_dismiss_observation_drops_open_count(client: TestClient) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": True}
 
-    # The summary total drops by one.
-    summary = client.get(f"/api/novels/{novel_id}/observations").json()
-    assert summary["total_undismissed"] == 2
-    assert summary["by_chapter"] == {str(chapter_num): 2}
+    # The library-summary count for the novel drops by one.
+    summary = client.get("/api/observations/library-summary").json()
+    assert summary[str(novel_id)] == 2
 
     # The dismissed row no longer appears in the default (undismissed) list.
     listed = client.get(
@@ -174,7 +161,6 @@ def test_router_exposes_dashboard_routes() -> None:
     (which the list endpoint stamps onto each row) tiers kinds correctly."""
     paths = {r.path for r in observations_route.router.routes}
     assert "/observations/library-summary" in paths
-    assert "/novels/{novel_id}/observations" in paths
     assert "/observations/{observation_id}/dismiss" in paths
     assert "/novels/{novel_id}/chapters/{chapter_num}/observations" in paths
     # The per-kind tiering contract the list endpoint relies on.
@@ -246,50 +232,3 @@ def test_chapter_observations_include_dismissed(client: TestClient) -> None:
     dismissed = [r for r in rows if r["dismissed_at"] is not None]
     assert len(dismissed) == 1
     assert dismissed[0]["id"] == obs_ids[0]
-
-
-def test_bulk_dismiss_chapter_counts_and_404(client: TestClient) -> None:
-    """POST .../observations/bulk-dismiss flips every undismissed row on the
-    chapter, is idempotent (0 on a repeat), and 404s an unknown chapter."""
-    novel_id, chapter_num, _ = _seed()
-
-    resp = client.post(
-        f"/api/novels/{novel_id}/chapters/{chapter_num}/observations/bulk-dismiss"
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["dismissed_count"] == 3
-
-    # All gone, the aggregate summary is empty now.
-    summary = client.get(f"/api/novels/{novel_id}/observations").json()
-    assert summary["total_undismissed"] == 0
-
-    # A repeat dismiss flips nothing.
-    again = client.post(
-        f"/api/novels/{novel_id}/chapters/{chapter_num}/observations/bulk-dismiss"
-    )
-    assert again.json()["dismissed_count"] == 0
-
-    # Unknown chapter is a 404, not a silent 0.
-    missing = client.post(
-        f"/api/novels/{novel_id}/chapters/404/observations/bulk-dismiss"
-    )
-    assert missing.status_code == 404, missing.text
-
-
-def test_bulk_dismiss_by_kind_scopes_to_novel_and_kind(client: TestClient) -> None:
-    """POST .../bulk-dismiss-by-kind/{kind} dismisses only rows of that kind,
-    leaving the other kinds open."""
-    novel_id, chapter_num, _ = _seed()
-
-    resp = client.post(
-        f"/api/novels/{novel_id}/observations/bulk-dismiss-by-kind/mt_texture"
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["kind"] == "mt_texture"
-    assert body["dismissed_count"] == 1  # only the single mt_texture row
-
-    # The other two kinds remain open.
-    summary = client.get(f"/api/novels/{novel_id}/observations").json()
-    assert summary["total_undismissed"] == 2
-    assert summary["by_chapter"] == {str(chapter_num): 2}

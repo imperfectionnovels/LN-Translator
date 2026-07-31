@@ -433,15 +433,6 @@ class Observation(BaseModel):
     dismissed_at: str | None
 
 
-class ObservationsSummary(BaseModel):
-    """Aggregate view: undismissed observation counts grouped by chapter for
-    a novel. Used by the library badge and the reader's TOC issue dots —
-    one fetch instead of N per-chapter calls."""
-
-    total_undismissed: int
-    by_chapter: dict[int, int]  # chapter_num → count
-
-
 class Bookmark(BaseModel):
     """One reader bookmark on a chapter paragraph (Initiative 2).
 

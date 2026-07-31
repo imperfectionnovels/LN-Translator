@@ -1,9 +1,10 @@
-"""HTTP-level tests for routes/tm.py.
+"""HTTP-level tests for routes/tm.py (the concordance endpoint).
 
-The service-layer behavior (alignment, concordance, find_inconsistencies) is
-covered by test_tm.py; this pins the route-layer reshaping into the nested
-Pydantic response (InconsistencyGroup -> InconsistencyRendering ->
-ConcordanceChapterMeta), which test_tm.py does not exercise.
+The service-layer behavior (alignment, concordance search, inconsistency
+detection) is covered by test_tm.py; this pins the route-layer reshaping
+into the ConcordanceHit Pydantic response, which test_tm.py does not
+exercise. (The old /tm/inconsistencies route tests died with that route,
+2026-07-30.)
 
 tm_segments rows are seeded directly (source_hash = sha256(source)[:16],
 matching services/tm.py::_hash_source) so no alignment/translation runs.
@@ -46,19 +47,19 @@ def client(monkeypatch):
         yield c
 
 
-def _seed_inconsistency() -> int:
-    """One novel, three chapters; the same source paragraph rendered two ways
-    (twice as 'He laughed loudly.', once as 'He chuckled.'). Returns novel_id."""
-    src = "他大笑。"
-    h = _hash(src)
+def _seed_segments() -> int:
+    """One novel, two chapters, one aligned segment each. Returns novel_id."""
+    rows = [
+        (1, "他大笑。", "He laughed loudly."),
+        (2, "他叹了口气。", "He sighed."),
+    ]
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
             "INSERT INTO novels (title, source_type) VALUES ('TM Novel', 'paste')"
         )
         novel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        rows = [(1, "He laughed loudly."), (2, "He laughed loudly."), (3, "He chuckled.")]
-        for ch_num, tgt in rows:
+        for ch_num, src, tgt in rows:
             conn.execute(
                 "INSERT INTO chapters "
                 "(novel_id, chapter_num, original_text, translated_text, "
@@ -70,7 +71,7 @@ def _seed_inconsistency() -> int:
                 "INSERT INTO tm_segments "
                 "(novel_id, chapter_id, paragraph_index, source_text, "
                 " target_text, source_hash) VALUES (?, ?, 0, ?, ?, ?)",
-                (novel_id, chapter_id, src, tgt, h),
+                (novel_id, chapter_id, src, tgt, _hash(src)),
             )
         conn.commit()
         return novel_id
@@ -78,52 +79,44 @@ def _seed_inconsistency() -> int:
         conn.close()
 
 
-def test_inconsistencies_route_reshapes_nested_groups(client):
-    novel_id = _seed_inconsistency()
-    resp = client.get(f"/api/novels/{novel_id}/tm/inconsistencies")
+def test_concordance_route_returns_full_hit_shape(client):
+    novel_id = _seed_segments()
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance", params={"q": "laughed"}
+    )
     assert resp.status_code == 200
-    groups = resp.json()
-    assert len(groups) == 1
-    g = groups[0]
-    assert g["source_text"] == "他大笑。"
-    assert g["source_hash"] == _hash("他大笑。")
-    assert g["total_occurrences"] == 3
-
-    renderings = {r["target_text"]: r for r in g["renderings"]}
-    assert set(renderings) == {"He laughed loudly.", "He chuckled."}
-    # The majority rendering carries both chapters; the outlier carries one.
-    majority = renderings["He laughed loudly."]["chapters"]
-    outlier = renderings["He chuckled."]["chapters"]
-    assert {c["chapter_num"] for c in majority} == {1, 2}
-    assert {c["chapter_num"] for c in outlier} == {3}
-    # ConcordanceChapterMeta shape is fully populated per chapter.
-    sample = majority[0]
-    assert set(sample) == {"chapter_id", "chapter_num", "title_en"}
-    assert sample["title_en"] == f"Chapter {sample['chapter_num']}"
+    hits = resp.json()
+    assert len(hits) == 1
+    hit = hits[0]
+    # ConcordanceHit shape is fully populated.
+    assert set(hit) == {
+        "chapter_id", "chapter_num", "chapter_title_en",
+        "paragraph_index", "source_text", "target_text", "matched_side",
+    }
+    assert hit["chapter_num"] == 1
+    assert hit["chapter_title_en"] == "Chapter 1"
+    assert hit["paragraph_index"] == 0
+    assert hit["source_text"] == "他大笑。"
+    assert hit["target_text"] == "He laughed loudly."
+    assert hit["matched_side"] == "target"
 
 
-def test_inconsistencies_route_empty_when_consistent(client):
-    src = "他大笑。"
-    h = _hash(src)
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.execute("INSERT INTO novels (title, source_type) VALUES ('N', 'paste')")
-        novel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        for ch_num in (1, 2):
-            conn.execute(
-                "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-                "translated_text, status) VALUES (?, ?, ?, 'He laughed.', 'done')",
-                (novel_id, ch_num, src),
-            )
-            cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.execute(
-                "INSERT INTO tm_segments (novel_id, chapter_id, paragraph_index, "
-                "source_text, target_text, source_hash) VALUES (?, ?, 0, ?, 'He laughed.', ?)",
-                (novel_id, cid, src, h),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-    resp = client.get(f"/api/novels/{novel_id}/tm/inconsistencies")
+def test_concordance_route_side_filter_and_empty(client):
+    novel_id = _seed_segments()
+    # Source-side query on a source-only string.
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance",
+        params={"q": "叹了口气", "side": "source"},
+    )
+    assert resp.status_code == 200
+    hits = resp.json()
+    assert [h["matched_side"] for h in hits] == ["source"]
+    assert hits[0]["chapter_num"] == 2
+
+    # The same source-only string restricted to target matches nothing.
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance",
+        params={"q": "叹了口气", "side": "target"},
+    )
     assert resp.status_code == 200
     assert resp.json() == []

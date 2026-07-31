@@ -1,15 +1,16 @@
 """Resumable import endpoints.
 
-Three small surfaces the library page uses to drive the
-in-progress / paused / resume UX:
+Three small surfaces for the in-progress / paused / resume UX:
 
-- `GET /api/imports/{novel_id}/status` — poll the current import state
-  (used by library card badges).
+- `GET /api/imports/{novel_id}/status` — poll the current import state.
+  No UI caller today (library card badges render from the /api/novels
+  payload); kept as a standalone polling surface for scripts and
+  external tooling.
 - `POST /api/imports/{novel_id}/cancel` — flip an in-progress import to
-  'paused'. Partial novel stays in the library.
+  'paused'. Partial novel stays in the library. (Library card button.)
 - `POST /api/imports/{novel_id}/resume` — re-fire the runner for a
   paused recipe-scrape novel. No-op for bulk/EPUB paused novels
-  (their source is gone).
+  (their source is gone). (Library card button.)
 """
 
 from __future__ import annotations
@@ -102,8 +103,8 @@ async def resume_import(
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> dict:
     """Resume a paused recipe-scrape import. Spawns the runner as a
-    background task; returns immediately. Library card polls the
-    status endpoint to track progress.
+    background task; returns immediately. The library card reflects
+    progress from the /api/novels payload on refresh.
 
     Returns 400 when the novel isn't resumable — either it's not in a
     paused state, or it's a bulk/EPUB import whose source bytes are

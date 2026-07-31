@@ -1,10 +1,9 @@
-"""HTTP-level tests for the two smallest read-only routers: routes/cache.py
-and routes/genres.py.
+"""HTTP-level tests for the read-only genres router (routes/genres.py).
 
-Both are pure read endpoints (no DB writes, no queue work), so they are
-exercised directly through the HTTP surface against the real app. Importing
-the route modules at top level keeps the coverage mapping honest: these tests
-own those modules rather than reaching them only transitively through the app.
+Pure read endpoint (no DB writes, no queue work), so it is exercised
+directly through the HTTP surface against the real app. Importing the route
+module at top level keeps the coverage mapping honest: these tests own the
+module rather than reaching it only transitively through the app.
 """
 
 from __future__ import annotations
@@ -15,8 +14,7 @@ from fastapi.testclient import TestClient
 from backend.config import DEFAULT_GENRE
 from backend.genres import GENRES
 
-# Direct imports: these tests are the owning tests for these route modules.
-from backend.routes import cache as cache_route
+# Direct import: these tests are the owning tests for this route module.
 from backend.routes import genres as genres_route
 
 
@@ -35,30 +33,6 @@ def client(monkeypatch):
 
     with TestClient(app) as c:
         yield c
-
-
-def test_cache_stats_shape(client):
-    """GET /api/cache/stats returns the in-process counter dict from llm_cache."""
-    resp = client.get("/api/cache/stats")
-    assert resp.status_code == 200
-    body = resp.json()
-    # CacheStats has a fixed shape: per-stage hit/miss/hit_rate plus on-disk size.
-    assert set(body) == {"translator", "refiner", "on_disk_bytes", "on_disk_files"}
-    for stage in ("translator", "refiner"):
-        assert set(body[stage]) == {"hits", "misses", "hit_rate"}
-        assert isinstance(body[stage]["hits"], int)
-        assert isinstance(body[stage]["misses"], int)
-        # hit_rate is None when no lookups happened, else a valid 0..1 ratio.
-        rate = body[stage]["hit_rate"]
-        assert rate is None or (isinstance(rate, float) and 0.0 <= rate <= 1.0)
-    assert isinstance(body["on_disk_bytes"], int)
-    assert isinstance(body["on_disk_files"], int)
-
-
-def test_cache_router_has_single_get():
-    """The cache router exposes exactly one GET route at /stats."""
-    paths = {(r.path, tuple(sorted(r.methods))) for r in cache_route.router.routes}
-    assert ("/stats", ("GET",)) in paths
 
 
 def test_list_genres_matches_registry(client):
