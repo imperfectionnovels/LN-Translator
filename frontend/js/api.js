@@ -239,6 +239,20 @@ const api = {
   // builds / self-heals the segment store on this read.
   chapterSegments: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments`),
+  // CAT editor (Phase 3): one segment write. `body` = {action, after_text?,
+  // chapter_rev, before_target_hash}; stale writes reject with 409 and
+  // err.error_kind in stale_segment | stale_chapter | chapter_translating.
+  updateSegment: (novelId, chapterNum, segIndex, body) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments/${segIndex}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  // `body` = {chapter_rev, statuses?}.
+  confirmAllSegments: (novelId, chapterNum, body) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments/confirm-all`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   // Learn-from-edits: stage derives a proposal from captured edits (no writes);
   // commit applies the confirmed subset (selection = {brief, glossary_casing, save_ground_truth}).
   learnEditsStage: (novelId, chapterNum) =>

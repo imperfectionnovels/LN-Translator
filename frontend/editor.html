@@ -13,8 +13,7 @@
 <aside class="ink-spine"><!-- stamped by /static/js/spine.js --></aside>
 
 <main id="main" tabindex="-1">
-  <!-- Sticky editor bar: crumbs + chapter nav + progress + reader link.
-       Phase 2 is read-only; the Phase 3 editing loop adds its controls here. -->
+  <!-- Sticky editor bar: crumbs + chapter nav + progress + actions. -->
   <div class="editor-bar">
     <nav class="crumbs editor-crumbs" aria-label="Breadcrumb">
       <a href="/library">Library</a>
@@ -35,7 +34,15 @@
         <span class="progress-fill" id="progress-fill"></span>
       </div>
     </div>
-    <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
+    <div class="editor-actions">
+      <button type="button" class="btn-ghost" id="filter-toggle"
+              aria-pressed="false" title="Show only unconfirmed segments (f)">Unconfirmed only</button>
+      <button type="button" class="btn-ghost" id="confirm-rest"
+              title="Confirm every remaining segment in this chapter" disabled>Confirm rest</button>
+      <button type="button" class="icon-btn" id="shortcuts-btn"
+              title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
+    </div>
   </div>
 
   <!-- Empty / error state banner (pending, translating, error, unaligned). -->
@@ -51,6 +58,26 @@
     <span class="seg-h seg-h-status">Status</span>
   </div>
   <div class="seg-grid" id="seg-grid" aria-busy="true" aria-label="Chapter segments"></div>
+
+  <!-- Keyboard shortcuts help (toggled by ? or the bar button). -->
+  <dialog id="shortcuts-dialog" class="dialog" aria-labelledby="shortcuts-dialog-title">
+    <h3 id="shortcuts-dialog-title">Keyboard shortcuts</h3>
+    <div class="shortcuts-grid">
+      <div class="key-cell"><span class="kbd">j</span> <span class="kbd">↓</span> / <span class="kbd">k</span> <span class="kbd">↑</span></div><div>Next / previous segment</div>
+      <div class="key-cell"><span class="kbd">Enter</span></div><div>Edit the active segment</div>
+      <div class="key-cell"><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span></div><div>Save + confirm, jump to next unconfirmed</div>
+      <div class="key-cell"><span class="kbd">Alt</span>+<span class="kbd">↓</span> / <span class="kbd">Alt</span>+<span class="kbd">↑</span></div><div>Save, keep editing the next / previous segment</div>
+      <div class="key-cell"><span class="kbd">u</span></div><div>Unconfirm the active segment</div>
+      <div class="key-cell"><span class="kbd">n</span> / <span class="kbd">p</span></div><div>Next / previous unconfirmed segment</div>
+      <div class="key-cell"><span class="kbd">[</span> / <span class="kbd">]</span></div><div>Previous / next chapter</div>
+      <div class="key-cell"><span class="kbd">f</span></div><div>Toggle All / Unconfirmed filter</div>
+      <div class="key-cell"><span class="kbd">Esc</span></div><div>Cancel an edit / clear the active row / close dialogs</div>
+      <div class="key-cell"><span class="kbd">?</span></div><div>Show this help</div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="shortcuts-close">Close</button>
+    </div>
+  </dialog>
 </main>
 
 <script src="/static/js/api.js"></script>

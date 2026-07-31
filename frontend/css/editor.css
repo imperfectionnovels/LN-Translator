@@ -1,5 +1,6 @@
-/* CAT editor page (Phase 2: read-only segment grid). Reuses base.css design
-   tokens (var(--...)) so every theme, light and dark, colors it correctly. */
+/* CAT editor page (Phase 3: editing loop over the segment grid). Reuses
+   base.css design tokens (var(--...)) so every theme, light and dark,
+   colors it correctly. */
 
 /* ---- Sticky editor bar ---- */
 .editor-bar {
@@ -57,6 +58,19 @@
   transition: width 0.25s ease;
 }
 .editor-reader-link { white-space: nowrap; }
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+#filter-toggle[aria-pressed="true"] {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+#shortcuts-btn { font-weight: 600; }
 
 /* ---- Status banner cards ---- */
 .editor-status { margin: 14px 0; }
@@ -154,6 +168,74 @@
   border: 1px solid color-mix(in srgb, var(--signal-error, #7a3030) 55%, transparent);
   background: color-mix(in srgb, var(--signal-error, #7a3030) 10%, transparent);
   white-space: nowrap;
+}
+
+/* ---- Editing loop (Phase 3) ---- */
+
+/* Filter: hide confirmed rows without a re-fetch. */
+.seg-grid.filter-unconfirmed .seg-row[data-status="confirmed"] { display: none; }
+
+/* The target cell while contenteditable. */
+.seg-row.editing { cursor: auto; }
+.seg-row.editing .seg-tgt {
+  outline: 1.5px solid var(--accent, var(--fg));
+  outline-offset: 4px;
+  border-radius: 2px;
+  cursor: text;
+}
+/* Save-state classes mirror the reader-edit conventions. */
+.seg-tgt.saving { opacity: 0.6; }
+.seg-tgt.saved-flash { background: rgba(60, 140, 75, 0.10); transition: background 0.6s; }
+.seg-tgt.save-failed { outline: 1.5px solid #b14545; outline-offset: 4px; }
+
+/* Failed-save retry chip, anchored inside the row's meta column. */
+.seg-save-retry {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--r-md);
+  color: var(--accent-fg);
+  background: var(--signal-error, #7a3030);
+  border: 1px solid var(--signal-error, #7a3030);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg-save-retry:disabled { opacity: 0.6; cursor: default; }
+
+/* Per-row revert-to-AI action: visible on the hovered / active row only. */
+.seg-revert {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  visibility: hidden;
+}
+.seg-row:hover .seg-revert,
+.seg-row.active .seg-revert { visibility: visible; }
+.seg-revert:hover { color: var(--fg); border-color: var(--muted); }
+
+/* Retained-rows unaligned chapters render the grid read-only. */
+.seg-grid.read-only .seg-row { cursor: default; }
+
+/* Shortcuts cheat-sheet (same shape as the reader's). */
+.dialog .shortcuts-grid {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.dialog .shortcuts-grid .key-cell {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 /* ---- Narrow screens: stack source above target ---- */
