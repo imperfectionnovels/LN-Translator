@@ -295,14 +295,10 @@ let editMode = false;
 const editBtn = document.getElementById("edit-mode");
 
 function _editVariant(ch) {
-  // 'refined' when the reader is currently displaying refined_text, which
-  // happens iff refined_text is non-empty (presence keying, the same
-  // condition as _displayedEnglish's body-picker and the backend's
-  // segments.displayed_body). Otherwise 'draft'.
-  if (ch && ch.refined_text && ch.refined_text.length > 0) {
-    return "refined";
-  }
-  return "draft";
+  // Delegates to reader-core's _displayedVariant (authority:
+  // segments.displayed_body presence rule) so edits always target the
+  // body the reader is actually displaying.
+  return _displayedVariant(ch);
 }
 function _editColumn(variant) {
   return variant === "refined" ? "refined_text" : "translated_text";
@@ -409,11 +405,11 @@ editBtn?.addEventListener("click", () => {
   // fires before applyEditMode re-renders the body.
   if (editMode) _blurFocusedEditable();
   // Section 8 (post-refinement edit support): paragraph edits route to
-  // whichever body the reader is showing — refined_text when
-  // refinement_status='done', translated_text otherwise. _editVariant /
-  // _editColumn pick the column at edit-mode entry and at each focusin;
-  // the save handler passes `source` to /edit-paragraph so the backend
-  // mutates the right column.
+  // whichever body the reader is showing — refined_text whenever it is
+  // non-empty (the _displayedVariant presence rule), translated_text
+  // otherwise. _editVariant / _editColumn pick the column at edit-mode
+  // entry and at each focusin; the save handler passes `source` to
+  // /edit-paragraph so the backend mutates the right column.
   editMode = !editMode;
   applyEditMode();
   if (editMode) {

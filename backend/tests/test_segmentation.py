@@ -19,8 +19,10 @@ from backend.services.segmentation import (
 # ---------------------------------------------------------------------------
 
 
-def test_segmentation_version_is_one():
-    assert SEGMENTATION_VERSION == 1
+def test_segmentation_version_is_two():
+    # v2 (2026-07-31): chapter_source_paragraphs composed the author-update
+    # marker strip into the canonical recipe (writer unification).
+    assert SEGMENTATION_VERSION == 2
 
 
 # ---------------------------------------------------------------------------

@@ -27,9 +27,22 @@ from __future__ import annotations
 
 import re
 
+# The author-update-marker strip is part of the canonical chapter recipe
+# (`chapter_source_paragraphs` below). Dependency direction: parser.py is
+# pure text with zero service imports, so segmentation -> parser is safe and
+# keeps the marker regexes single-sourced in parser; the reverse direction
+# would cycle through tm.py's re-exports of this module.
+from backend.services.parser import strip_heading_update_marker
+
 # Bumped on ANY change to the paragraph split, the heading detector, the
 # terminal-ending classification, or the join rule.
-SEGMENTATION_VERSION = 1
+# v2 (2026-07-31): the canonical recipe now composes the author-update-marker
+# strip (chapter_source_paragraphs). Before the unification the worker merges
+# stripped markers but the lazy backfill did not, so a first line surviving
+# this module's tight _HEADING_RE while matching parser's broader
+# _TITLE_PREFIX_RE with a marker produced DIFFERENT seg-0 sources per writer
+# and the anchor's full-text check sent the chapter retain-all unaligned.
+SEGMENTATION_VERSION = 2
 
 # Paragraph break: blank line under either CRLF or LF line endings.
 _PARAGRAPH_BREAK_RE = re.compile(r"(?:\r?\n){2,}")
@@ -156,3 +169,20 @@ def split_target_paragraphs(body: str) -> list[str]:
     counterpart of `effective_source_paragraphs`. Whitespace-stripped,
     empties dropped, CRLF tolerated."""
     return _split_paragraphs(body)
+
+
+def chapter_source_paragraphs(text: str) -> list[str]:
+    """THE canonical source-paragraph list for a stored chapter:
+    author-update-marker strip (parser.strip_heading_update_marker, so a
+    surviving heading line loses its （第N更！）/ 求月票 tail) composed with
+    `effective_source_paragraphs`.
+
+    Every chapter_segments writer and reader MUST derive source paragraphs
+    through this function: the queue's translate and refine merges, the
+    segments service's lazy backfill / self-heal / reproject rebuilds, and
+    any Phase 5+ addition. Deriving from effective_source_paragraphs
+    directly re-opens the split recipe divergence that SEGMENTATION_VERSION
+    2 closed (seg-0 source differing between writers over a cosmetic
+    marker, failing the anchor's full-text check).
+    """
+    return effective_source_paragraphs(strip_heading_update_marker(text or ""))

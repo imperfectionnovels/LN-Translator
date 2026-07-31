@@ -194,8 +194,8 @@ function _paragraphTextAt(side, idx) {
   if (side === "zh") {
     body = lastChapter.original_text || "";
   } else {
-    // Mirror _displayedEnglish's body-picker: refined whenever present.
-    body = lastChapter.refined_text
+    // Mirror _displayedEnglish's body-picker via the shared variant helper.
+    body = _displayedVariant(lastChapter) === "refined"
       ? lastChapter.refined_text
       : (lastChapter.translated_text || "");
   }
@@ -571,7 +571,10 @@ function updatePaneEnLabel(ch) {
     let html = tname
       ? `English · <span class="prov-name">${escapeHtml(tname)}</span>`
       : "English";
-    const refined = ch && ch.refinement_status === "done" && _displayedEnglish(ch) === (ch.refined_text || "");
+    // Presence-keyed like the body itself, so the chip does not vanish
+    // during a refinement retry window while the polished text stays up.
+    const refined = ch && _displayedVariant(ch) === "refined"
+      && _displayedEnglish(ch) === ch.refined_text;
     if (refined) {
       const rname = providerNameById(ch.refined_by_provider_id);
       const chipText = rname ? `refined by ${rname}` : "refined";
@@ -1131,9 +1134,10 @@ function _displayedEnglish(ch) {
   // pending/in_progress window (and after a failed retry), and that
   // retained polish must stay on screen: flipping to the draft mid-window
   // both violates the no-draft-preview rule and lets the editor's
-  // self-heal rebuild the segment store against the draft. Matches
-  // segments.displayed_body on the backend.
-  if (ch.refined_text) {
+  // self-heal rebuild the segment store against the draft. The keying
+  // itself lives in reader-core's _displayedVariant (authority:
+  // segments.displayed_body on the backend).
+  if (_displayedVariant(ch) === "refined") {
     return ch.refined_text;
   }
   // 2026-05-27: first-ever polish mid-flight (no refined_text yet):

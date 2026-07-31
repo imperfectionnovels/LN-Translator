@@ -441,7 +441,10 @@ class SegmentPatch(BaseModel):
     (per-segment precision guard)."""
 
     action: str
-    after_text: str | None = None
+    # Same ceiling as EditParagraphRequest: a segment is one paragraph.
+    after_text: str | None = Field(
+        default=None, max_length=_MAX_EDIT_PARAGRAPH_CHARS
+    )
     chapter_rev: str
     before_target_hash: str
 

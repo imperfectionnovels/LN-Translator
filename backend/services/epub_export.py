@@ -27,6 +27,8 @@ import os
 import tempfile
 from typing import Iterable
 
+from backend.services.segments import displayed_body
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,18 +75,13 @@ def _paragraphs_to_html(body: str) -> str:
 
 
 def _chapter_body_for(ch: dict) -> str | None:
-    """Pick the canonical English for a chapter row, matching the existing
-    download convention. Returns None for chapters that have no usable body
-    (status != 'done' or both refined / translated empty)."""
+    """Pick the canonical English for a chapter row. Authority:
+    segments.displayed_body (presence rule: refined whenever it exists,
+    including through a refinement retry). Returns None for chapters that
+    have no usable body (status != 'done' or both bodies empty)."""
     if ch.get("status") != "done":
         return None
-    # Presence keying (matches segments.displayed_body): refined text is
-    # canonical whenever it exists, including through a refinement retry.
-    refined = ch.get("refined_text") or ""
-    if refined:
-        return refined
-    translated = ch.get("translated_text") or ""
-    return translated or None
+    return displayed_body(ch)[1] or None
 
 
 def _chapter_title(ch: dict) -> str:

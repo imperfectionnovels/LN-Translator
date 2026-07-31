@@ -66,7 +66,7 @@ from backend.services.providers import (
 )
 from backend.services.refiner import refine_chapter
 from backend.services.segmentation import (
-    effective_source_paragraphs,
+    chapter_source_paragraphs,
     split_target_paragraphs,
 )
 from backend.services.text_fixups import (
@@ -819,6 +819,10 @@ async def _translate_chapter_in_db(
         "WHERE id = ? AND novel_id = ? AND status = 'pending'",
         (chapter_id, novel_id),
     )
+    # Commit the claim NOW: between here and the success UPDATE the worker
+    # must only SELECT. Nothing may hold a write transaction across the LLM
+    # await, or editor writes (and every other writer) would block for the
+    # whole multi-minute call.
     await conn.commit()
     if (claim.rowcount or 0) == 0:
         # See predecessor commit comment: don't reuse _clear_translate_queue
@@ -866,20 +870,21 @@ async def _translate_chapter_in_db(
         prompt_title_zh = strip_title_update_marker(r["title_zh"]) or None
         # 1:1 contract (CAT Phase 1): the model reads the pre-joined effective
         # source paragraphs (heading dropped: the title travels on the prompt's
-        # title line; mid-sentence blank-line breaks joined deterministically)
-        # and must return exactly one output paragraph per source paragraph.
-        # Prompt-time only: stored original_text stays verbatim. The marker
-        # strip stays first so a non-第N章 heading that survives the paragraph
-        # drop still loses its update marker.
-        marker_stripped_source = strip_heading_update_marker(r["original_text"])
-        source_paragraphs = effective_source_paragraphs(marker_stripped_source)
+        # title line; mid-sentence blank-line breaks joined deterministically;
+        # author update markers stripped from a surviving heading line) and
+        # must return exactly one output paragraph per source paragraph.
+        # Prompt-time only: stored original_text stays verbatim.
+        # chapter_source_paragraphs is THE canonical recipe shared with the
+        # segments service so every chapter_segments writer keys on the same
+        # source list (SEGMENTATION_VERSION 2).
+        source_paragraphs = chapter_source_paragraphs(r["original_text"])
         if source_paragraphs:
             prompt_source = "\n\n".join(source_paragraphs)
             expected_paragraph_count: int | None = len(source_paragraphs)
         else:
             # Degenerate chapter (e.g. heading-only body): keep the legacy
-            # verbatim prompt and skip the count validation.
-            prompt_source = marker_stripped_source
+            # verbatim prompt (marker-stripped) and skip the count validation.
+            prompt_source = strip_heading_update_marker(r["original_text"])
             expected_paragraph_count = None
         # CAT Phase 4: APPROVED TRANSLATIONS block feed. Human rows of this
         # chapter plus cross-chapter exact confirmed matches, listed in the
@@ -1011,9 +1016,11 @@ async def _translate_chapter_in_db(
             return
 
         # CAT Phase 4 worker merge, INSIDE the claim-guarded success
-        # transaction (the claim UPDATE above opened the write transaction,
-        # so the merge re-reads human rows after the claim and an editor
-        # write cannot interleave). Human rows keep their target_text
+        # transaction (the success UPDATE just above opened the write
+        # transaction; the status claim was committed long ago, before the
+        # LLM call). The merge therefore re-reads human rows after the
+        # write lock is held, so an editor write cannot interleave between
+        # the read and this commit. Human rows keep their target_text
         # VERBATIM and only refresh machine_text; machine rows regenerate
         # with origin 'llm'; cross-chapter exact confirmed matches pre-fill
         # as origin 'tm_exact'. The FINAL committed body is the merged join,
@@ -1483,10 +1490,12 @@ async def _refine_chapter_in_db(
     # machine rows take the refined paragraphs with origin 'llm_refined'.
     # refined_text is then materialized from the merged set.
     final_refined = refined
-    src_paras = effective_source_paragraphs(
-        strip_heading_update_marker(r["original_text"] or "")
-    )
+    src_paras = chapter_source_paragraphs(r["original_text"] or "")
     if src_paras:
+        # tm_exact prefill survives refinement: without re-passing it here,
+        # a refiner pass would replace a confirmed cross-chapter rendering
+        # on a machine row with the refiner's own wording, defeating the
+        # consistency point of prefill. Human rows are unaffected either way.
         merged = await segments_svc.apply_machine_translation(
             conn,
             novel_id=novel_id,
@@ -1494,6 +1503,9 @@ async def _refine_chapter_in_db(
             new_paragraphs=split_target_paragraphs(refined),
             kind="llm_refined",
             src_paras=src_paras,
+            prefill=await segments_svc.prefill_confirmed_exact(
+                conn, novel_id, chapter_id, src_paras
+            ),
         )
         final_refined = segments_svc.join_paragraphs(merged)
         if final_refined != refined:

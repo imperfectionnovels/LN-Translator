@@ -462,6 +462,14 @@ function onEditKeydown(e) {
     }
     return;
   }
+  if (e.key === "Enter" && e.shiftKey) {
+    // A segment is one paragraph: Shift+Enter inserts exactly one line
+    // break, never a blank line (which would split the paragraph; the
+    // backend save also collapses blank-line runs as a backstop).
+    e.preventDefault();
+    document.execCommand("insertText", false, "\n");
+    return;
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     // A segment is one paragraph; plain Enter saves instead of injecting
     // stray newlines into the target.

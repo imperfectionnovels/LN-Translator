@@ -20,8 +20,9 @@ Correctness contracts (see the consistency-aid plan):
     matches the reader's `data-paragraph-index` (used by `_scrollToParagraph`)
     and `current_rendering` reflects post-edit / refined text, never the
     chapter's own (possibly stale) `tm_segments` rows.
-  - `displayed_body` is `refined_text` when refinement is done, else
-    `translated_text`, matching the reader's `_displayedEnglish`.
+  - `displayed_body` is `refined_text` whenever it is non-empty (the
+    segments.displayed_body presence rule), else `translated_text`,
+    matching the reader's `_displayedEnglish`.
   - Only OTHER chapters' `tm_segments` form the comparison corpus.
 
 This module performs NO writes. The rail's fix actions reuse the reader's
@@ -101,7 +102,8 @@ class ConsistencyResult:
 
 
 def _displayed_body(row) -> str | None:
-    """Mirror the reader's `_displayedEnglish`: refined when done, else draft.
+    """Mirror the reader's `_displayedEnglish`: refined whenever
+    refined_text is non-empty, else draft.
 
     The rule itself lives in services/segments.py::displayed_body (the CAT
     segment store must project the same body the reader shows); this wrapper

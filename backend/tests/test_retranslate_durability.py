@@ -797,6 +797,179 @@ async def test_anchor_rejects_source_hash_collision(monkeypatch):
     ]
 
 
+async def test_source_recipe_unified_for_marker_headings(monkeypatch):
+    """SEGMENTATION_VERSION 2: every chapter_segments writer derives source
+    paragraphs via chapter_source_paragraphs (marker strip composed in).
+    Before the unification, a first line matching parser's broad
+    _TITLE_PREFIX_RE (spaced 第 N 章) but not segmentation's tight
+    _HEADING_RE, while carrying an update marker, produced DIFFERENT seg-0
+    sources per writer and sent the chapter retain-all unaligned."""
+    from backend.services.segmentation import (
+        chapter_source_paragraphs,
+        effective_source_paragraphs,
+    )
+    heading = "第 12 章 序幕（第四更！）"
+    src = "\n\n".join([heading, _zh("甲"), _zh("乙"), _zh("丙")])
+    canonical = chapter_source_paragraphs(src)
+    # The bare recipe diverges on this class; the canonical one strips the
+    # marker for every writer.
+    assert canonical != effective_source_paragraphs(src)
+    assert all("第四更" not in p for p in canonical)
+
+    # End to end: worker-built rows and the lazy rebuild now agree, so a
+    # version-stamp rebuild re-anchors the human row instead of retaining.
+    await _seed_translator_provider()
+    novel_id, (chapter_id,) = await _seed_novel([src])
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, chapter_id)
+    rows = await _rows(chapter_id)
+    assert [r["source_text"] for r in rows] == canonical
+    human = "CONFIRMED THROUGH THE RECIPE SEAM."
+    await _segment_action(novel_id, 1, 0, "save_and_confirm", human)
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET segmentation_version = 1 WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+        payload = await segments_svc.get_segments(conn, novel_id, 1)
+        await conn.commit()
+    assert payload["segments_state"] == "ok"
+    seg0 = next(s for s in payload["segments"] if s["index"] == 0)
+    assert seg0["status"] == "confirmed"
+    assert seg0["target_text"] == human
+    assert seg0["source_text"] == canonical[0]
+
+
+async def test_version_bump_rebuild_preserves_human_rows(monkeypatch):
+    """A SEGMENTATION_VERSION bump forces a lazy rebuild on next open; for
+    chapters the recipe change does not affect, the hash+text re-anchor
+    must carry human rows through untouched."""
+    await _seed_translator_provider()
+    novel_id, (chapter_id,) = await _seed_novel([_SRC])
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, chapter_id)
+    human = "SURVIVES THE VERSION BUMP."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", human)
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET segmentation_version = 1 WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+        payload = await segments_svc.get_segments(conn, novel_id, 1)
+        await conn.commit()
+    assert payload["segments_state"] == "ok"
+    seg = next(s for s in payload["segments"] if s["index"] == 1)
+    assert seg["status"] == "confirmed"
+    assert seg["target_text"] == human
+
+
+async def test_save_normalizes_pasted_blank_lines(monkeypatch):
+    """A pasted blank-line run collapses to a single newline on save (a
+    segment is ONE paragraph), so the body's paragraph count is preserved
+    and the next retranslate fires no drift observation."""
+    await _seed_translator_provider()
+    novel_id, (chapter_id,) = await _seed_novel([_SRC])
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, chapter_id)
+    pasted = "Pasted line one.\r\n\r\n\r\nPasted line two."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", pasted)
+    rows = await _rows(chapter_id)
+    assert rows[1]["target_text"] == "Pasted line one.\nPasted line two."
+    ch = await _chapter(chapter_id)
+    assert len(_paras(ch["translated_text"])) == 3  # count preserved
+
+    await _requeue(novel_id, chapter_id)
+    _stub_translate(monkeypatch, "two")
+    await _translate(novel_id, chapter_id)
+    rows = await _rows(chapter_id)
+    assert rows[1]["target_text"] == "Pasted line one.\nPasted line two."
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM chapter_observations "
+            "WHERE chapter_id = ? AND kind = 'paragraph_count_drift'",
+            (chapter_id,),
+        )
+        assert (await cur.fetchone())["n"] == 0
+
+
+async def test_prefill_survives_refinement(monkeypatch):
+    """A tm_exact rendering on a machine row must ride through the refiner
+    pass: the refine merge re-applies the prefill, keeping the confirmed
+    cross-chapter rendering (the consistency point of prefill) while the
+    refiner's own wording lands in machine_text."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    src_a = "\n\n".join([_SHARED, _zh("乙")])
+    src_b = "\n\n".join([_zh("丁"), _SHARED, _zh("戊")])
+    novel_id, (ch_a, ch_b) = await _seed_novel(
+        [src_a, src_b], refinement_provider_id=refiner_id
+    )
+    _stub_translate(monkeypatch, "one")
+    _stub_refine(monkeypatch, "ra")
+    await _translate(novel_id, ch_a)
+    await _refine(novel_id, ch_a)
+    canon = "CANON LINE SURVIVES REFINEMENT."
+    await _segment_action(novel_id, 1, 0, "save_and_confirm", canon)
+
+    _stub_translate(monkeypatch, "two")
+    await _translate(novel_id, ch_b)
+    rows = await _rows(ch_b)
+    assert rows[1]["origin"] == "tm_exact"
+    _stub_refine(monkeypatch, "rb")
+    await _refine(novel_id, ch_b)
+
+    ch = await _chapter(ch_b)
+    assert ch["refinement_status"] == "done"
+    rows = await _rows(ch_b)
+    assert rows[1]["origin"] == "tm_exact"
+    assert rows[1]["status"] == "machine"
+    assert rows[1]["target_text"] == canon
+    assert rows[1]["machine_text"] == (
+        "Refined rb paragraph number 2 of the polished body."
+    )
+    assert _paras(ch["refined_text"])[1] == canon
+
+
+async def test_refine_interleave_editor_write_survives(monkeypatch):
+    """An editor write that lands WHILE the refiner call is in flight (the
+    worker holds no write transaction across the LLM await) must survive
+    the refine merge: the merge re-reads human rows inside its commit
+    transaction."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, (chapter_id,) = await _seed_novel(
+        [_SRC], refinement_provider_id=refiner_id
+    )
+    _stub_translate(monkeypatch, "one")
+    await _translate(novel_id, chapter_id)
+
+    mid_edit = "MID WINDOW EDITOR WRITE SURVIVES."
+
+    async def _refine_with_interleave(draft, provider, glossary=None,
+                                      expected_paragraph_count=None, **kw):
+        await _segment_action(novel_id, 1, 1, "save_and_confirm", mid_edit)
+        n = len([p for p in draft.split("\n\n") if p.strip()])
+        return "\n\n".join(
+            f"Refined ix paragraph number {i + 1} of the polished body."
+            for i in range(n)
+        )
+    monkeypatch.setattr(
+        "backend.services.queue.refine_chapter", _refine_with_interleave
+    )
+    await _refine(novel_id, chapter_id)
+
+    ch = await _chapter(chapter_id)
+    assert ch["refinement_status"] == "done"
+    assert _paras(ch["refined_text"])[1] == mid_edit
+    rows = await _rows(chapter_id)
+    assert rows[1]["status"] == "confirmed"
+    assert rows[1]["target_text"] == mid_edit
+    joined = "\n\n".join(r["target_text"] for r in rows if r["target_text"])
+    assert joined == ch["refined_text"]
+
+
 async def test_stale_refinement_drift_rows_replaced(monkeypatch):
     await _seed_translator_provider()
     refiner_id = await _seed_refiner_provider()

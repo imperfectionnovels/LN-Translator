@@ -506,3 +506,45 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   anchor path now applies the same verification, so a forged or colliding
   prefix can never silently anchor a human row to the wrong source
   paragraph (it retains-all and stamps 'unaligned' instead).
+
+### Addendum (same day, quality-review round)
+
+- **One canonical source recipe: segmentation.chapter_source_paragraphs,
+  SEGMENTATION_VERSION 2.** The worker merges keyed on
+  effective_source_paragraphs(strip_heading_update_marker(text)) while the
+  lazy backfill / self-heal / reproject used the bare split, so a first
+  line matching parser's broad title prefix (spaced 第 N 章, or Chapter N)
+  but not segmentation's tight heading regex, while carrying an author
+  update marker, produced different seg-0 sources per writer; the
+  anchor's full-text check then failed and the whole chapter went
+  retain-all unaligned over a cosmetic marker. All writers (both queue
+  merges, build_segments_from_alignment, and any Phase 5+ addition, per
+  the docstring) now call chapter_source_paragraphs, which composes the
+  marker strip. Dependency direction: segmentation imports parser (parser
+  is pure text with zero service imports; the reverse would cycle through
+  tm's re-exports). The recipe change is a behavior change for that
+  definable class, so the frozen-module contract required the version
+  bump; the bump-triggered rebuild re-anchors human rows by hash plus
+  full text for unaffected chapters and retains-all for the rare
+  affected ones (both pinned by tests).
+- **Prefill now rides the REFINE merge too.** Without re-passing
+  prefill_confirmed_exact at the refinement commit, the refiner's wording
+  replaced tm_exact renderings on machine rows, defeating the consistency
+  point of prefill; the confirmed cross-chapter rendering now survives
+  refinement and the refiner's own wording lands in machine_text.
+- **Segment saves are paragraph-safe.** update_segment collapses
+  blank-line runs in after_text to a single newline (a pasted \n\n would
+  otherwise split the one-paragraph segment under split_target_paragraphs
+  and desync the join==body count); the editor cell intercepts
+  Shift+Enter to insert a single line break. SegmentPatch.after_text
+  gained the EditParagraphRequest length ceiling.
+- **Assist fuzzy tier bounded.** The candidate fetch carries a generous
+  SQL LENGTH band (0.7x..1.6x raw source length, wider than the canonical
+  0.85..1.15 band so folding slack cannot exclude a real candidate) and
+  the fold+score runs in run_in_threadpool, so an uncached assist fetch
+  on a large novel cannot stutter the event loop mid-translate.
+- **Displayed-body restatements collapsed.** download_novel and
+  epub_export call segments.displayed_body directly; the frontend keying
+  lives in one reader-core _displayedVariant helper consumed by
+  _displayedEnglish / _paragraphTextAt / _editVariant, and the "refined
+  by X" pane chip is presence-keyed so it does not vanish mid-retry.

@@ -142,6 +142,17 @@ if (appendChaptersLink) appendChaptersLink.href = `/?novel=${novelId}`;
 // every user's stored preference. UI label maps "english" → "Classic".
 // (Focus mode was removed 2026-05-26; the standalone "Focus mode" chrome
 // toggle in the type-settings dialog still works independently.)
+// Which English body variant the reader displays for a chapter: 'refined'
+// whenever refined_text is non-empty, else 'draft'. AUTHORITY:
+// backend/services/segments.py::displayed_body (presence keying,
+// 2026-07-31 retry-window fix: retained polish stays displayed through a
+// refinement retry and after a failed retry). _displayedEnglish,
+// _paragraphTextAt, and _editVariant all consume THIS helper so the
+// display keying lives in exactly one frontend place.
+function _displayedVariant(ch) {
+  return ch && ch.refined_text ? "refined" : "draft";
+}
+
 const VIEW_MODE_KEY = `viewMode_${novelId}`;
 const VALID_MODES = ["english", "bilingual"];
 let viewMode = localStorage.getItem(VIEW_MODE_KEY)

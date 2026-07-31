@@ -31,6 +31,7 @@ from backend.services.covers import (
 )
 from backend.services.epub_export import build_epub
 from backend.services.providers import load_provider
+from backend.services.segments import displayed_body
 from backend.services.uploads import ensure_novel_exists
 
 router = APIRouter()
@@ -712,14 +713,10 @@ async def download_novel(
             async for ch in cur:
                 body = None
                 if ch["status"] == "done":
-                    # Prefer refined text whenever it exists (presence
-                    # keying, matches segments.displayed_body and the
-                    # reader's _displayedEnglish): refined IS the canonical
-                    # English, including through a refinement retry window.
-                    if ch["refined_text"]:
-                        body = ch["refined_text"]
-                    elif ch["translated_text"]:
-                        body = ch["translated_text"]
+                    # Authority: segments.displayed_body (presence rule).
+                    # Refined is canonical whenever it exists, including
+                    # through a refinement retry window.
+                    body = displayed_body(ch)[1] or None
                 if not body and skip_untranslated:
                     continue
                 title = (

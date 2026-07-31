@@ -2,7 +2,7 @@
 writes `chapter_segments`.
 
 A segment row is one effective source paragraph of a translated chapter
-(`segmentation.effective_source_paragraphs` over `original_text`) paired with
+(`segmentation.chapter_source_paragraphs` over `original_text`) paired with
 the paragraph of the DISPLAYED body that renders it. The displayed body (the
 chapter text column the reader shows: refined whenever refined_text is
 non-empty, else the draft; see `displayed_body`) stays canonical; segments
@@ -51,15 +51,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 
 import aiosqlite
+from fastapi.concurrency import run_in_threadpool
 from rapidfuzz import fuzz, process
 
 from backend.services import tm as tm_svc
 from backend.services.glossary_filters import canonical_zh
 from backend.services.segmentation import (
     SEGMENTATION_VERSION,
-    effective_source_paragraphs,
+    chapter_source_paragraphs,
     split_target_paragraphs,
 )
 
@@ -89,6 +91,13 @@ class SegmentStaleError(Exception):
 _ACTIONS = frozenset(
     {"save", "confirm", "save_and_confirm", "unconfirm", "revert_machine"}
 )
+
+# Consecutive-newline runs inside a saved target. A segment is ONE paragraph:
+# a pasted blank line would make its target span two paragraphs under
+# split_target_paragraphs, desyncing the join==body paragraph count and
+# firing drift on the next retranslate, so saves collapse runs to a single
+# newline (paragraph-safe; single \n line breaks are preserved).
+_BLANK_RUN_RE = re.compile(r"\n{2,}")
 
 
 def hash16(text: str) -> str:
@@ -276,7 +285,10 @@ async def build_segments_from_alignment(
     novel_id = chapter_row["novel_id"]
     _variant, body = displayed_body(chapter_row)
     rev = chapter_rev(body)
-    src = effective_source_paragraphs(chapter_row["original_text"] or "")
+    # Canonical recipe (SEGMENTATION_VERSION 2): every writer derives the
+    # source list through chapter_source_paragraphs so the lazy backfill and
+    # the worker merges can never disagree on a source paragraph's text.
+    src = chapter_source_paragraphs(chapter_row["original_text"] or "")
     tgt = split_target_paragraphs(body)
     human_rows = await _fetch_human_rows(conn, chapter_id)
 
@@ -650,7 +662,13 @@ async def update_segment(
     status = seg["status"]
     text_changing = False
     if action in ("save", "save_and_confirm"):
-        new_target = (after_text or "").strip()
+        new_target = (
+            (after_text or "")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .strip()
+        )
+        new_target = _BLANK_RUN_RE.sub("\n", new_target)
         if not new_target:
             raise SegmentActionError(
                 "a paragraph cannot be emptied. Use revert to AI instead."
@@ -1273,23 +1291,42 @@ async def _assist_fuzzy(
     """Fuzzy tier of `segment_assist`: near-duplicate sources elsewhere in
     the novel, scored over script-folded Han (canonical_zh), length-band
     prefiltered, capped. Skips the exact-hash rows (the exact tier owns
-    them) and trivially short sources (they match everything)."""
-    own_canon = canonical_zh(seg["source_text"])
+    them) and trivially short sources (they match everything).
+
+    Cost bounds for large novels: a generous SQL LENGTH band (0.7x..1.6x of
+    the raw source length; deliberately wider than the canonical 0.85..1.15
+    band so folding slack can never exclude a real candidate) keeps the row
+    fetch proportional to plausible matches, and the fold+score runs in
+    `run_in_threadpool` (quality_dashboard precedent) so an uncached assist
+    fetch cannot stutter the event loop mid-translate."""
+    own_source = seg["source_text"]
+    own_canon = canonical_zh(own_source)
     if len(own_canon) < _ASSIST_MIN_SOURCE_LEN:
         return []
+    raw_len = len(own_source)
     cur = await conn.execute(
         "SELECT cs.source_text, cs.source_hash, cs.target_text, cs.status, "
         "       c.chapter_num "
         "FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
-        "WHERE cs.novel_id = ? AND cs.chapter_id != ? AND cs.target_text != ''",
-        (novel_id, chapter_id),
+        "WHERE cs.novel_id = ? AND cs.chapter_id != ? AND cs.target_text != '' "
+        "  AND LENGTH(cs.source_text) BETWEEN ? AND ?",
+        (novel_id, chapter_id, int(raw_len * 0.7), int(raw_len * 1.6) + 1),
     )
     rows = await cur.fetchall()
-    # Dedup by folded source; keep the best-status (then earliest-chapter)
-    # rendering per distinct source.
+    if not rows:
+        return []
+    return await run_in_threadpool(
+        _score_assist_fuzzy, rows, own_canon, seg["source_hash"]
+    )
+
+
+def _score_assist_fuzzy(rows, own_canon: str, own_hash: str) -> list[dict]:
+    """Pure CPU half of `_assist_fuzzy` (runs off the event loop): fold,
+    dedupe by folded source keeping the best-status rendering, canonical
+    length band, candidate cap, rapidfuzz scoring."""
     by_canon: dict[str, dict] = {}
     for r in rows:
-        if r["source_hash"] == seg["source_hash"]:
+        if r["source_hash"] == own_hash:
             continue
         canon = canonical_zh(r["source_text"] or "")
         if len(canon) < _ASSIST_MIN_SOURCE_LEN:
