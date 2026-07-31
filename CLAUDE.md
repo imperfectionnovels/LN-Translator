@@ -22,13 +22,16 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 
 ```
 .
-├── CLAUDE.md, AGENTS.md, README.md, LICENSE, .env.example
+├── CLAUDE.md, AGENTS.md, README.md, TODO.md, LICENSE, .env.example
 ├── pyproject.toml, .gitignore, LN-Translator.spec
+├── .github/workflows/ci.yml   # CI: windows-latest py3.11/3.12, ruff + em-dash lint + element-ID check + pytest
 ├── docs/
 │   ├── backends.md            # per-backend tuning knobs
 │   ├── exe-build.md           # PyInstaller bundle + first-run wizard
 │   ├── gotchas.md             # recurring CODE pitfalls + their fix
-│   └── decisions.md           # decisions & lessons log: the WHY, settled calls, ruled-out alternatives, mistakes-and-corrections
+│   ├── decisions.md           # decisions & lessons log: the WHY, settled calls, ruled-out alternatives, mistakes-and-corrections
+│   ├── tooling-assessment.md  # survey of external MCP servers / skills / plugins for this project
+│   └── translator-audit.md    # 2026-06-14 diagnosis: glossary lifecycle as the root of "output feels off"
 ├── backend/
 │   ├── main.py                # FastAPI app, lifespan, _probe_backends
 │   ├── app_entry.py           # frozen-mode entry orchestrator: main(), first-run routing, _run_uvicorn (re-exports the app_* helpers)
@@ -37,7 +40,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── db.py                  # SCHEMA, _ADDITIVE_MIGRATIONS, init_db, _drop_dead_columns, drain_on_startup hooks
 │   ├── models.py              # Pydantic models
 │   ├── genres.py              # GENRES registry + resolve_genre()
-│   ├── routes/                # 16 routers, mounted under /api
+│   ├── routes/                # 15 routers, mounted under /api
 │   │   ├── translate.py           # /paste, /upload, /bulk + /append/* + /insert (mid-novel) + /scrape
 │   │   ├── novels.py              # /novels list/get/patch/delete + downloads
 │   │   ├── chapters.py            # /chapters, /retranslate, /edit-paragraph, /retry-refinement
@@ -48,7 +51,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── config_kv.py           # /config/{key} GET/PUT — first_run_complete + novel_defaults live here
 │   │   ├── observations.py        # observer hits (read-only)
 │   │   ├── imports.py             # resumable scrape/import job status feed
-│   │   ├── stats.py, cache.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
+│   │   ├── stats.py, bookmarks.py, find_replace.py, tm.py  # (cover endpoints fold into novels.py)
 │   │   ├── quality.py             # cockpit: /novels/{id}/quality + /consistency + /chapters/{n}/quality (read-only); chapters.py adds /learn-edits (+/commit)
 │   ├── services/
 │   │   ├── parser.py              # chapter heading detection, reconcile_chapter_numbers
@@ -71,6 +74,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── translation_attempts.py, fr_snapshots.py, soft_delete.py, genres_novel.py, lang_detect.py
 │   │   ├── quality_dashboard.py   # cockpit read service: wraps quality_report/consistency_eval cores with a run_in_threadpool offload + pull-based version-token cache
 │   │   ├── learn_from_edits.py    # build_proposal/commit_proposal: route a chapter's captured style_edits -> glossary casing fixes + brief notes + ground-truth (stage-then-commit)
+│   │   ├── consistency.py         # edit-mode consistency rail: deterministic fuzzy-TM + locked-term-missing detectors (read-only, on-demand)
+│   │   ├── _task_registry.py      # strong-reference registry for fire-and-forget asyncio tasks (prevents GC-dropped work)
 │   │   ├── epub_export.py, covers.py, stats.py
 │   │   ├── scrapers/              # per-site recipe registry: base.py + cloudflare/piaotian/sixnineshu/syosetu/uukanshu/...
 │   │   └── translators/
@@ -81,22 +86,32 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │       ├── gemini.py          # Google Gemini API
 │   │       ├── deepseek.py        # OpenAI-compatible single-pass translator (delimited envelope)
 │   │       ├── openai_compatible.py, _openai_errors.py  # shared OpenAI-SDK base + transient-retry helper (openai/xai/mistral/qwen/zhipu/moonshot/groq/openrouter/ollama subclasses)
+│   │       ├── openai_compatible_generic.py  # catch-all OpenAI-compatible type: user supplies base_url + model_id directly
 │   │       ├── anthropic_api.py, google_translate_free.py  # Anthropic API + free Google-Translate NMT backends
-│   │       └── _subprocess_utils.py, _cli_base.py  # shared subprocess plumbing (run_subprocess/resolve_binary) + SubprocessCliTranslator base for CLI backends (codex_cli/gemini_cli/opencode)
+│   │       ├── codex_cli.py, gemini_cli.py, opencode.py  # CLI subprocess backends built on SubprocessCliTranslator
+│   │       └── _subprocess_utils.py, _cli_base.py  # shared subprocess plumbing (run_subprocess/resolve_binary) + SubprocessCliTranslator base for the CLI backends
 │   ├── prompts/                   # genre-aware prompt hierarchy (ships in the EXE bundle)
 │   │   ├── base.md                # genre-agnostic literary translator core
 │   │   ├── genres/<key>.md        # 10 overlays: xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl (+ generic as legacy fallback)
 │   │   └── examples/<key>.md      # per-genre worked examples
 │   ├── scripts/                   # maintenance + learn-from-edits tooling
+│   │   ├── _db_banner.py              # shared DB-target banner + write confirmation for the dev scripts (two-database gotcha)
 │   │   ├── load_glossary_md.py        # load data/glossary.md preset
+│   │   ├── load_house_lexicon.py      # one-shot seed of the cross-novel house lexicon into the global glossary
 │   │   ├── ingest_edited_chapter.py   # learn-from-edits: diff a hand-edited chapter, route deltas
 │   │   ├── diff_against_edit.py        # ground-truth diff: a translation vs a hand edit
 │   │   ├── ab_style_edits.py           # A/B the captured style-edit prompt arm
 │   │   ├── retranslate_chapter.py      # re-run one chapter through the live pipeline
 │   │   ├── consistency_eval.py         # read-only cross-chapter consistency baseline (TCR/reuse) + McNemar/bootstrap helpers
 │   │   ├── quality_metrics.py          # tracked port of the ww_metrics rule-category scorers (pure, importable)
-│   │   └── quality_report.py           # multi-chapter quality scorecard: per-category matrix + observation harvest + group-by prompt_config_snapshot + A/B diff
-│   └── tests/                     # 80+ pytest modules
+│   │   ├── quality_report.py           # multi-chapter quality scorecard: per-category matrix + observation harvest + group-by prompt_config_snapshot + A/B diff
+│   │   ├── realign_tm.py               # re-run TM paragraph alignment over stored chapters after an aligner change
+│   │   ├── reapply_term_casing.py      # re-apply current glossary casing to committed chapters, no LLM (dry-run default)
+│   │   ├── glossary_cleanup_casing.py  # corpus-wide cleanup of stored Title-Case pollution on generic abstracts
+│   │   ├── glossary_register_audit.py  # read-only corpus audit of glossary lifecycle + fixup layer
+│   │   └── normalize_existing_emphasis.py  # strip stray unpaired Markdown emphasis from stored chapters
+│   └── tests/                     # 138 pytest modules
+│       └── fixtures/scrapers/     # saved HTML fixture pages for the per-site scraper recipes (piaotian/syosetu/uukanshu)
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
 │   ├── settings.html, queue.html, stats.html, quality.html, find-replace.html, novel-overview.html, onboarding.html
@@ -111,9 +126,11 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │       ├── reader-core.js, reader-toc.js, reader-glossary.js, reader-consistency.js, reader-chapter.js, reader-edit.js, reader-quality.js  # reader.js split into ordered modules (plain <script> tags, source-order = concat-identical; core first owns shared state, quality last = cockpit badge + learn-from-edits panel)
 │       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
 │       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js
+│       └── vendor/            # marked + DOMPurify (reader Markdown rendering only)
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
 │   ├── fetch_fonts.py                                   # download + subset the self-hosted fonts
+│   ├── check_element_ids.py                             # CI + pre-commit gate: JS element-ID derefs must exist in the page's HTML
 │   └── dash_hook.py, check_em_dashes.py                 # em-dash PostToolUse guard + lint
 ├── tools/                     # dev tooling (not packaged)
 │   └── sqlite_ro_mcp.py       # read-only SQLite MCP server (wired in .mcp.json)
@@ -123,7 +140,11 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
     ├── llm_cache/             # content-addressed translation cache
     ├── covers/                # uploaded novel cover images
     ├── logs/                  # frozen-build startup.log mirror
-    └── runtime/               # per-genre system-prompt cache files
+    ├── runtime/               # per-genre system-prompt cache files
+    ├── quality_reports/       # saved quality_report JSON scorecards
+    ├── ww_corpus/             # wuxiaworld reference-translation corpus for prompt batteries
+    ├── rule_trials/           # per-rule adversarial trial outputs (phase15 audit)
+    └── webview-data/          # pywebview/WebView2 profile data for the dev EXE run
 ```
 
 ## Environment setup
@@ -249,7 +270,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1484 tests.
+- `pytest backend/tests`. Currently 1592 tests across 138 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

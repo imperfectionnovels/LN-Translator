@@ -182,3 +182,25 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   sub-range never triggers a whole-novel scan it would discard. The two per-key locks
   never form a cycle (consistency never calls scorecard), so no deadlock. Regression
   tests pin all three (refined-body TCR, token-busts-on-style-edit, scan-runs-once).
+
+## 2026-07-30: phase-0 hygiene sweep (CAT-pivot prep)
+
+- **Dead HTTP surfaces removed, their service cores kept.** `GET /api/cache/stats`
+  (whole router), `GET /api/novels/{id}/tm/inconsistencies`, the novel-rollup
+  `GET /api/novels/{id}/observations`, and both observation bulk-dismiss POSTs had
+  zero UI callers (verified by grep over frontend/js). The engines stay:
+  `llm_cache.get_stats` still feeds `/api/diagnostics`, and
+  `services/tm.py::find_inconsistencies` still feeds the queue's tm_inconsistency
+  observations. Deleting a route is cheap to undo; the cores are load-bearing.
+- **test_cache_stats.py was NOT deleted wholesale** even though the plan listed it:
+  5 of its 6 tests pin the still-live llm_cache counter behavior (the only coverage
+  of `get_stats`/`reset_stats`). Only the endpoint test died with the route. Same
+  judgment in test_tm_routes.py: the file had no concordance tests to "keep", so it
+  was repurposed to pin the kept concordance route instead of being deleted.
+- **`GET /api/imports/{id}/status` kept with an honest docstring.** Its claim of
+  "used by library card badges" was false (badges render from the /api/novels
+  payload); it stays as a scripting/polling surface, test-covered.
+- **Nav chords:** Quality cockpit is `g y` (the `g q` the plan suggested collides
+  with Queue); Global glossary is `g b`. Spine placement: Quality joins the
+  novel-scoped trio (reader/glossary/quality, /library fallback when no lastNovel);
+  Global glossary sits in the Studio foot (cross-novel = app-level).

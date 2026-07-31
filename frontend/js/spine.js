@@ -23,6 +23,7 @@
     <a data-nav="library" href="/library" title="Library" aria-label="Library"><span class="han">籍</span><span class="lbl">Library</span></a>
     <a data-nav="reader" id="reader-link" href="/library" title="Reader" aria-label="Reader"><span class="han">讀</span><span class="lbl">Reader</span></a>
     <a data-nav="glossary" id="glossary-link" href="/library" title="Glossary" aria-label="Glossary"><span class="han">詞</span><span class="lbl">Glossary</span></a>
+    <a data-nav="quality" id="quality-link" href="/library" title="Quality" aria-label="Quality"><span class="han">質</span><span class="lbl">Quality</span></a>
     <a data-nav="import" href="/" title="Import" aria-label="Import"><span class="han">入</span><span class="lbl">Import</span></a>
     <a data-nav="queue" href="/queue" title="Queue" aria-label="Queue"><span class="han">列</span><span class="lbl">Queue</span></a>
   </nav>
@@ -31,6 +32,7 @@
     <div class="studio-rule" aria-hidden="true"></div>
     <div class="studio-label">Studio</div>
     <nav class="spine-nav" aria-label="Studio">
+      <a data-nav="glossary-global" href="/glossary/global" title="Global Glossary" aria-label="Global Glossary"><span class="han">典</span><span class="lbl">Global Glossary</span></a>
       <a data-nav="settings" href="/settings" title="App Settings" aria-label="App Settings"><span class="han">設</span><span class="lbl">App Settings</span></a>
     </nav>
   </div>`;
@@ -55,11 +57,13 @@
 
   const path = location.pathname;
   const page =
-    path.indexOf("/reader") === 0   ? "reader"   :
-    path.indexOf("/glossary") === 0 ? "glossary" :
-    path.indexOf("/library") === 0  ? "library"  :
-    path.indexOf("/queue") === 0    ? "queue"    :
-    path.indexOf("/settings") === 0 ? "settings" : "import";
+    path.indexOf("/reader") === 0          ? "reader"          :
+    path.indexOf("/glossary/global") === 0 ? "glossary-global" :
+    path.indexOf("/glossary") === 0        ? "glossary"        :
+    path.indexOf("/quality") === 0         ? "quality"         :
+    path.indexOf("/library") === 0         ? "library"         :
+    path.indexOf("/queue") === 0           ? "queue"           :
+    path.indexOf("/settings") === 0        ? "settings" : "import";
 
   // theme.js's syncButtons() ran before our markup existed, so re-mark the
   // active theme swatch here. Future clicks are handled by theme.js's
@@ -75,14 +79,14 @@
     el.classList.toggle("on", active);
     if (active) el.setAttribute("aria-current", "page");
 
-    if (el.tagName === "A" && (nav === "reader" || nav === "glossary")) {
+    if (el.tagName === "A" && (nav === "reader" || nav === "glossary" || nav === "quality")) {
       if (novelId) {
         // Omit &ch so the reader resumes on its persisted last-read chapter
         // (lastRead:<novelId>) instead of always forcing chapter 1; the
         // reader treats a missing ch param as "no explicit chapter".
-        el.href = nav === "reader"
-          ? "/reader?novel=" + novelId
-          : "/glossary?novel=" + novelId;
+        el.href = nav === "reader"   ? "/reader?novel=" + novelId
+                : nav === "glossary" ? "/glossary?novel=" + novelId
+                :                      "/quality?novel=" + novelId;
         el.classList.remove("disabled");
       } else {
         el.href = "/library";

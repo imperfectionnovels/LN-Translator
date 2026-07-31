@@ -4,10 +4,11 @@
  * Mode-aware: when on the reader, filters out edit-only actions if
  * body[data-reader-mode] === "read".
  *
- * Global nav chord: `g` followed within 1.5s by one of l/r/g/i/q/s/n
- * jumps to library/reader/glossary/import/queue/settings/novel-page.
- * Reader/Glossary use the lastNovel localStorage (same as spine.js)
- * so a "no novel context" tap still goes to library.
+ * Global nav chord: `g` followed within 1.5s by one of l/r/g/i/q/s/n/y/b
+ * jumps to library/reader/glossary/import/queue/settings/novel-page/
+ * quality/global-glossary. Reader/Glossary/Quality use the lastNovel
+ * localStorage (same as spine.js) so a "no novel context" tap still
+ * goes somewhere sensible.
  *
  * Loaded on every HTML page (analogous to spine.js). Self-mounting via
  * a singleton guard so multiple <script> includes don't double-bind.
@@ -89,12 +90,14 @@
       { id: "nav-library", label: "Go to library", hint: "g l", run: () => location.href = "/library" },
       { id: "nav-reader", label: "Open reader", hint: "g r", run: () => location.href = `/reader${novelQs}` },
       { id: "nav-glossary", label: "Open glossary", hint: "g g", run: () => location.href = `/glossary${novelQs}` },
+      { id: "nav-glossary-global", label: "Global glossary", hint: "g b", run: () => location.href = "/glossary/global" },
       { id: "nav-novel-page", label: "Open novel page", hint: "g n", run: () => location.href = `/novel${novelIdQs}` },
       { id: "nav-import", label: "Import chapters", hint: "g i", run: () => location.href = "/" },
       { id: "nav-queue", label: "Open queue", hint: "g q", run: () => location.href = "/queue" },
       { id: "nav-settings", label: "Open app settings", hint: "g s", run: () => location.href = "/settings" },
       { id: "nav-find-replace", label: "Find & Replace", run: () => location.href = "/find-replace" },
       { id: "nav-stats", label: "Stats dashboard", run: () => location.href = "/stats" },
+      { id: "nav-quality", label: "Quality cockpit", hint: "g y", run: () => location.href = `/quality${novelQs}` },
       // Theme actions — always available; call into theme.js setters.
       { id: "theme-rice", label: "Theme: Rice (light)", run: () => window.__setTheme?.("rice") },
       { id: "theme-vellum", label: "Theme: Vellum (warm)", run: () => window.__setTheme?.("vellum") },
@@ -239,6 +242,8 @@
     q: () => location.href = "/queue",
     s: () => location.href = "/settings",
     n: () => location.href = `/novel${_lastNovelId() ? `?id=${_lastNovelId()}` : ""}`,
+    y: () => location.href = `/quality${_lastNovelId() ? `?novel=${_lastNovelId()}` : ""}`,
+    b: () => location.href = "/glossary/global",
   };
 
   document.addEventListener("keydown", (e) => {

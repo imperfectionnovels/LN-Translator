@@ -14,7 +14,6 @@ User report 2026-06-11: the translator "doesn't use the most appropriate word" (
 
 ## Open user decisions / watch items (do not act without the user)
 
-- RESTART the running app on a current build: live ch428-435 still translated under phase14 (the running EXE bundles the old prompt stack; phase15+17 fixes only reach new translations after restart). Fresh builds were uploaded to v0.1.0-beta.1 and parked at `%LOCALAPPDATA%\Temp\ln-dist-phase17\` (dist\ was locked by the running app).
 - GLOS-TITLELEN further lever: a glossary short-handle field (feature work, user's call). Phase15 already moved pronoun:title from 11 to 4 on ch437; pros run 3.6-6.1:1.
 - Dev battery watch: ch414 coined name 天语馄烨龙章 romanized inconsistently; pin with a glossary entry if it recurs.
 - Phase17 watch items (data/opus_ab_phase17_memo.md): "as the words fell" calque (single instance); ch414 unmarked interior panic rendered as spoken quotes once; COLD-ABUT moved 9/18, room remains if the user still hears flat seams.
