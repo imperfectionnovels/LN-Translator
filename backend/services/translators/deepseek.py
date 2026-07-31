@@ -286,7 +286,13 @@ class DeepSeekTranslator(BaseTranslator):
                         + build_count_corrective(e.got, e.expected)
                     )
                     continue
-                assert result is not None  # parse succeeded before the raise
+                if result is None:
+                    # Unreachable: the mismatch is raised only after a parse
+                    # succeeded. An explicit raise (not assert) so the guard
+                    # survives python -O.
+                    raise RuntimeError(
+                        "paragraph count mismatch without a parsed result"
+                    )
                 return result.model_copy(
                     update={"paragraph_count_status": COUNT_MISMATCH_ACCEPTED}
                 ), False

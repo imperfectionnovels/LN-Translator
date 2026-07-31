@@ -47,6 +47,25 @@ def test_heading_only_text_yields_empty_list():
     assert effective_source_paragraphs("第1章 开端") == []
 
 
+def test_ordinal_time_phrase_is_not_a_heading():
+    # 第二天 ("the next day") starts with 第 + a numeral but has no 章/回/节
+    # marker: it is prose and must survive. A future widening of _HEADING_RE
+    # that swallows it re-keys stored segmentations and must fail here.
+    text = "第二天，他醒了。\n\n窗外下着雨。"
+    assert effective_source_paragraphs(text) == ["第二天，他醒了。", "窗外下着雨。"]
+
+
+def test_english_chapter_heading_is_not_dropped():
+    # The detector is deliberately conservative: only the CJK 第N章/回/节
+    # shape counts, so an English "Chapter N" first line is NOT dropped.
+    # (It then joins the next paragraph because "Gate" is a non-terminal
+    # ending; the point pinned here is that the line survives at all.)
+    text = "Chapter 5: The Gate\n\nHe stepped through."
+    assert effective_source_paragraphs(text) == [
+        "Chapter 5: The Gate He stepped through.",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Blank-line split
 # ---------------------------------------------------------------------------

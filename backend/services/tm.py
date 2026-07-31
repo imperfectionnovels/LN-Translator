@@ -27,49 +27,29 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 from dataclasses import dataclass
 
 import aiosqlite
 
-logger = logging.getLogger(__name__)
-
-
-# CJK paragraph break: blank line under either CRLF or LF line endings.
-_PARAGRAPH_BREAK_RE = re.compile(r"(?:\r?\n){2,}")
-
-# CJK chapter heading patterns we want to drop from the source before
-# pairing — the target's title is in title_en (a separate column) so the
-# corresponding paragraph index would otherwise be off-by-one. Conservative
-# match: only strip when the FIRST source paragraph is a heading-shaped
-# short line. Mirrors `_PRINTED_NUMBER_RE` in parser.py.
-_HEADING_RE = re.compile(
-    r"^[ \t]*第[\d零〇一二三四五六七八九十百千万两]+[ \t]*[章回节][^\n]*$",
+# The paragraph splitter, the heading detector, and their regexes are OWNED by
+# services/segmentation.py (they are load-bearing for the version-frozen 1:1
+# segmentation contract; any behavior change there bumps SEGMENTATION_VERSION).
+# Re-exported here under their historical names so this module's callers
+# (consistency.py, consistency_eval.py, tests) keep working unchanged.
+from backend.services.segmentation import (  # noqa: F401  (re-export)
+    _HEADING_RE,
+    _PARAGRAPH_BREAK_RE,
+    _drop_leading_heading,
+    _split_paragraphs,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _hash_source(text: str) -> str:
     """Stable 16-hex prefix of SHA256(text). Cheap, collision-resistant
     enough for per-novel TM lookup."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
-def _split_paragraphs(text: str) -> list[str]:
-    """Split on blank lines (CRLF or LF), strip whitespace, drop empties."""
-    if not text:
-        return []
-    return [p.strip() for p in _PARAGRAPH_BREAK_RE.split(text) if p.strip()]
-
-
-def _drop_leading_heading(paragraphs: list[str]) -> list[str]:
-    """If the first paragraph is a Chinese chapter heading, drop it.
-
-    Keeps source and target paragraph indices in step after the title
-    extraction. Idempotent: returns the input unchanged when no heading
-    is on the first line."""
-    if paragraphs and _HEADING_RE.match(paragraphs[0]):
-        return paragraphs[1:]
-    return paragraphs
 
 
 @dataclass(frozen=True)

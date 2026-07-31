@@ -11,23 +11,54 @@ position becomes a stable key for the Phase 2 segment store.
 `split_target_paragraphs` is the counterpart used to validate a translated or
 refined body against that contract: a plain blank-line split.
 
-The join heuristic is FROZEN once shipped: stored segmentations are keyed by
-paragraph position, so changing what counts as a terminal ending would re-key
-every stored row. Any change here must bump SEGMENTATION_VERSION (Phase 2
-persists it per chapter).
+The segmentation heuristic is FROZEN once shipped: stored segmentations are
+keyed by paragraph position, so changing what counts as a paragraph, a
+heading, or a terminal ending would re-key every stored row. THIS module owns
+the canonical `_split_paragraphs`, `_drop_leading_heading`, and their regexes
+(`_PARAGRAPH_BREAK_RE`, `_HEADING_RE`); tm.py re-exports them for its aligner
+and the consistency tooling, so the two stacks cannot drift. Any behavior
+change to anything in this module requires a SEGMENTATION_VERSION bump
+(Phase 2 persists it per chapter).
 
 Pure text logic: no DB access, no LLM access.
 """
 
 from __future__ import annotations
 
-# The blank-line splitter and the conservative chapter-heading detector are
-# tm.py's; importing them keeps this module and the Phase 2 aligner from ever
-# drifting apart on what a "paragraph" or a "heading" is.
-from backend.services.tm import _drop_leading_heading, _split_paragraphs
+import re
 
-# Bumped on ANY change to the terminal-ending classification or the join rule.
+# Bumped on ANY change to the paragraph split, the heading detector, the
+# terminal-ending classification, or the join rule.
 SEGMENTATION_VERSION = 1
+
+# Paragraph break: blank line under either CRLF or LF line endings.
+_PARAGRAPH_BREAK_RE = re.compile(r"(?:\r?\n){2,}")
+
+# CJK chapter-heading pattern dropped from the source before segmentation.
+# Conservative on purpose: only a first paragraph shaped like 第N章/回/节
+# counts (mirrors `_PRINTED_NUMBER_RE` in parser.py). Widening this re-keys
+# every stored segmentation, so a change here is a SEGMENTATION_VERSION bump.
+_HEADING_RE = re.compile(
+    r"^[ \t]*第[\d零〇一二三四五六七八九十百千万两]+[ \t]*[章回节][^\n]*$",
+)
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Split on blank lines (CRLF or LF), strip whitespace, drop empties."""
+    if not text:
+        return []
+    return [p.strip() for p in _PARAGRAPH_BREAK_RE.split(text) if p.strip()]
+
+
+def _drop_leading_heading(paragraphs: list[str]) -> list[str]:
+    """If the first paragraph is a Chinese chapter heading, drop it.
+
+    Keeps source and target paragraph indices in step after the title
+    extraction. Idempotent: returns the input unchanged when no heading
+    is on the first line."""
+    if paragraphs and _HEADING_RE.match(paragraphs[0]):
+        return paragraphs[1:]
+    return paragraphs
 
 # Sentence-terminal punctuation. A paragraph whose last character is one of
 # these ends a sentence, so the source's paragraph break there is real.

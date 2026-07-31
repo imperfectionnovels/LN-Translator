@@ -89,6 +89,7 @@ STYLISTIC_KINDS = frozenset({
     "double_possessive",
     "mid_sentence_paragraph_break",
     "intensifier_inflation",
+    "paragraph_count_drift",
 })
 
 
@@ -210,6 +211,34 @@ def implicit_observation_tm_inconsistency(
             f"TM inconsistency: source paragraph \"{short_source}\" has "
             f"been translated {len(distinct)} different ways across this "
             f"novel — {rendered_list}. Open the concordance to compare."
+        ),
+    )
+
+
+def implicit_observation_paragraph_count_drift(
+    got: int, expected: int, stage: str,
+) -> NormalizedObservation:
+    """Synthesize the implicit 'paragraph_count_drift' observation (CAT
+    Phase 1).
+
+    Fired by the queue worker when the COMMITTED body's blank-line paragraph
+    count diverges from the pre-joined source paragraph count. Two ways in:
+    the model's count violation was accepted on the second miss, or a
+    post-validation deterministic fixup (comma-break weld, leading-title
+    strip) changed the count after validation passed. Observation only, no
+    retry: it keeps the 1:1 violation rate measurable end to end, and marks
+    chapters whose positional paragraph map Phase 2 must not trust.
+    `stage` is 'translation' or 'refinement' so the two passes stay
+    distinguishable in the panel."""
+    return NormalizedObservation(
+        kind="paragraph_count_drift",
+        severity="info",
+        paragraph_index=None,
+        excerpt=(
+            f"Paragraph count drift ({stage}): the committed body has {got} "
+            f"blank-line-separated paragraphs but the source map expects "
+            f"{expected}. Paragraph positions in this chapter cannot be "
+            f"trusted as a 1:1 map."
         ),
     )
 

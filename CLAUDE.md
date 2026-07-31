@@ -59,6 +59,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── scraper.py             # URL fetch with SSRF + size + timeout guards
 │   │   ├── queue.py               # the translator worker (single asyncio.Lock, serial)
 │   │   ├── refiner.py             # Phase-4 refinement worker (chains off queue under same lock)
+│   │   ├── segmentation.py        # 1:1 paragraph contract: pre-joined effective source paragraphs + target split; owns the frozen split/heading helpers (SEGMENTATION_VERSION)
 │   │   ├── glossary.py, glossary_filters.py, glossary_casing.py   # admit / lock / cased normalization
 │   │   ├── global_glossary.py, tm.py, find_replace.py             # cross-novel helpers
 │   │   ├── text_fixups.py         # deterministic enforce_* transforms (em-dash, brackets, casing)
@@ -278,7 +279,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 **Adding a translator backend**:
 1. Subclass `BaseTranslator` in `services/translators/`. For OpenAI-compatible vendors, subclass `OpenAICompatibleTranslator` instead — most subclasses end up <20 lines (just set `name` + `DEFAULT_BASE_URL`). For CLI subprocess wrappers, see `_subprocess_utils.py` for the shared `run_subprocess` / `resolve_binary` / `build_argv` helpers.
-2. Implement `_complete(prompt: str) -> str` and `_complete_plain(prompt: str) -> str`. Set `name`, `model_id`. (Inherited from `OpenAICompatibleTranslator` for OpenAI-compatible vendors.)
+2. Implement `_complete(prompt: str) -> str` and `_complete_plain(prompt: str) -> str`. Set `name`, `model_id`. (Inherited from `OpenAICompatibleTranslator` for OpenAI-compatible vendors.) Never tick the per-chapter call budget (`_check_call_budget`) inside these hooks; the orchestration layer owns ticking, and an inner tick double-counts every structured call.
 3. Add a `TypeEntry(...)` to `services/translator_catalog.py::_CATALOG` — this is the single source of truth for `provider_type` values, curated model lists, auth shape, and form defaults. `KNOWN_PROVIDER_TYPES` derives from it automatically.
 4. Add a `{type: (module_path, class_name)}` row to `services/translators/factory.py::_DISPATCH`. The catalog-parity test (`test_translator_catalog.py`) enforces that catalog and dispatch keys agree.
 5. Add a probe path to `main.py::_probe_one` so misconfiguration fails fast. For CLI types, use `probe_binary(...)`; for API-key types the generic API-key branch already covers the secret-resolution check.

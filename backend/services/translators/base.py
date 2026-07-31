@@ -894,12 +894,13 @@ class BaseTranslator(ABC):
 
         # Reset the per-chapter call counter + usage accumulator, stash the
         # genre-aware system instruction, build the prompt, and derive the
-        # cache key. _check_call_budget() ticks the counter once per _complete
-        # / _complete_plain invocation; _emit_usage() adds to the accumulator
-        # after each successful call. The system instruction is built BEFORE
-        # the cache key so the key folds in the prompt content; backend
-        # _complete hooks read self.system_instruction without signature
-        # changes.
+        # cache key. The call budget is ticked only at the orchestration
+        # sites (the retry loop below, _plain_text_fallback, and DeepSeek's
+        # _translate_once), once per real LLM call; _emit_usage() adds to the
+        # accumulator after each successful call. The system instruction is
+        # built BEFORE the cache key so the key folds in the prompt content;
+        # backend _complete hooks read self.system_instruction without
+        # signature changes.
         prompt, cache_key = self._begin_chapter(
             chapter_zh, title_zh, glossary, previous_context, style_edits,
             style_note=style_note, genre=genre, custom_brief=custom_brief,
@@ -959,7 +960,7 @@ class BaseTranslator(ABC):
                 # and cache hits never replay a stale snapshot. The mismatch
                 # status is per-call metadata and rides the same post-cache
                 # stamp so cache hits never replay a retry history.
-                update: dict = {"prompt_snapshot": current_prompt}
+                update: dict[str, str] = {"prompt_snapshot": current_prompt}
                 if mismatch_retried:
                     update["paragraph_count_status"] = COUNT_MISMATCH_RETRY
                 result = result.model_copy(update=update)
@@ -982,7 +983,13 @@ class BaseTranslator(ABC):
                 # (the cache must never hold a violating envelope) and never
                 # routed to the plain-text fallback (the prose itself is fine;
                 # only the paragraph map is off).
-                assert result is not None  # parse succeeded before the raise
+                if result is None:
+                    # Unreachable: the mismatch is raised only after a parse
+                    # succeeded. An explicit raise (not assert) so the guard
+                    # survives python -O.
+                    raise RuntimeError(
+                        "paragraph count mismatch without a parsed result"
+                    )
                 result = result.model_copy(update={
                     "prompt_snapshot": current_prompt,
                     "paragraph_count_status": COUNT_MISMATCH_ACCEPTED,
@@ -1081,9 +1088,12 @@ class BaseTranslator(ABC):
         """Run the primary translation call. Return the raw model text — the
         delimited envelope (`TITLE_EN: ...\\n=====BODY=====\\n...\\n=====TERMS=====\\n[...]`)
         that `parse_delimited_response` will consume. Provider-specific
-        envelope stripping (Claude CLI JSON wrapper, etc.) happens here."""
+        envelope stripping (Claude CLI JSON wrapper, etc.) happens here.
+        Do NOT tick the call budget inside this hook; the orchestration
+        layer owns ticking (see _check_call_budget)."""
 
     @abstractmethod
     async def _complete_plain(self, prompt: str) -> str:
         """Run a plain-text completion (no delimited envelope) for the
-        fallback path."""
+        fallback path. Do NOT tick the call budget inside this hook; the
+        orchestration layer owns ticking (see _check_call_budget)."""

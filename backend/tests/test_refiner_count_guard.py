@@ -17,7 +17,10 @@ from backend.db import init_db, open_conn
 from backend.services import providers as providers_svc
 from backend.services import queue as queue_svc
 from backend.services import refiner as refiner_svc
-from backend.services.translators.base import ParagraphCountMismatch
+from backend.services.translators.base import (
+    ParagraphCountMismatch,
+    build_count_corrective,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,7 +219,7 @@ async def test_single_violation_then_good_retry_commits(monkeypatch):
         row = await cur.fetchone()
     assert len(calls) == 2
     corrective = calls[1].get("corrective_note") or ""
-    assert "exactly 3 blank-line-separated paragraphs" in corrective
+    assert build_count_corrective(1, 3, source_label="draft") in corrective
     assert row["refinement_status"] == "done"
     assert row["refined_text"] is not None
     assert row["refinement_error"] is None
@@ -291,6 +294,42 @@ async def test_discarded_refinement_never_cached_end_to_end(
     assert row["refinement_status"] == "done"
     assert row["refined_text"] is not None
     assert "polished" in row["refined_text"]
+
+
+async def test_refiner_post_fixup_drift_emits_observation(monkeypatch):
+    """The refiner fixups run after refine_chapter's count validation, so the
+    committed refined body can diverge from the draft count. The queue emits
+    a paragraph_count_drift observation in the same commit; the refinement
+    still lands (observation only, no behavior change)."""
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_refinable_chapter(refiner_id)
+
+    async def _stub_refine(draft, provider, glossary=None, **kw):
+        # Simulates a post-validation count change: 2 paragraphs for the
+        # 3-paragraph draft, returned without raising.
+        return "Polished paragraph one stays.\n\nPolished paragraph two stays."
+
+    monkeypatch.setattr("backend.services.queue.refine_chapter", _stub_refine)
+
+    async with open_conn() as conn:
+        await queue_svc._refine_chapter_in_db(conn, novel_id, chapter_id)
+        cur = await conn.execute(
+            "SELECT refinement_status, refined_text FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+        cur = await conn.execute(
+            "SELECT kind, excerpt FROM chapter_observations "
+            "WHERE chapter_id = ? AND kind = 'paragraph_count_drift'",
+            (chapter_id,),
+        )
+        obs = await cur.fetchall()
+    assert row["refinement_status"] == "done"
+    assert row["refined_text"] is not None
+    assert len(obs) == 1
+    assert "2" in obs[0]["excerpt"]
+    assert "3" in obs[0]["excerpt"]
+    assert "refinement" in obs[0]["excerpt"]
 
 
 async def test_refiner_template_states_the_count_contract():

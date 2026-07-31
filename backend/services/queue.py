@@ -38,6 +38,7 @@ from backend.services._task_registry import BackgroundTaskRegistry
 from backend.services.observations import (
     NormalizedObservation,
     implicit_observation_glossary_merge_error,
+    implicit_observation_paragraph_count_drift,
     implicit_observation_tm_inconsistency,
     implicit_observation_translation_degraded,
     normalize_observer_outputs,
@@ -950,6 +951,26 @@ async def _translate_chapter_in_db(
             normalized_observations.append(
                 implicit_observation_translation_degraded()
             )
+        # 1:1 drift signal (CAT Phase 1): the deterministic fixups run AFTER
+        # the count validation, so the committed body can diverge from the
+        # validated count (accepted double miss, or a fixup weld/strip that
+        # changed the count). Observation only, no retry: keeps the violation
+        # rate measurable and marks the chapter as positionally unmappable.
+        if expected_paragraph_count is not None:
+            committed_count = len(split_target_paragraphs(cleaned_text))
+            if committed_count != expected_paragraph_count:
+                logger.info(
+                    "queue: chapter %d paragraph count drift after fixups "
+                    "(%d committed, %d expected)",
+                    r["chapter_num"], committed_count, expected_paragraph_count,
+                )
+                normalized_observations.append(
+                    implicit_observation_paragraph_count_drift(
+                        got=committed_count,
+                        expected=expected_paragraph_count,
+                        stage="translation",
+                    )
+                )
         # F26 (2026-05-25): per-novel observer mute. Read
         # novels.disabled_observers (JSON array of kinds) and filter the
         # observation list before persistence. Lets users mute false-
@@ -1367,6 +1388,31 @@ async def _refine_chapter_in_db(
         "refine ch %d done in %.1fs (provider=%s, %d → %d chars)",
         r["chapter_num"], elapsed, provider.name, len(draft), len(refined),
     )
+    # 1:1 drift signal (CAT Phase 1), mirror of the translate path: the
+    # fixups above run AFTER refine_chapter's count validation, so the
+    # committed refined body can still diverge from the draft's paragraph
+    # count. Observation only, no retry; honors the per-novel observer mute.
+    drift_observation: NormalizedObservation | None = None
+    refined_count = len(split_target_paragraphs(refined))
+    if refined_count != expected_paragraphs:
+        logger.info(
+            "refine ch %d: paragraph count drift after fixups "
+            "(%d committed, %d expected)",
+            r["chapter_num"], refined_count, expected_paragraphs,
+        )
+        drift_observation = implicit_observation_paragraph_count_drift(
+            got=refined_count, expected=expected_paragraphs,
+            stage="refinement",
+        )
+        cur = await conn.execute(
+            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+        )
+        mute_row = await cur.fetchone()
+        muted = parse_disabled_observers(
+            mute_row["disabled_observers"] if mute_row else None
+        )
+        if drift_observation.kind in muted:
+            drift_observation = None
     # Extend the prompt-config snapshot so the refined chapter records which
     # refiner produced the final visible English. Tolerant of a missing /
     # malformed translator-side snapshot so legacy rows still get refiner
@@ -1378,7 +1424,7 @@ async def _refine_chapter_in_db(
     snap_row = await snap_cur.fetchone()
     existing_snapshot = snap_row["prompt_config_snapshot"] if snap_row else None
     merged_snapshot = _extend_snapshot_with_refiner(existing_snapshot, provider)
-    await conn.execute(
+    upd = await conn.execute(
         "UPDATE chapters SET refinement_status = 'done', "
         "refined_text = ?, refined_at = datetime('now'), "
         "refined_by_provider_id = ?, "
@@ -1387,6 +1433,19 @@ async def _refine_chapter_in_db(
         "WHERE id = ? AND refinement_status = 'in_progress'",
         (refined, provider.id, merged_snapshot, chapter_id),
     )
+    # The drift observation rides the same transaction as the refinement
+    # commit (and only when the claim held), so the row always describes the
+    # refined_text the reader actually sees.
+    if drift_observation is not None and (upd.rowcount or 0) > 0:
+        await conn.execute(
+            "INSERT INTO chapter_observations "
+            "(chapter_id, kind, severity, paragraph_index, excerpt) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                chapter_id, drift_observation.kind, drift_observation.severity,
+                drift_observation.paragraph_index, drift_observation.excerpt,
+            ),
+        )
     await conn.commit()
 
 

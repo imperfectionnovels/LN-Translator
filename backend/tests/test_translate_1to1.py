@@ -22,6 +22,7 @@ from backend.models import TranslationResult
 from backend.services.translators.base import (
     BaseTranslator,
     ParagraphCountMismatch,
+    build_count_corrective,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -92,8 +93,7 @@ async def test_first_mismatch_retries_with_corrective_and_recovers(isolated_cach
     # naming both counts.
     assert t.prompts[1].startswith(t.prompts[0])
     corrective_tail = t.prompts[1][len(t.prompts[0]):]
-    assert "exactly 2 blank-line-separated paragraphs" in corrective_tail
-    assert "1" in corrective_tail  # the got-count is cited
+    assert build_count_corrective(1, 2) in corrective_tail
     assert result.paragraph_count_status == "count_mismatch_retry"
     assert result.translated_text == "P one.\n\nP two."
     assert result.degraded is False
@@ -212,7 +212,7 @@ async def test_deepseek_mismatch_corrective_retry_recovers_and_caches_clean(
     assert result.paragraph_count_status == "count_mismatch_retry"
     assert result.translated_text == "P one.\n\nP two."
     assert [label for label, _ in calls] == ["translate", "translate"]
-    assert "exactly 2 blank-line-separated paragraphs" in calls[1][1]
+    assert build_count_corrective(1, 2) in calls[1][1]
 
     # The recovered result was cached with the per-call status stripped: a
     # fresh instance serves it from cache without any LLM call.
@@ -346,6 +346,53 @@ async def test_queue_feeds_prejoined_source_and_expected_count(monkeypatch):
     # Stored source stays verbatim.
     assert row["original_text"] == QUEUE_SOURCE
     assert row["status"] == "done"
+    # Matching committed count: no drift observation.
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM chapter_observations "
+            "WHERE chapter_id = ? AND kind = 'paragraph_count_drift'",
+            (chapter_id,),
+        )
+        drift = await cur.fetchone()
+    assert drift["n"] == 0
+
+
+async def test_queue_emits_paragraph_count_drift_observation(monkeypatch):
+    """When the COMMITTED body's paragraph count diverges from the expected
+    source count (accepted double miss, or a fixup changed the count), the
+    queue emits a paragraph_count_drift observation row. Observation only:
+    the chapter still commits as done."""
+    from backend.db import open_conn
+    from backend.services import queue as queue_svc
+
+    await _fresh_db()
+    novel_id, chapter_id = await _seed_novel_chapter(QUEUE_SOURCE)
+
+    async def _fake_translate(chapter_zh, title_zh, glossary, **kw):
+        # 3 committed paragraphs against an expected count of 2.
+        return TranslationResult(
+            title_en="T", translated_text="A.\n\nB.\n\nC.", new_terms=[],
+            paragraph_count_status="count_mismatch_accepted",
+        )
+
+    monkeypatch.setattr("backend.services.queue.translate_chapter", _fake_translate)
+
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
+        cur = await conn.execute(
+            "SELECT status FROM chapters WHERE id = ?", (chapter_id,),
+        )
+        ch = await cur.fetchone()
+        cur = await conn.execute(
+            "SELECT kind, severity, excerpt FROM chapter_observations "
+            "WHERE chapter_id = ? AND kind = 'paragraph_count_drift'",
+            (chapter_id,),
+        )
+        rows = await cur.fetchall()
+    assert ch["status"] == "done"
+    assert len(rows) == 1
+    assert "3" in rows[0]["excerpt"]
+    assert "2" in rows[0]["excerpt"]
 
 
 async def _run_queue_with_status(monkeypatch, status: str) -> tuple[str, str]:
