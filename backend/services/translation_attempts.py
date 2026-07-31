@@ -22,7 +22,13 @@ from typing import Literal
 import aiosqlite
 from fastapi import HTTPException
 
-AttemptStatus = Literal["ok", "parse_failed", "fallback_plaintext", "error"]
+# count_mismatch_retry: the 1:1 paragraph check failed once and the corrective
+# retry recovered. count_mismatch_accepted: the retry missed too and the body
+# was committed anyway (queryable so Phase 2 can skip unmapped chapters).
+AttemptStatus = Literal[
+    "ok", "parse_failed", "fallback_plaintext", "error",
+    "count_mismatch_retry", "count_mismatch_accepted",
+]
 
 
 @dataclass(frozen=True)

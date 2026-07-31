@@ -586,6 +586,13 @@ class TranslationResult(BaseModel):
     # Token usage for the whole translate_chapter call. None when the
     # backend didn't emit any usage records (e.g. cache hit, claude_cli).
     usage: TokenUsage | None = None
+    # Phase18 CAT 1:1 contract: outcome of the paragraph-count validation.
+    # None = clean pass or validation skipped; "count_mismatch_retry" = the
+    # first response missed the count and the corrective retry recovered;
+    # "count_mismatch_accepted" = the corrective retry missed too and the
+    # body was accepted anyway. Per-call metadata: never stored in the LLM
+    # cache (a cache hit replays the clean result, not the retry history).
+    paragraph_count_status: str | None = None
 
 
 # ----- Provider models -----

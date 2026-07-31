@@ -62,6 +62,10 @@ from backend.services.providers import (
     load_provider,
 )
 from backend.services.refiner import refine_chapter
+from backend.services.segmentation import (
+    effective_source_paragraphs,
+    split_target_paragraphs,
+)
 from backend.services.text_fixups import (
     enforce_balanced_emphasis,
     enforce_brackets,
@@ -79,7 +83,13 @@ from backend.services.text_observers import (
     detect_glossary_predicate_loss,
 )
 from backend.services.translators import translate_chapter
-from backend.services.translators.base import PROMPT_TEMPLATE_VERSION
+from backend.services.translators.base import (
+    COUNT_MISMATCH_ACCEPTED,
+    COUNT_MISMATCH_RETRY,
+    PROMPT_TEMPLATE_VERSION,
+    ParagraphCountMismatch,
+    build_count_corrective,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -596,15 +606,27 @@ async def _record_commit_provenance(
         from backend.services.translation_attempts import (  # noqa: PLC0415
             record_attempt,
         )
+        # Status ladder: the plain-text fallback outranks everything (it means
+        # the envelope itself failed); otherwise a 1:1 paragraph-count outcome
+        # (count_mismatch_retry = corrective retry recovered,
+        # count_mismatch_accepted = second miss committed anyway) is recorded
+        # so a count-violating chapter stays queryable; else "ok".
+        pc_status = getattr(result, "paragraph_count_status", None)
+        if translation_degraded:
+            status = "fallback_plaintext"
+        elif pc_status in (COUNT_MISMATCH_RETRY, COUNT_MISMATCH_ACCEPTED):
+            status = pc_status
+        else:
+            status = "ok"
         await record_attempt(
             conn,
             chapter_id=chapter_id,
             provider_id=provider.id if provider else None,
             model_id=provider.model_id if provider else None,
-            status=("fallback_plaintext" if translation_degraded else "ok"),
+            status=status,
             parse_error=getattr(result, "parse_error", None),
             prompt_snapshot=getattr(result, "prompt_snapshot", None),
-            retry_count=0,
+            retry_count=1 if pc_status else 0,
         )
     except Exception:
         # Diagnostics MUST NOT fail the commit. Log and move on.
@@ -833,7 +855,23 @@ async def _translate_chapter_in_db(
         # never translates one into TITLE_EN. Prompt-time only — the stored
         # title_zh / original_text keep the source verbatim.
         prompt_title_zh = strip_title_update_marker(r["title_zh"]) or None
-        prompt_source = strip_heading_update_marker(r["original_text"])
+        # 1:1 contract (CAT Phase 1): the model reads the pre-joined effective
+        # source paragraphs (heading dropped: the title travels on the prompt's
+        # title line; mid-sentence blank-line breaks joined deterministically)
+        # and must return exactly one output paragraph per source paragraph.
+        # Prompt-time only: stored original_text stays verbatim. The marker
+        # strip stays first so a non-第N章 heading that survives the paragraph
+        # drop still loses its update marker.
+        marker_stripped_source = strip_heading_update_marker(r["original_text"])
+        source_paragraphs = effective_source_paragraphs(marker_stripped_source)
+        if source_paragraphs:
+            prompt_source = "\n\n".join(source_paragraphs)
+            expected_paragraph_count: int | None = len(source_paragraphs)
+        else:
+            # Degenerate chapter (e.g. heading-only body): keep the legacy
+            # verbatim prompt and skip the count validation.
+            prompt_source = marker_stripped_source
+            expected_paragraph_count = None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,
@@ -846,11 +884,21 @@ async def _translate_chapter_in_db(
             custom_brief=novel_meta["custom_style_brief"],
             free_draft=free_draft,
             source_language=novel_meta["source_language"],
+            expected_paragraph_count=expected_paragraph_count,
         )
         logger.info(
             "queue: chapter %d translate stage %.1fs",
             r["chapter_num"], time.perf_counter() - translate_t0,
         )
+        # Observer convention: mismatch outcomes are logged, never retried
+        # further here. The attempt row records the same status via
+        # _record_commit_provenance so it stays queryable.
+        paragraph_count_status = getattr(result, "paragraph_count_status", None)
+        if paragraph_count_status:
+            logger.info(
+                "queue: chapter %d paragraph count %s (source has %s paragraphs)",
+                r["chapter_num"], paragraph_count_status, expected_paragraph_count,
+            )
 
         # Pure deterministic text fixups (casing, em-dash, brackets, title
         # normalization). No LLM. Returns the canonical title + committed body.
@@ -1236,9 +1284,47 @@ async def _refine_chapter_in_db(
     glossary = glossary_svc.filter_glossary_for_chapter(
         glossary, draft, r["original_text"] or ""
     )
+    # 1:1 contract (CAT Phase 1): the refinement must return exactly one
+    # output paragraph per draft paragraph. refine_chapter validates before
+    # its cache store and raises ParagraphCountMismatch; the ladder here is
+    # one corrective retry, then DISCARD (the draft costs nothing to fall
+    # back to, so no accept-and-flag arm like the translator has).
+    expected_paragraphs = len(split_target_paragraphs(draft))
     refine_t0 = time.perf_counter()
     try:
-        refined = await refine_chapter(draft, provider, glossary=glossary)
+        try:
+            refined = await refine_chapter(
+                draft, provider, glossary=glossary,
+                expected_paragraph_count=expected_paragraphs,
+            )
+        except ParagraphCountMismatch as first_miss:
+            logger.info(
+                "refine ch %d: refiner returned %d paragraphs for a "
+                "%d-paragraph draft; corrective retry",
+                r["chapter_num"], first_miss.got, first_miss.expected,
+            )
+            refined = await refine_chapter(
+                draft, provider, glossary=glossary,
+                expected_paragraph_count=expected_paragraphs,
+                corrective_note=build_count_corrective(
+                    first_miss.got, first_miss.expected, source_label="draft",
+                ),
+            )
+    except ParagraphCountMismatch as second_miss:
+        logger.info(
+            "refine ch %d: corrective retry still returned %d paragraphs for "
+            "a %d-paragraph draft; discarding the refinement (reader falls "
+            "back to the draft)",
+            r["chapter_num"], second_miss.got, second_miss.expected,
+        )
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'error', "
+            "refinement_error = ? "
+            "WHERE id = ? AND refinement_status = 'in_progress'",
+            ("refiner broke paragraph alignment", chapter_id),
+        )
+        await conn.commit()
+        return
     except Exception as e:
         logger.exception(
             "refine ch %d failed: %s", r["chapter_num"], e,

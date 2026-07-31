@@ -79,9 +79,13 @@ async def test_update_marker_stripped_from_prompt_and_title(monkeypatch):
         )
         row = await cur.fetchone()
 
-    # 1. Prompt inputs were cleaned.
+    # 1. Prompt inputs were cleaned. Since the CAT Phase 1 pre-join, the
+    # heading line no longer rides inside the prompt body at all (the title
+    # travels on the CHAPTER TITLE line); the body starts at the first prose
+    # paragraph.
     assert seen["title_zh"] == "第392章 惊变！"
-    assert seen["chapter_zh"].split("\n")[0] == "第392章 惊变！"
+    assert "第392章" not in seen["chapter_zh"]
+    assert seen["chapter_zh"].split("\n")[0] == "白莲教举教齐至，香火冲天。"
     assert "正文继续。" in seen["chapter_zh"]
     # 2. Stored source stays verbatim.
     assert row["title_zh"] == TITLE_ZH

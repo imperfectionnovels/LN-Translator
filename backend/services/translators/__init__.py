@@ -37,6 +37,7 @@ async def translate_chapter(
     custom_brief: str | None = None,
     free_draft: str | None = None,
     source_language: str | None = None,
+    expected_paragraph_count: int | None = None,
 ) -> TranslationResult:
     backend = get_translator(provider) if provider is not None else translator_factory()
     return await backend.translate_chapter(
@@ -47,4 +48,5 @@ async def translate_chapter(
         custom_brief=custom_brief,
         free_draft=free_draft,
         source_language=source_language,
+        expected_paragraph_count=expected_paragraph_count,
     )

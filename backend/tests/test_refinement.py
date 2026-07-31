@@ -141,7 +141,7 @@ async def test_refinement_pipeline_end_to_end(monkeypatch):
     draft_body = _FIXTURE_DRAFT_BODY
     _stub_translate(monkeypatch, body=draft_body)
 
-    async def _fake_refine(draft, provider, glossary=None, use_cache=True):
+    async def _fake_refine(draft, provider, glossary=None, use_cache=True, **kw):
         return f"REFINED({draft})"
     monkeypatch.setattr("backend.services.queue.refine_chapter", _fake_refine)
 

@@ -42,6 +42,7 @@ from backend.models import GlossaryEntry, NewTerm, TokenUsage, TranslationResult
 from backend.services import llm_cache
 from backend.services.glossary import dedupe_against_locked, filter_glossary_for_chapter
 from backend.services.glossary_filters import canonical_zh
+from backend.services.segmentation import split_target_paragraphs
 
 # Above this many entries, skip the O(n^2) sub-term containment scan in
 # format_glossary. The per-chapter master / chapter blocks are filtered to the
@@ -206,7 +207,14 @@ BACKOFF_SCHEDULE = (2.0, 5.0, 12.0)
 # after subject and verb; dependent clauses never strand as stubs; name
 # re-opens runs only under ambiguity; gnomic exposition frames unroll as plain
 # reasoning; one new marked-turn worked example.
-PROMPT_TEMPLATE_VERSION = "phase17-flow-seams-1"
+# phase18 (2026-07-30): CAT-pivot Phase 1, the 1:1 paragraph contract. The
+# chapter body now arrives pre-joined (services/segmentation.py drops the
+# heading line and joins mid-sentence breaks deterministically before the
+# model sees the text), base.md's Formatting rule becomes "one paragraph in,
+# one paragraph out" (in-paragraph recomposition license unchanged), and
+# translate_chapter validates the returned body's paragraph count with one
+# corrective retry before anything reaches the llm_cache.
+PROMPT_TEMPLATE_VERSION = "phase18-cat-1to1-1"
 
 # Prompts live under backend/prompts/, NOT data/. The bundled-vs-userdata
 # split makes EXE packaging clean — these files ship inside sys._MEIPASS, while
@@ -369,6 +377,52 @@ class TransientTranslatorError(Exception):
     service issue (not a content issue) so they know to retry later."""
 
 
+class ParagraphCountMismatch(ValueError):
+    """The translated (or refined) body's blank-line paragraph count does not
+    match the expected count from the pre-joined source (the 1:1 contract).
+    Carries got/expected so the corrective retry can cite both numbers.
+    Subclasses ValueError deliberately: any except clause that handles it must
+    be ordered BEFORE a generic parse-failure `except ValueError` branch."""
+
+    def __init__(self, got: int, expected: int) -> None:
+        super().__init__(
+            f"body has {got} blank-line-separated paragraphs; expected {expected}"
+        )
+        self.got = got
+        self.expected = expected
+
+
+# Status tokens for the paragraph-count ladder. Shared by the translator
+# backends (TranslationResult.paragraph_count_status) and the queue's
+# chapter_translation_attempts rows so the outcome is queryable end to end.
+COUNT_MISMATCH_RETRY = "count_mismatch_retry"
+COUNT_MISMATCH_ACCEPTED = "count_mismatch_accepted"
+
+
+def build_count_corrective(
+    got: int, expected: int, source_label: str = "source"
+) -> str:
+    """Corrective instruction appended to the prompt after a first paragraph
+    count mismatch. Dash-free wording (project rule)."""
+    return (
+        f"Your previous translation had {got} blank-line-separated paragraphs; "
+        f"the {source_label} has {expected}. Re-emit the full translation with "
+        f"exactly {expected} blank-line-separated paragraphs, one per "
+        f"{source_label} paragraph, in the same order, merging or splitting "
+        "nothing."
+    )
+
+
+def check_paragraph_count(body: str, expected: int | None) -> None:
+    """Raise ParagraphCountMismatch when `body`'s blank-line paragraph count
+    differs from `expected`. No-op when `expected` is None (validation off)."""
+    if expected is None:
+        return
+    got = len(split_target_paragraphs(body))
+    if got != expected:
+        raise ParagraphCountMismatch(got=got, expected=expected)
+
+
 def _scope_marker(g: GlossaryEntry) -> str:
     """Scope label for a prompt-glossary line.
 
@@ -492,7 +546,7 @@ DELIMITED_OUTPUT_INSTRUCTION = f"""Return the translation in EXACTLY this delimi
 
 TITLE_EN: <the English chapter title on one line>
 {_DELIMITED_BODY_DELIMITER}
-<the full English translation of the chapter body, with normal paragraph breaks>
+<the full English translation of the chapter body, with normal paragraph breaks; the body must contain exactly one blank-line-separated paragraph per source paragraph, same count, same order>
 {_DELIMITED_TERMS_DELIMITER}
 <a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...]; categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
 
@@ -820,12 +874,16 @@ class BaseTranslator(ABC):
         custom_brief: str | None = None,
         free_draft: str | None = None,
         source_language: str | None = None,
+        expected_paragraph_count: int | None = None,
     ) -> TranslationResult:
         # ``source_language`` is accepted by the BaseTranslator surface so
         # downstream MT-only backends can route it to their underlying
         # engine. LLM backends ignore it — they read the language implicitly
         # from the source text. ``free_draft`` is the optional mechanical-NMT
         # reference layer threaded into build_prompt for PEMT mode.
+        # ``expected_paragraph_count`` arms the 1:1 paragraph-count check:
+        # when set, the parsed body must split into exactly that many
+        # blank-line paragraphs (one corrective retry, then accept-and-flag).
 
         # Reset the per-chapter call counter + usage accumulator, stash the
         # genre-aware system instruction, build the prompt, and derive the
@@ -857,11 +915,28 @@ class BaseTranslator(ABC):
                 "%s translator cache SKIP (force_retranslate, key %s…)",
                 self.name, cache_key[:12],
             )
-        for attempt in range(2):
+        # Two independent single-retry ladders share this loop:
+        # - parse failure: one retry with the SAME prompt, then the plain-text
+        #   fallback (unchanged behavior).
+        # - paragraph-count mismatch: one retry with the prompt PLUS an
+        #   appended corrective naming got/expected, then ACCEPT the body
+        #   anyway (flagged, never cached, never the plain-text fallback).
+        # Worst case is 3 structured calls + 1 plain fallback, which is
+        # exactly MAX_LLM_CALLS_PER_CHAPTER; _check_call_budget still guards.
+        current_prompt = prompt
+        parse_retried = False
+        mismatch_retried = False
+        while True:
             self._check_call_budget()
+            result: TranslationResult | None = None
             try:
-                raw = await self._complete(prompt)
+                raw = await self._complete(current_prompt)
                 result = parse_delimited_response(raw)
+                # 1:1 contract check BEFORE the cache store, so the cache
+                # never holds a count-violating envelope.
+                check_paragraph_count(
+                    result.translated_text, expected_paragraph_count
+                )
                 # Cache the structured result WITHOUT usage so future
                 # cache hits don't replay token counts from the original
                 # call (the cache hit itself burns no tokens). Usage
@@ -871,30 +946,52 @@ class BaseTranslator(ABC):
                 # Stamp the exact prompt AFTER caching (mirrors _attach_usage):
                 # the attempts log gets a real snapshot for the "Show prompt"
                 # diagnostic and prompt audits, while cache entries stay lean
-                # and cache hits never replay a stale snapshot.
-                result = result.model_copy(update={"prompt_snapshot": prompt})
+                # and cache hits never replay a stale snapshot. The mismatch
+                # status is per-call metadata and rides the same post-cache
+                # stamp so cache hits never replay a retry history.
+                update: dict = {"prompt_snapshot": current_prompt}
+                if mismatch_retried:
+                    update["paragraph_count_status"] = COUNT_MISMATCH_RETRY
+                result = result.model_copy(update=update)
+                return self._attach_usage(result)
+            except ParagraphCountMismatch as e:
+                logger.warning(
+                    "%s paragraph count mismatch (got %d, expected %d)%s",
+                    self.name, e.got, e.expected,
+                    "; accepting body anyway" if mismatch_retried
+                    else "; corrective retry",
+                )
+                if not mismatch_retried:
+                    mismatch_retried = True
+                    current_prompt = (
+                        prompt + "\n\n"
+                        + build_count_corrective(e.got, e.expected)
+                    )
+                    continue
+                # Second miss: accept the body as-is. Deliberately NOT cached
+                # (the cache must never hold a violating envelope) and never
+                # routed to the plain-text fallback (the prose itself is fine;
+                # only the paragraph map is off).
+                assert result is not None  # parse succeeded before the raise
+                result = result.model_copy(update={
+                    "prompt_snapshot": current_prompt,
+                    "paragraph_count_status": COUNT_MISMATCH_ACCEPTED,
+                })
                 return self._attach_usage(result)
             except (ValueError, ValidationError) as e:
                 logger.warning(
-                    "%s response parse failed (attempt %d): %s",
-                    self.name, attempt + 1, e,
+                    "%s response parse failed: %s", self.name, e,
                 )
-                if attempt == 0:
+                if not parse_retried:
+                    parse_retried = True
                     continue
                 # Plain-text fallback intentionally not cached: it drops
                 # `new_terms` and would poison the next proper call.
                 fallback = await self._plain_text_fallback(chapter_zh, title_zh)
                 fallback = fallback.model_copy(
-                    update={"prompt_snapshot": prompt}
+                    update={"prompt_snapshot": current_prompt}
                 )
                 return self._attach_usage(fallback)
-        # Defensive: the loop always returns (success, or plain-text fallback
-        # on the second attempt). If we somehow fall through, surface it as a
-        # transient translator failure so the worker marks the chapter retryable
-        # rather than letting a bare RuntimeError look like an unrelated bug.
-        raise TransientTranslatorError(
-            "translate_chapter exited the retry loop unexpectedly"
-        )
 
     def _attach_usage(self, result: TranslationResult) -> TranslationResult:
         """Return a copy of `result` with the accumulated TokenUsage attached.

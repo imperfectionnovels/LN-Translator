@@ -30,7 +30,9 @@ from backend.models import GlossaryEntry
 from backend.services import llm_cache
 from backend.services.glossary import dedupe_against_locked
 from backend.services.providers import Provider
+from backend.services.segmentation import split_target_paragraphs
 from backend.services.translators.base import (
+    ParagraphCountMismatch,
     TransientTranslatorError,
     format_glossary,
 )
@@ -88,7 +90,7 @@ Style:
 - Recast translation-tic structures into complete, plain sentences: turn a what-cleft into subject-verb-object ("What he wanted was the future" → "He wanted the future"), and turn a relative clause punctuated as its own sentence ("Which showed that …") into a real sentence ("This showed that …") or join it to the sentence before. Preserve the meaning exactly.
 - Where the draft is choppy or fragmentary, thread the sentences with ordinary connectives (however, so, then, in contrast) only when the logic is already there; never invent a logical relation the draft does not state.
 - Render the same concept the same way throughout the chapter; do not leave two phrasings of one idea ("a local Fruition Attainment" and "a Fruition Attainment of this world") in the same passage.
-- Preserve all paragraph breaks from the draft.
+- Return exactly the same number of blank-line-separated paragraphs as the draft, one output paragraph per draft paragraph, in the same order. Never merge, split, add, or drop a paragraph; edit only inside each paragraph.
 - Preserve the draft's dialogue formatting: do not change quote characters, tag placement, or attribution style.
 
 Return only the edited chapter, with no commentary, unless you hit a genuine ambiguity worth flagging.
@@ -124,14 +126,26 @@ async def refine_chapter(
     glossary: list[GlossaryEntry] | None = None,
     *,
     use_cache: bool = True,
+    expected_paragraph_count: int | None = None,
+    corrective_note: str | None = None,
 ) -> str:
     """Run the refiner against `draft` and return the polished text.
 
     The refiner uses the backend's `_complete_plain` hook because it has
     no envelope to parse — the output is the polished prose, full stop.
+
+    1:1 contract (CAT Phase 1): when `expected_paragraph_count` is set, a
+    polished text whose blank-line paragraph count differs raises
+    ParagraphCountMismatch BEFORE the cache store, so the refinement cache
+    never holds a violating output. The queue drives the single corrective
+    retry by calling again with `corrective_note` (appended to the prompt, so
+    the cache key differs automatically); a violating CACHED entry (predating
+    the guard) is ignored and re-run rather than returned.
     """
     backend = get_translator(provider)
     prompt = _build_refiner_prompt(draft, glossary)
+    if corrective_note:
+        prompt = f"{prompt}\n\n{corrective_note}"
     cache_key = llm_cache.refinement_key(
         backend_id=backend.cache_identity(),
         system_instruction=_REFINER_SYSTEM_INSTRUCTION,
@@ -140,15 +154,25 @@ async def refine_chapter(
     if use_cache:
         cached = llm_cache.load_refinement(cache_key)
         if cached is not None:
+            if (
+                expected_paragraph_count is None
+                or len(split_target_paragraphs(cached)) == expected_paragraph_count
+            ):
+                logger.info(
+                    "refiner cache HIT (key %s…, provider=%s)",
+                    cache_key[:12], provider.name,
+                )
+                return cached
             logger.info(
-                "refiner cache HIT (key %s…, provider=%s)",
+                "refiner cache entry violates the paragraph contract "
+                "(key %s…); ignoring it and re-running",
+                cache_key[:12],
+            )
+        else:
+            logger.info(
+                "refiner cache MISS (key %s…, provider=%s)",
                 cache_key[:12], provider.name,
             )
-            return cached
-        logger.info(
-            "refiner cache MISS (key %s…, provider=%s)",
-            cache_key[:12], provider.name,
-        )
     else:
         logger.info(
             "refiner cache SKIP (key %s…, provider=%s)",
@@ -169,5 +193,13 @@ async def refine_chapter(
             f"refiner ({provider.name}) returned empty output for a "
             f"{len(draft)}-char draft"
         )
+    if expected_paragraph_count is not None:
+        got = len(split_target_paragraphs(refined))
+        if got != expected_paragraph_count:
+            # Raised BEFORE store_refinement: a violating refinement must
+            # never enter the cache. The queue decides retry vs discard.
+            raise ParagraphCountMismatch(
+                got=got, expected=expected_paragraph_count
+            )
     llm_cache.store_refinement(cache_key, refined)
     return refined

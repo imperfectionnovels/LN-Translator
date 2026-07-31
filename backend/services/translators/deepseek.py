@@ -39,8 +39,13 @@ from backend.services.providers import Provider, resolve_secret
 from ._openai_errors import is_transient_openai_error as _is_transient
 from ._openai_errors import request_with_backoff
 from .base import (
+    COUNT_MISMATCH_ACCEPTED,
+    COUNT_MISMATCH_RETRY,
     BaseTranslator,
+    ParagraphCountMismatch,
     TransientTranslatorError,
+    build_count_corrective,
+    check_paragraph_count,
     parse_delimited_response,
 )
 
@@ -174,9 +179,12 @@ class DeepSeekTranslator(BaseTranslator):
         custom_brief: str | None = None,
         free_draft: str | None = None,
         source_language: str | None = None,
+        expected_paragraph_count: int | None = None,
     ) -> TranslationResult:
         """DeepSeek-specific flow: a single free-form delimited translation
-        pass, with a parse-retry and a plain-text fallback."""
+        pass, with a parse-retry and a plain-text fallback. Carries the same
+        1:1 paragraph-count ladder as the base loop: one corrective retry on
+        a count mismatch, then accept-and-flag (never cached)."""
         # DeepSeek overrides translate_chapter entirely (single-pass envelope),
         # so it can't reuse the base loop — but the prologue is identical, so
         # it shares BaseTranslator._begin_chapter: counter/usage reset, genre-
@@ -204,42 +212,91 @@ class DeepSeekTranslator(BaseTranslator):
             )
 
         result, used_fallback = await self._translate_once(
-            prompt, chapter_zh, title_zh
+            prompt, chapter_zh, title_zh, expected_paragraph_count
         )
 
         # Skip caching a degraded result. The plain-text fallback drops
         # new_terms; freezing it in the cache would make every later
         # Retranslate return the degraded text and never re-attempt the
         # envelope. Cache WITHOUT usage so cache hits don't replay token counts
-        # from the original call (matches base.py behavior).
-        if not used_fallback:
-            llm_cache.store_translation(cache_key, result)
-        elif not result.degraded:
-            # A fallback draft — flag it so the reader can surface a
-            # degraded-translation banner.
-            result = result.model_copy(update={"degraded": True})
+        # from the original call (matches base.py behavior). A count-violating
+        # accepted body is likewise never cached, and a retry-recovered result
+        # is cached WITHOUT its per-call mismatch status.
+        if used_fallback:
+            if not result.degraded:
+                # A fallback draft — flag it so the reader can surface a
+                # degraded-translation banner.
+                result = result.model_copy(update={"degraded": True})
+        elif result.paragraph_count_status != COUNT_MISMATCH_ACCEPTED:
+            to_cache = result
+            if to_cache.paragraph_count_status is not None:
+                to_cache = to_cache.model_copy(
+                    update={"paragraph_count_status": None}
+                )
+            llm_cache.store_translation(cache_key, to_cache)
         return self._attach_usage(result)
 
     async def _translate_once(
-        self, prompt: str, chapter_zh: str, title_zh: str | None
+        self,
+        prompt: str,
+        chapter_zh: str,
+        title_zh: str | None,
+        expected_paragraph_count: int | None = None,
     ) -> tuple[TranslationResult, bool]:
-        """Run the translation. Retry once on a malformed envelope, then fall
-        back to the base plain-text translation. Returns (result, used_fallback)."""
-        for attempt in range(2):
+        """Run the translation. Two independent single-retry ladders (mirrors
+        base.translate_chapter): a malformed envelope retries once with the
+        same prompt then falls back to the plain-text translation; a paragraph
+        count mismatch retries once with an appended corrective then ACCEPTS
+        the body flagged (never the plain-text fallback). Returns
+        (result, used_fallback)."""
+        current_prompt = prompt
+        parse_retried = False
+        mismatch_retried = False
+        while True:
+            result: TranslationResult | None = None
             try:
-                raw = await self._call_deepseek(prompt, label="translate")
-                return _parse_deepseek_response(raw), False
+                raw = await self._call_deepseek(current_prompt, label="translate")
+                result = _parse_deepseek_response(raw)
+                check_paragraph_count(
+                    result.translated_text, expected_paragraph_count
+                )
+                if mismatch_retried:
+                    result = result.model_copy(
+                        update={"paragraph_count_status": COUNT_MISMATCH_RETRY}
+                    )
+                return result, False
+            except ParagraphCountMismatch as e:
+                # Ordered BEFORE the generic ValueError branch (it subclasses
+                # ValueError): a count miss must never trigger the plain-text
+                # fallback.
+                logger.warning(
+                    "deepseek paragraph count mismatch (got %d, expected %d)%s",
+                    e.got, e.expected,
+                    "; accepting body anyway" if mismatch_retried
+                    else "; corrective retry",
+                )
+                if not mismatch_retried:
+                    mismatch_retried = True
+                    current_prompt = (
+                        prompt + "\n\n"
+                        + build_count_corrective(e.got, e.expected)
+                    )
+                    continue
+                assert result is not None  # parse succeeded before the raise
+                return result.model_copy(
+                    update={"paragraph_count_status": COUNT_MISMATCH_ACCEPTED}
+                ), False
             except ValueError as e:
                 # Covers a malformed envelope AND a non-transient ValueError
                 # from the API call (e.g. "no choices"). A
                 # TransientTranslatorError (transient exhaustion or a truncated
                 # response) is not a ValueError, so it propagates and errors the
                 # chapter instead.
-                logger.warning(
-                    "deepseek call/parse failed (attempt %d): %s",
-                    attempt + 1,
-                    e,
-                )
+                logger.warning("deepseek call/parse failed: %s", e)
+                if not parse_retried:
+                    parse_retried = True
+                    continue
+                break
         logger.warning("deepseek falling back to plain-text translation")
         return await self._plain_text_fallback(chapter_zh, title_zh), True
 

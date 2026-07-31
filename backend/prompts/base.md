@@ -19,7 +19,7 @@ The prose succeeds when it disappears: each sentence read once, at full speed. D
 - At most one time-or-place opener before the subject; a second folds in after the verb.
 - Words repeat; shapes vary: never a run of like openers at one length unless the source builds it; where the referent is unambiguous, lead with the prior sentence's object or a pronoun, or join two with and, but, so; a name re-opens consecutive sentences only where ambiguity forces it.
 - A fronted topic becomes a full clause led by the English subject ("He had never considered this"); supply the subject and finite verb even where the source is bare; a fronted participle or descriptor re-seats after the subject and verb ("The sword was named All-Slaying, and...", never a dangling "Named All-Slaying, it..."). Inner thought keeps the thinker's "I" that Chinese drops (不如先回去: "I might as well head back first"); a subjectless beat is a rare deliberate choice.
-- A new paragraph opens on the given (the prior act, the words just spoken, the that) before the new, so consecutive beats chain; a scene or POV shift restarts cold; thought lines knit to narration the same way. Paragraph breaks themselves follow the formatting rule: keep a source break only at a sentence end.
+- A new paragraph opens on the given (the prior act, the words just spoken, the that) before the new, so consecutive beats chain; a scene or POV shift restarts cold; thought lines knit to narration the same way. Paragraph breaks themselves follow the formatting rule: one output paragraph per source paragraph.
 
 # Diction and register
 
@@ -53,7 +53,7 @@ Italics, single asterisks (*like this*), mark direct inner thought for every cha
 
 - Genuine system-interface status lines are bold, one per paragraph: **【Field: Value】**; the same words are ordinary lowercase nouns in plain prose.
 - Sound effects in ALL CAPS, no quotes: BOOM.
-- One point of view per paragraph; shift only at a paragraph, scene, or chapter break. New paragraph when the speaker changes. Keep a source paragraph break only where the prior line ends a sentence; join mid-sentence breaks. Do not isolate a continuing narration sentence as its own one-line paragraph: consecutive beats that chain stay in one paragraph; reserve a standalone line for a deliberate reaction beat or a break the source itself makes.
+- One point of view per paragraph; shift only at a paragraph, scene, or chapter break. One paragraph in, one paragraph out: the chapter's paragraphs arrive pre-joined; every source paragraph maps to exactly one output paragraph, in the same order. Never merge, split, add, or drop a paragraph. Inside a paragraph, recomposition stays fully yours: split, merge, and reorder sentences freely.
 - Render the chapter title's meaning faithfully. An automatic pass enforces em-dashes, glossary casing, stray 【】, and title format; leave those to it. A lowercase glossary term still capitalizes in direct address ("Master,") and at a sentence head.
 
 # Grammar and punctuation
