@@ -382,6 +382,51 @@ class ConsistencyFindings(BaseModel):
     glossary_flags: list[ConsistencyGlossaryFlag]
 
 
+class SegmentOut(BaseModel):
+    """One CAT segment: an effective source paragraph paired with the
+    paragraph of the displayed body that renders it. `target_hash` is the
+    16-hex sha256 of target_text (the per-segment stale guard the Phase 3
+    PATCH will echo back); `aligned` False marks a row the alignment path
+    could not pin as a confident 1:1 anchor (needs-review chip)."""
+
+    index: int
+    source_text: str
+    target_text: str
+    source_hash: str
+    target_hash: str
+    status: str  # 'machine' | 'edited' | 'confirmed'
+    origin: str
+    aligned: bool
+    confirmed_at: str | None = None
+
+
+class SegmentProgress(BaseModel):
+    confirmed: int
+    total: int
+
+
+class SegmentListResponse(BaseModel):
+    """Response for GET /novels/{id}/chapters/{n}/segments (the CAT editor's
+    single fetch). `chapter_status` drives the editor's empty states
+    (pending / translating / error); `segments_state` distinguishes a clean
+    1:1 chapter ('ok') from a flagged full-path alignment ('partial') and an
+    unalignable one ('unaligned', segments empty, retranslate CTA).
+    `chapter_rev` is the displayed body's revision token (Phase 3 stale-tab
+    guard); None until the chapter has a body."""
+
+    chapter_num: int
+    title_en: str | None
+    title_zh: str | None
+    chapter_status: Status
+    variant: str  # 'draft' | 'refined'
+    chapter_rev: str | None
+    aligned: bool
+    segments_state: str | None  # None | 'ok' | 'partial' | 'unaligned'
+    progress: SegmentProgress
+    next_unconfirmed_index: int | None
+    segments: list[SegmentOut]
+
+
 class DeleteCounts(BaseModel):
     """Response for GET /novels/{id}/delete-counts. Mirrors the
     `services.soft_delete.DeleteCounts` dataclass field-for-field so the
