@@ -468,6 +468,109 @@ async def test_edit_paragraph_409_still_fires_with_segment_store(quiet_app):
 
 
 @pytest.mark.asyncio
+async def test_edit_paragraph_stale_store_after_refinement_takes_legacy_path(quiet_app):
+    """Freshness predicate regression: the store was built while the chapter
+    displayed the DRAFT; a refinement lands later (the refiner does not
+    touch segments, so segments_state stays 'ok' with a stale
+    segments_rev); the user edits a paragraph the refiner left
+    byte-identical. Without the segments_rev freshness check every other
+    precondition passes and the reroute would rematerialize refined_text
+    from the stale DRAFT targets, silently reverting the whole refinement.
+    The edit must take the LEGACY splice and leave the other refined
+    paragraphs untouched."""
+    draft = "Alpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph."
+    novel_id, chapter_id = await _make_1to1_chapter(draft)
+    payload = await _build_segments(novel_id)
+    assert payload["variant"] == "draft"
+    assert payload["segments_state"] == "ok"
+
+    # Refinement lands AFTER the store was built; slot 1 is byte-identical
+    # to the draft's, the other slots differ.
+    refined = "Refined alpha.\n\nBeta paragraph.\n\nRefined gamma."
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refined_text = ?, refinement_status = 'done' "
+            "WHERE id = ?",
+            (refined, chapter_id),
+        )
+        await conn.commit()
+
+    with TestClient(quiet_app) as client:
+        resp = client.post(
+            f"/api/novels/{novel_id}/chapters/1/edit-paragraph",
+            json={
+                "paragraph_index": 1,
+                "before_md": "Beta paragraph.",
+                "after_text": "Beta paragraph, edited.",
+                "source": "refined",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT translated_text, refined_text FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    # The refinement survives; only the edited paragraph changed.
+    assert row["refined_text"] == (
+        "Refined alpha.\n\nBeta paragraph, edited.\n\nRefined gamma."
+    )
+    assert row["translated_text"] == draft
+    # The stale store was NOT written through (self-heal fixes it on the
+    # next editor open).
+    rows = await _segment_rows(chapter_id)
+    assert all(r["status"] == "machine" for r in rows)
+    assert [r["target_text"] for r in rows] == [
+        "Alpha paragraph.", "Beta paragraph.", "Gamma paragraph.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edit_paragraph_stale_store_after_body_mutation_takes_legacy_path(quiet_app):
+    """Same freshness hole, plain-mutation shape: the body was rewritten
+    out-of-band (retranslate-like) with the SAME paragraph count and one
+    byte-identical slot. The edit must splice the NEW body, not
+    rematerialize the old targets over it."""
+    v1 = "One red.\n\nShared middle.\n\nThree red."
+    novel_id, chapter_id = await _make_1to1_chapter(v1)
+    payload = await _build_segments(novel_id)
+    assert payload["segments_state"] == "ok"
+
+    v2 = "One blue.\n\nShared middle.\n\nThree blue."
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET translated_text = ? WHERE id = ?",
+            (v2, chapter_id),
+        )
+        await conn.commit()
+
+    with TestClient(quiet_app) as client:
+        resp = client.post(
+            f"/api/novels/{novel_id}/chapters/1/edit-paragraph",
+            json={
+                "paragraph_index": 1,
+                "before_md": "Shared middle.",
+                "after_text": "Shared middle, edited.",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT translated_text FROM chapters WHERE id = ?", (chapter_id,)
+        )
+        row = await cur.fetchone()
+    # The v2 body survives with only the edited slot changed; a stale-store
+    # write-through would have reverted the other paragraphs to v1.
+    assert row["translated_text"] == (
+        "One blue.\n\nShared middle, edited.\n\nThree blue."
+    )
+    rows = await _segment_rows(chapter_id)
+    assert all(r["status"] == "machine" for r in rows)
+
+
+@pytest.mark.asyncio
 async def test_edit_paragraph_legacy_when_state_not_ok(quiet_app):
     """A 'partial' chapter keeps the legacy splice: the display-paragraph
     to seg_index mapping is only defined for 'ok' chapters; the store

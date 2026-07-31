@@ -647,20 +647,22 @@ async def update_segment(
             raise SegmentActionError(
                 "segment already shows the AI translation."
             )
-        if seg["machine_text"] is None:
+        if not seg["machine_text"]:
+            # NULL or "" alike: an empty machine_text means the aligner had
+            # no paragraph for this slot, so a revert would empty it (and on
+            # a refined chapter whose only paragraph it was, flip the
+            # displayed body back to the draft under a rev stamped against
+            # ""). There is nothing to revert TO; refuse.
             raise SegmentActionError(
                 "no AI translation is stored for this segment."
             )
         text_changing = True
-        # An empty machine_text means the aligner had no paragraph for this
-        # slot; reverting re-opens the slot, so the needs-review flag comes
-        # back. Origin returns to 'aligned_backfill' (the machine text's
-        # producer in this phase; the Phase 4 worker merge re-stamps real
-        # provenance when it refreshes machine rows).
+        # Origin returns to 'aligned_backfill' (the machine text's producer
+        # in this phase; the Phase 4 worker merge re-stamps real provenance
+        # when it refreshes machine rows).
         await conn.execute(
             "UPDATE chapter_segments SET target_text = machine_text, "
             "status = 'machine', origin = 'aligned_backfill', "
-            "aligned = CASE WHEN machine_text = '' THEN 0 ELSE aligned END, "
             "edited_at = NULL, confirmed_at = NULL, "
             "updated_at = datetime('now') WHERE id = ?",
             (seg["id"],),

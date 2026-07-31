@@ -492,8 +492,8 @@ async def edit_paragraph(
         return {"ok": True, "noop": True}
 
     cur = await conn.execute(
-        "SELECT id, status, segments_state, translated_text, refined_text, "
-        "refinement_status "
+        "SELECT id, status, segments_state, segments_rev, translated_text, "
+        "refined_text, refinement_status "
         "FROM chapters WHERE novel_id = ? AND chapter_num = ?",
         (novel_id, chapter_num),
     )
@@ -598,6 +598,16 @@ async def _edit_paragraph_via_segments(
     if variant != disp_variant:
         # The reader edited the non-displayed column (e.g. the draft under a
         # finished refinement); segments mirror the displayed body only.
+        return False
+    if r["segments_rev"] != segments_svc.chapter_rev(body):
+        # Freshness predicate: the store is only an authority for the body
+        # it was built against. A refinement landing or a retranslate after
+        # the store was built leaves segments_state='ok' with a stale
+        # segments_rev; without this check, a paragraph the new body kept
+        # byte-identical could pass every other precondition and
+        # rematerialize the OLD targets over the new body (silently
+        # reverting a whole refinement). Legacy splice instead; the store
+        # self-heals on the next editor open.
         return False
     mapping = await segments_svc.seg_index_for_display_paragraph(
         conn, r["id"], payload.paragraph_index, paragraph_count

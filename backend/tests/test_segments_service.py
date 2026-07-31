@@ -751,13 +751,16 @@ async def test_partial_chapter_save_fills_empty_slot_and_flips_ok():
     assert len(body.split("\n\n")) == 4
     assert body.split("\n\n")[empty_idx] == "Filled by hand."
     _assert_i1(chapter_id)
-    # Reverting re-opens the slot: body loses the paragraph, state back to
-    # partial, the needs-review flag returns.
-    result = await _patch(novel_id, empty_idx, "revert_machine")
-    assert result["segment"]["target_text"] == ""
-    assert result["segment"]["aligned"] is False
-    assert result["segments_state"] == "partial"
-    assert _db_body(chapter_id) == tgt
+    # Reverting the hand-filled slot is REFUSED: its machine_text is ""
+    # (the aligner had no paragraph for it), so there is nothing to revert
+    # TO; a degenerate revert would drop the paragraph from the body again
+    # (and on a refined chapter could empty the displayed body under a rev
+    # stamped against ""). Empty-string machine_text rejects like NULL.
+    with pytest.raises(segments_svc.SegmentActionError):
+        await _patch(novel_id, empty_idx, "revert_machine")
+    assert _db_body(chapter_id) == body  # untouched
+    rows = _db_segments(chapter_id)
+    assert rows[empty_idx][5] == "edited"  # status untouched
     _assert_i1(chapter_id)
 
 

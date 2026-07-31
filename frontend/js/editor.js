@@ -476,9 +476,14 @@
     if (row) selectRow(row);
   }
   // Optimistic confirm: flip the badge + advance immediately, PATCH in the
-  // background, roll back + toast on failure.
+  // background, roll back + toast on failure. The chapter is captured at
+  // call time so a late-draining response (or rejection) after chapter nav
+  // can never paint the OLD chapter's fields onto the new chapter's
+  // same-index row (applyPatchResponse guards on it; the rollback must
+  // guard identically).
   function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
     if (!canEdit()) return;
+    const chapterNum = currentCh;
     const seg = segByIndex(idx);
     if (!seg || seg.status === "confirmed") return;
     if (!seg.target_text) {
@@ -494,43 +499,51 @@
       updateActions();
       if (advance) gotoNextUnconfirmed(idx);
     }
-    sendPatch(currentCh, idx, "confirm", null, null)
+    sendPatch(chapterNum, idx, "confirm", null, null)
       .then(resp => {
-        applyPatchResponse(currentCh, resp);
-        if (!optimistic && advance) gotoNextUnconfirmed(idx);
+        applyPatchResponse(chapterNum, resp);
+        if (!optimistic && advance && chapterNum === currentCh) {
+          gotoNextUnconfirmed(idx);
+        }
       })
       .catch(err => {
         if (isConflict(err)) {
-          reloadAfterConflict();
+          if (chapterNum === currentCh) reloadAfterConflict();
           return;
         }
-        // Roll back the optimistic flip.
-        const cur = segByIndex(idx);
-        if (cur) {
-          Object.assign(cur, prev);
-          currentData.progress.confirmed = Math.max(
-            0, currentData.progress.confirmed - 1,
-          );
-          renderProgress(currentData.progress);
-          updateRow(cur);
-          updateActions();
+        // Roll back the optimistic flip, but only while still on the
+        // chapter the flip happened in.
+        if (chapterNum === currentCh && currentData) {
+          const cur = segByIndex(idx);
+          if (cur) {
+            Object.assign(cur, prev);
+            currentData.progress.confirmed = Math.max(
+              0, currentData.progress.confirmed - 1,
+            );
+            renderProgress(currentData.progress);
+            updateRow(cur);
+            updateActions();
+          }
         }
         showToast(`Confirm failed: ${err.message}`, "err");
       });
   }
   function unconfirmSegment(idx) {
     if (!canEdit()) return;
+    const chapterNum = currentCh;
     const seg = segByIndex(idx);
     if (!seg || seg.status !== "confirmed") return;
-    sendPatch(currentCh, idx, "unconfirm", null, null)
-      .then(resp => applyPatchResponse(currentCh, resp))
+    sendPatch(chapterNum, idx, "unconfirm", null, null)
+      .then(resp => applyPatchResponse(chapterNum, resp))
       .catch(err => {
-        if (isConflict(err)) reloadAfterConflict();
-        else showToast(`Unconfirm failed: ${err.message}`, "err");
+        if (isConflict(err)) {
+          if (chapterNum === currentCh) reloadAfterConflict();
+        } else showToast(`Unconfirm failed: ${err.message}`, "err");
       });
   }
   function revertSegment(idx) {
     if (!canEdit()) return;
+    const chapterNum = currentCh;
     const seg = segByIndex(idx);
     if (!seg || seg.status === "machine") return;
     confirmDialog({
@@ -539,12 +552,13 @@
       okText: "Revert",
       danger: true,
     }).then(ok => {
-      if (!ok) return;
-      sendPatch(currentCh, idx, "revert_machine", null, null)
-        .then(resp => applyPatchResponse(currentCh, resp))
+      if (!ok || chapterNum !== currentCh) return;
+      sendPatch(chapterNum, idx, "revert_machine", null, null)
+        .then(resp => applyPatchResponse(chapterNum, resp))
         .catch(err => {
-          if (isConflict(err)) reloadAfterConflict();
-          else showToast(`Revert failed: ${err.message}`, "err");
+          if (isConflict(err)) {
+            if (chapterNum === currentCh) reloadAfterConflict();
+          } else showToast(`Revert failed: ${err.message}`, "err");
         });
     });
   }

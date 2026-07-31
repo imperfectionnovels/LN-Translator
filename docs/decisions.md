@@ -350,11 +350,42 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
 - **revert_machine stamps origin='aligned_backfill'.** The pre-edit origin
   is not stored, and every machine_text in this phase came from the
   aligned backfill; the Phase 4 worker merge re-stamps real provenance when
-  it refreshes machine rows. Reverting a hand-filled empty slot re-opens it
-  (aligned=0, body drops the paragraph): revert is the escape hatch that
-  save's no-empty rule points at.
+  it refreshes machine rows. (Corrected same-day by spec review: reverting
+  a hand-filled empty slot is REFUSED, see the addendum below; originally
+  it re-opened the slot.)
 - **Editor writes are serialized client-side.** Every PATCH rides one
   promise chain and resolves `chapter_rev` / `before_target_hash` at send
   time from the freshest payload, so rapid-fire edits cannot race each
   other into spurious 409s, and a retry after a conflict reload reuses the
   reloaded guards instead of the stale ones captured at focus time.
+
+### Addendum (same day, spec review round)
+
+- **The store is only an authority for the body it was built against
+  (freshness predicate).** The edit-paragraph reroute's preconditions
+  (state 'ok', variant match, positional count match, stored target ==
+  before_md) all pass on a STALE store when the displayed body moved after
+  the build but kept the edited paragraph byte-identical: store built on
+  the draft, refinement lands (the refiner does not touch segments, so
+  segments_state stays 'ok'), user edits an unchanged paragraph, and the
+  rematerialization would write refined_text := join(draft targets + edit),
+  silently reverting the whole refinement with a self-consistent
+  segments_rev that self-heal can never catch. Same shape post-retranslate.
+  The reroute now also requires `chapters.segments_rev ==
+  chapter_rev(displayed body)`; on mismatch it falls back to the legacy
+  splice and the store self-heals on the next editor open. (The editor's
+  own PATCH path was already safe: its client rev is checked against the
+  CURRENT displayed body, so a stale tab 409s.)
+- **revert_machine refuses empty machine_text ("" rejects like NULL).** A
+  revert on a hand-filled empty slot would drop the paragraph from the
+  body again, and on a refined chapter whose only paragraph it was, empty
+  refined_text entirely, flipping displayed_body back to the draft under a
+  segments_rev stamped against "". There is nothing to revert TO; the 400
+  message points the user at editing instead.
+- **Optimistic-confirm rollback is chapter-guarded.** The confirm PATCH's
+  response handlers previously read the live currentCh, so a late-draining
+  rejection after chapter navigation could paint the old chapter's fields
+  onto the new chapter's same-index row. All segment actions now capture
+  the chapter at call time and guard rollback, conflict reload, and
+  response application on it (matching applyPatchResponse's existing
+  guard).
