@@ -186,7 +186,7 @@ def implicit_observation_tm_inconsistency(
 
     The excerpt summarizes the renderings inline so the panel can render
     without a second fetch. Truncated when the rendering set is long;
-    the dedicated /tm/inconsistencies endpoint has the full data when
+    the TM concordance endpoint can pull the full rendering set when
     the user wants to drill in."""
     short_source = source_text.strip()
     if len(short_source) > 80:
