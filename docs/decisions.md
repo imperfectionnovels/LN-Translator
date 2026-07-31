@@ -290,3 +290,12 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   skipped) rather than raw string equality with the column, so CRLF bodies
   and 'partial' chapters do not force a rebuild on every read; the check
   still catches every out-of-band content edit.
+- **Unaligned verdicts are rev-gated (review follow-up, same day).** A
+  zero-row 'unaligned' chapter originally re-ran the aligner on every editor
+  open. `chapters.segments_rev` (the displayed body's 16-hex rev, stamped at
+  build time) now gates it: while version and rev both match, the verdict
+  stands and the read is free; a retranslate changes the rev so the next
+  open re-attempts and picks the chapter up. Phase 3 wants body revs for its
+  stale-tab guard anyway, so the column pays twice. Also dropped the
+  redundant (chapter_id, seg_index) index (the UNIQUE constraint already
+  provides it) via an appended DROP INDEX migration.

@@ -229,6 +229,11 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- chapter's segments were built. A version bump re-keys paragraph
     -- positions, so a mismatch forces a lazy rebuild on the next editor open.
     segmentation_version INTEGER,
+    -- chapter_rev (16-hex sha256 of the displayed body) at the moment the
+    -- segment build ran. Gates the zero-row 'unaligned' verdict: while the
+    -- body is unchanged the verdict stands and reads skip re-running the
+    -- aligner; a retranslate changes the rev and the next read re-attempts.
+    segments_rev TEXT,
     UNIQUE (novel_id, chapter_num)
 );
 
@@ -476,8 +481,9 @@ CREATE TABLE IF NOT EXISTS chapter_segments (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (chapter_id, seg_index)
 );
-CREATE INDEX IF NOT EXISTS idx_chapter_segments_chapter
-    ON chapter_segments(chapter_id, seg_index);
+-- No explicit (chapter_id, seg_index) index: UNIQUE (chapter_id, seg_index)
+-- already provides it (the redundant idx_chapter_segments_chapter shipped
+-- briefly and is dropped by a follow-up migration).
 CREATE INDEX IF NOT EXISTS idx_chapter_segments_novel_hash
     ON chapter_segments(novel_id, source_hash);
 CREATE INDEX IF NOT EXISTS idx_chapter_segments_nonmachine
@@ -892,6 +898,14 @@ _ADDITIVE_MIGRATIONS = (
     "ON chapter_segments(novel_id, status) WHERE status != 'machine'",
     "ALTER TABLE chapters ADD COLUMN segments_state TEXT",
     "ALTER TABLE chapters ADD COLUMN segmentation_version INTEGER",
+    # 2026-07-31 review follow-ups. The (chapter_id, seg_index) index above
+    # duplicated the implicit UNIQUE(chapter_id, seg_index) index; drop it.
+    # (The append-only rule keeps the CREATE entry, so each boot recreates
+    # then drops it: a no-op-sized churn on this table.) segments_rev gates
+    # the zero-row 'unaligned' verdict so reads stop re-running the aligner
+    # until the displayed body actually changes.
+    "DROP INDEX IF EXISTS idx_chapter_segments_chapter",
+    "ALTER TABLE chapters ADD COLUMN segments_rev TEXT",
 )
 
 # FTS5 virtual table mirroring searchable English text. Phase 4: the indexed

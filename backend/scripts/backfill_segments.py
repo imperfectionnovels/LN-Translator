@@ -28,14 +28,24 @@ from collections import Counter
 from backend.db import open_conn
 from backend.scripts._db_banner import confirm_db, print_db_banner
 from backend.services import segments as segments_svc
+from backend.services.segmentation import SEGMENTATION_VERSION
 
 
-async def _backfill(novel_id: int | None) -> None:
+async def _backfill(novel_id: int | None, force: bool) -> None:
     where = "status = 'done' AND translated_text IS NOT NULL"
-    params: tuple = ()
+    params: list = []
     if novel_id is not None:
         where += " AND novel_id = ?"
-        params = (novel_id,)
+        params.append(novel_id)
+    if not force:
+        # Skip chapters already built under the current heuristic so re-runs
+        # are near-free. (A body edited since its build still self-heals on
+        # the next editor open; --force rebuilds everything here and now.)
+        where += (
+            " AND (segments_state IS NULL OR segmentation_version IS NULL "
+            "OR segmentation_version != ?)"
+        )
+        params.append(SEGMENTATION_VERSION)
 
     async with open_conn() as conn:
         cur = await conn.execute(
@@ -86,11 +96,17 @@ def main() -> None:
         action="store_true",
         help="skip the write confirmation (scripted runs)",
     )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="rebuild every done chapter, even ones already built under the "
+        "current segmentation version",
+    )
     args = ap.parse_args()
     print_db_banner(mutates=True)
     if not confirm_db("backfill chapter segments", assume_yes=args.yes):
         return
-    asyncio.run(_backfill(args.novel))
+    asyncio.run(_backfill(args.novel, args.force))
 
 
 if __name__ == "__main__":

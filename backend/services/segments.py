@@ -41,7 +41,14 @@ logger = logging.getLogger(__name__)
 
 
 def _hash16(text: str) -> str:
-    """16-hex sha256 prefix, the same convention as tm.py's source_hash."""
+    """16-hex sha256 prefix, the same convention as tm.py's source_hash.
+
+    Note the two stores hash DIFFERENT source units: chapter_segments hashes
+    effective (pre-joined) source paragraphs while tm_segments hashes the
+    raw blank-line split, so their source_hash values differ wherever the
+    mid-sentence pre-join fired. Phase 4 assist lookups that bridge the two
+    stores must account for that (hash-join only where no pre-join occurred,
+    or re-hash on the effective split)."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
@@ -80,15 +87,15 @@ def _segments_match_body(targets: list[str], body: str) -> bool:
 
 
 async def _clear_and_stamp(
-    conn: aiosqlite.Connection, chapter_id: int, state: str
+    conn: aiosqlite.Connection, chapter_id: int, state: str, rev: str
 ) -> None:
     await conn.execute(
         "DELETE FROM chapter_segments WHERE chapter_id = ?", (chapter_id,)
     )
     await conn.execute(
-        "UPDATE chapters SET segments_state = ?, segmentation_version = ? "
-        "WHERE id = ?",
-        (state, SEGMENTATION_VERSION, chapter_id),
+        "UPDATE chapters SET segments_state = ?, segmentation_version = ?, "
+        "segments_rev = ? WHERE id = ?",
+        (state, SEGMENTATION_VERSION, rev, chapter_id),
     )
 
 
@@ -116,11 +123,12 @@ async def build_segments_from_alignment(
     chapter_id = chapter_row["id"]
     novel_id = chapter_row["novel_id"]
     _variant, body = displayed_body(chapter_row)
+    rev = chapter_rev(body)
     src = effective_source_paragraphs(chapter_row["original_text"] or "")
     tgt = split_target_paragraphs(body)
 
     if not src or not tgt:
-        await _clear_and_stamp(conn, chapter_id, "unaligned")
+        await _clear_and_stamp(conn, chapter_id, "unaligned", rev)
         return "unaligned"
 
     if len(src) == len(tgt):
@@ -130,7 +138,7 @@ async def build_segments_from_alignment(
     else:
         path = tm_svc.full_alignment_path(src, tgt)
         if path is None:
-            await _clear_and_stamp(conn, chapter_id, "unaligned")
+            await _clear_and_stamp(conn, chapter_id, "unaligned", rev)
             logger.info(
                 "segments: chapter %d unalignable (%d src vs %d tgt "
                 "paragraphs below the confidence gate)",
@@ -155,9 +163,9 @@ async def build_segments_from_alignment(
     )
     state = "ok" if all(aligned for _t, aligned in entries) else "partial"
     await conn.execute(
-        "UPDATE chapters SET segments_state = ?, segmentation_version = ? "
-        "WHERE id = ?",
-        (state, SEGMENTATION_VERSION, chapter_id),
+        "UPDATE chapters SET segments_state = ?, segmentation_version = ?, "
+        "segments_rev = ? WHERE id = ?",
+        (state, SEGMENTATION_VERSION, rev, chapter_id),
     )
     return state
 
@@ -165,7 +173,7 @@ async def build_segments_from_alignment(
 _CHAPTER_SELECT = (
     "SELECT id, novel_id, chapter_num, title_zh, title_en, original_text, "
     "       translated_text, refined_text, refinement_status, status, "
-    "       segments_state, segmentation_version "
+    "       segments_state, segmentation_version, segments_rev "
     "FROM chapters WHERE novel_id = ? AND chapter_num = ?"
 )
 
@@ -227,7 +235,10 @@ async def get_segments(
     their SEGMENTATION_VERSION is stale, or when the self-heal check finds
     the stored targets no longer reproduce the displayed body (an
     out-of-band edit: reader paragraph edit, find-replace, refinement
-    landing). The caller owns the commit.
+    landing). A persisted zero-row 'unaligned' verdict is trusted while
+    `segments_rev` still matches the displayed body, so reads do not re-run
+    the aligner until the body actually changes (a retranslate changes the
+    rev, and the next read re-attempts). The caller owns the commit.
     """
     cur = await conn.execute(_CHAPTER_SELECT, (novel_id, chapter_num))
     row = await cur.fetchone()
@@ -242,11 +253,22 @@ async def get_segments(
 
     seg_rows = await _fetch_segment_rows(conn, row["id"])
     state = row["segments_state"]
-    needs_rebuild = (
-        not seg_rows
-        or row["segmentation_version"] != SEGMENTATION_VERSION
-        or not _segments_match_body([r["target_text"] for r in seg_rows], body)
-    )
+    if seg_rows:
+        needs_rebuild = (
+            row["segmentation_version"] != SEGMENTATION_VERSION
+            or not _segments_match_body(
+                [r["target_text"] for r in seg_rows], body
+            )
+        )
+    else:
+        # Zero rows: never built, or a persisted 'unaligned' verdict. The
+        # verdict stands only when THIS segmentation version made it against
+        # THIS body; otherwise re-attempt the build.
+        needs_rebuild = not (
+            state == "unaligned"
+            and row["segmentation_version"] == SEGMENTATION_VERSION
+            and row["segments_rev"] == chapter_rev(body)
+        )
     if needs_rebuild:
         state = await build_segments_from_alignment(conn, row)
         seg_rows = (

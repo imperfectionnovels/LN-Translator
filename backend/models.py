@@ -382,7 +382,7 @@ class ConsistencyFindings(BaseModel):
     glossary_flags: list[ConsistencyGlossaryFlag]
 
 
-class SegmentOut(BaseModel):
+class Segment(BaseModel):
     """One CAT segment: an effective source paragraph paired with the
     paragraph of the displayed body that renders it. `target_hash` is the
     16-hex sha256 of target_text (the per-segment stale guard the Phase 3
@@ -424,7 +424,7 @@ class SegmentListResponse(BaseModel):
     segments_state: str | None  # None | 'ok' | 'partial' | 'unaligned'
     progress: SegmentProgress
     next_unconfirmed_index: int | None
-    segments: list[SegmentOut]
+    segments: list[Segment]
 
 
 class DeleteCounts(BaseModel):

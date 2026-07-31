@@ -196,8 +196,9 @@ def full_alignment_path(
         neighbor on the path (the source consumed just before it, or the
         first source when inserts precede every source), joined with a blank
         line, so the concatenation of all targets still reproduces the body;
-      - a source paragraph with no plausible target ('del' move) gets ""
-        and aligned=False;
+      - a source paragraph with no plausible target ('del' move) is
+        aligned=False; it ends up with "" unless an inserted target attaches
+        to it (every target must land somewhere to keep the join invariant);
       - a length-implausible anchor (the same outlier rule `_length_align`
         drops) keeps its target text but is demoted to aligned=False.
 

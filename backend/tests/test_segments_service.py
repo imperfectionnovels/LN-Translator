@@ -180,6 +180,16 @@ def test_full_path_outlier_anchor_demoted_not_dropped():
     assert path[1] == ("B" * 10, False)
 
 
+def test_full_path_insert_before_first_source_prepends():
+    # The DP can open with an 'ins' (a target-only beat before any source
+    # consumed). It must prepend onto the FIRST source, flagged unaligned.
+    src = [_zh_para("甲", 51)]
+    tgt = ["Oops.", "A" * 100]
+    path = tm_svc.full_alignment_path(src, tgt)
+    assert path is not None
+    assert path == [("Oops.\n\n" + "A" * 100, False)]
+
+
 def test_full_path_below_gate_returns_none():
     src = [_zh_para(c) for c in "甲乙丙丁戊己"]
     tgt = ["One lonely paragraph."]
@@ -248,6 +258,54 @@ async def test_weld_case_partial():
     assert _db_chapter_state(chapter_id)[0] == "partial"
 
 
+async def test_weld_partial_stable_across_reads():
+    # Self-heal must tolerate the ""-target row of a partial chapter (the
+    # empty-skip in _segments_match_body): repeated GETs never rebuild.
+    src = "\n\n".join(
+        [_zh_para("甲"), _zh_para("乙"),
+         _zh_para("丙"), _zh_para("丁")]
+    )
+    tgt = "\n\n".join(["A" * 60, "B" * 60, "C" * 60])
+    novel_id, chapter_id = await _seed_chapter(src, tgt)
+    first = await _get(novel_id)
+    assert first["segments_state"] == "partial"
+    ids = [r[0] for r in _db_segments(chapter_id)]
+    second = await _get(novel_id)
+    assert [r[0] for r in _db_segments(chapter_id)] == ids
+    third = await _get(novel_id)
+    assert [r[0] for r in _db_segments(chapter_id)] == ids
+    assert third == second == first
+
+
+async def test_merged_target_partial_stable_across_reads():
+    # An extra target merged onto one source stores a "\n\n"-joined
+    # target_text; the self-heal join must still reproduce the body, so
+    # repeated GETs never rebuild.
+    src = "\n\n".join([_zh_para("甲"), _zh_para("乙")])
+    tgt = "\n\n".join(["A" * 45, "B" * 45, "C" * 45])
+    novel_id, chapter_id = await _seed_chapter(src, tgt)
+    first = await _get(novel_id)
+    assert first["segments_state"] == "partial"
+    assert any("\n\n" in s["target_text"] for s in first["segments"])
+    ids = [r[0] for r in _db_segments(chapter_id)]
+    second = await _get(novel_id)
+    assert [r[0] for r in _db_segments(chapter_id)] == ids
+    assert second == first
+
+
+async def test_crlf_body_stable_across_reads():
+    # A CRLF-separated body must not force a rebuild on every read: the
+    # self-heal check compares against the NORMALIZED paragraph split.
+    crlf_body = "First paragraph.\r\n\r\nSecond paragraph.\r\n\r\nThird paragraph."
+    novel_id, chapter_id = await _seed_chapter(_SRC_3, crlf_body)
+    first = await _get(novel_id)
+    assert first["segments_state"] == "ok"
+    ids = [r[0] for r in _db_segments(chapter_id)]
+    second = await _get(novel_id)
+    assert [r[0] for r in _db_segments(chapter_id)] == ids
+    assert second == first
+
+
 async def test_below_gate_unaligned_zero_rows():
     src = "\n\n".join(
         _zh_para(c) for c in "甲乙丙丁戊己"
@@ -261,6 +319,43 @@ async def test_below_gate_unaligned_zero_rows():
     assert payload["next_unconfirmed_index"] is None
     assert _db_segments(chapter_id) == []
     assert _db_chapter_state(chapter_id) == ("unaligned", SEGMENTATION_VERSION)
+
+
+async def test_unaligned_verdict_cached_until_body_changes(monkeypatch):
+    # The persisted 'unaligned' verdict (segments_rev gate) stops reads from
+    # re-running the aligner while the body is unchanged, but a retranslate
+    # (body change) must still be picked up on the next read.
+    src_paras = [_zh_para(c) for c in "甲乙丙丁戊己"]
+    novel_id, chapter_id = await _seed_chapter(
+        "\n\n".join(src_paras), "One lonely paragraph."
+    )
+    first = await _get(novel_id)
+    assert first["segments_state"] == "unaligned"
+
+    def _must_not_run(_src, _tgt):
+        raise AssertionError("aligner re-ran on an unchanged unaligned body")
+
+    monkeypatch.setattr(tm_svc, "full_alignment_path", _must_not_run)
+    second = await _get(novel_id)
+    assert second["segments_state"] == "unaligned"
+    assert second == first
+
+    # Simulate a retranslate under the 1:1 contract: 6 target paragraphs.
+    new_body = "\n\n".join(f"Paragraph number {i}." for i in range(6))
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET translated_text = ? WHERE id = ?",
+        (new_body, chapter_id),
+    )
+    conn.commit()
+    conn.close()
+
+    # Counts now match, so the rebuild maps positionally (the patched
+    # aligner stays uncalled) and the chapter comes alive.
+    third = await _get(novel_id)
+    assert third["segments_state"] == "ok"
+    assert len(third["segments"]) == 6
+    assert third["chapter_rev"] == segments_svc.chapter_rev(new_body)
 
 
 async def test_not_done_chapter_is_status_only_no_writes():
