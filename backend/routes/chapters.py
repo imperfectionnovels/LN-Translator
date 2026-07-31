@@ -628,8 +628,8 @@ async def _edit_paragraph_via_segments(
             seg_index,
             action="save",
             after_text=after_text,
-            chapter_rev=segments_svc.chapter_rev(body),
-            before_target_hash=segments_svc._hash16(stored_target),
+            client_rev=segments_svc.chapter_rev(body),
+            before_target_hash=segments_svc.hash16(stored_target),
         )
     except segments_svc.SegmentStaleError as e:
         # Same recovery contract as the endpoint's own guards: the page is

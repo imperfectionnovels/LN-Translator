@@ -79,7 +79,11 @@
   // current chapter, so chips survive per-row re-renders.
   const failedSaves = new Map();
   // Serialized PATCH chain: each write must see the chapter_rev returned
-  // by its predecessor, so writes never race each other.
+  // by its predecessor, so writes never race each other. Ordering is
+  // load-bearing: commitSave attaches applyPatchResponse to the patch
+  // promise p BEFORE any successor chains onto the derived saveChain
+  // (p.catch), and promise handlers run in registration order, so the
+  // successor's run() always reads the currentData its predecessor wrote.
   let saveChain = Promise.resolve();
   let reloading = false; // re-entry guard for the 409 recovery reload
 
@@ -373,10 +377,16 @@
         return resp;
       })
       .catch(err => {
-        if (isConflict(err)) {
+        if (isConflict(err) && ed.chapterNum === currentCh) {
           reloadAfterConflict();
           return null;
         }
+        // Non-409 failures, and late cross-chapter 409s: a 409 whose
+        // captured chapter is no longer on screen must NOT reload the
+        // CURRENT chapter (spurious + misleading toast) and must NOT drop
+        // the typed text. The chip is keyed to its own chapter, renders
+        // when the user navigates back, and its retry resolves fresh
+        // guards from the reloaded payload.
         failedSaves.set(key, {
           chapterNum: ed.chapterNum, segIndex: ed.segIndex, after, action,
         });

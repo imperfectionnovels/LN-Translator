@@ -74,7 +74,7 @@ _ACTIONS = frozenset(
 )
 
 
-def _hash16(text: str) -> str:
+def hash16(text: str) -> str:
     """16-hex sha256 prefix, the same convention as tm.py's source_hash.
 
     Note the two stores hash DIFFERENT source units: chapter_segments hashes
@@ -102,7 +102,7 @@ def displayed_body(row) -> tuple[str, str]:
 def chapter_rev(text: str) -> str:
     """Revision token of a displayed body: 16-hex sha256. The editor sends it
     back on writes (Phase 3) as the stale-tab guard."""
-    return _hash16(text)
+    return hash16(text)
 
 
 def _segments_match_body(targets: list[str], body: str) -> bool:
@@ -269,7 +269,7 @@ async def build_segments_from_alignment(
             return "unaligned"
         entries = path
 
-    new_hashes = [_hash16(s) for s in src]
+    new_hashes = [hash16(s) for s in src]
     anchors = _anchor_human_rows(human_rows, new_hashes) if human_rows else {}
     if anchors is None:
         return await _retain_rows_stamp_unaligned(
@@ -347,7 +347,7 @@ def _payload(row, variant: str, body: str, state, seg_rows) -> dict:
             "source_text": r["source_text"],
             "target_text": r["target_text"],
             "source_hash": r["source_hash"],
-            "target_hash": _hash16(r["target_text"]),
+            "target_hash": hash16(r["target_text"]),
             "status": r["status"],
             "origin": r["origin"],
             "aligned": bool(r["aligned"]),
@@ -446,7 +446,7 @@ def _segment_dict(r) -> dict:
         "source_text": r["source_text"],
         "target_text": r["target_text"],
         "source_hash": r["source_hash"],
-        "target_hash": _hash16(r["target_text"]),
+        "target_hash": hash16(r["target_text"]),
         "status": r["status"],
         "origin": r["origin"],
         "aligned": bool(r["aligned"]),
@@ -554,7 +554,7 @@ async def update_segment(
     *,
     action: str,
     after_text: str | None,
-    chapter_rev: str,
+    client_rev: str,
     before_target_hash: str,
 ) -> dict:
     """The segment state machine. Actions:
@@ -570,7 +570,7 @@ async def update_segment(
                           row is already machine).
 
     Guards (409 via SegmentStaleError): chapter must be status='done';
-    `chapter_rev` must match the displayed body's current rev; the row's
+    `client_rev` must match the displayed body's current rev; the row's
     current target hash must match `before_target_hash`. Empty after_text on
     a save is a 400 (a paragraph cannot be emptied; revert_machine is the
     escape hatch).
@@ -583,7 +583,7 @@ async def update_segment(
     if action not in _ACTIONS:
         raise SegmentActionError(f"unknown action {action!r}")
     row, variant, body = await _load_editable_chapter(
-        conn, novel_id, chapter_num, chapter_rev
+        conn, novel_id, chapter_num, client_rev
     )
     cur = await conn.execute(
         "SELECT id, seg_index, source_text, source_hash, target_text, "
@@ -594,7 +594,7 @@ async def update_segment(
     seg = await cur.fetchone()
     if seg is None:
         raise SegmentNotFoundError("segment not found")
-    if _hash16(seg["target_text"]) != before_target_hash:
+    if hash16(seg["target_text"]) != before_target_hash:
         raise SegmentStaleError(
             "stale_segment",
             "this segment changed since the page loaded. Reload the "
@@ -683,7 +683,7 @@ async def update_segment(
     state_row = await cur.fetchone()
     return {
         "segment": _segment_dict(updated),
-        "chapter_rev": _hash16(new_body),
+        "chapter_rev": hash16(new_body),
         "segments_state": state_row["segments_state"],
         "progress": progress,
         "next_unconfirmed_index": next_unconfirmed,
@@ -695,7 +695,7 @@ async def confirm_all(
     novel_id: int,
     chapter_num: int,
     *,
-    chapter_rev: str,
+    client_rev: str,
     statuses: list[str] | None = None,
 ) -> dict:
     """Confirm every segment currently in one of `statuses` (default
@@ -709,7 +709,7 @@ async def confirm_all(
             "statuses must be a non-empty subset of ['machine', 'edited']."
         )
     row, _variant, body = await _load_editable_chapter(
-        conn, novel_id, chapter_num, chapter_rev
+        conn, novel_id, chapter_num, client_rev
     )
     placeholders = ",".join("?" * len(wanted))
     cur = await conn.execute(
@@ -729,7 +729,7 @@ async def confirm_all(
     state_row = await cur.fetchone()
     return {
         "confirmed": confirmed,
-        "chapter_rev": chapter_rev,
+        "chapter_rev": client_rev,
         "segments_state": state_row["segments_state"],
         "progress": progress,
         "next_unconfirmed_index": next_unconfirmed,
@@ -770,6 +770,14 @@ async def reproject_from_body(
     seg_rows = await _fetch_segment_rows(conn, chapter_id)
     if not seg_rows:
         return None
+    if row["segments_state"] == "unaligned":
+        # Retained-rows verdict: these rows have ZERO alignment confidence
+        # for the current body (they were kept only so human work stays
+        # visible), so a coincidental count match must never let the
+        # positional fast path overwrite the preserved text. Always go
+        # through the preservation-aware rebuild, which re-attempts the
+        # alignment and retains the rows again if it still fails.
+        return await build_segments_from_alignment(conn, row)
     paras = split_target_paragraphs(body)
     non_empty = [r for r in seg_rows if r["target_text"]]
     simple = all(

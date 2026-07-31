@@ -68,7 +68,7 @@ async def patch_chapter_segment(
             seg_index,
             action=payload.action,
             after_text=payload.after_text,
-            chapter_rev=payload.chapter_rev,
+            client_rev=payload.chapter_rev,
             before_target_hash=payload.before_target_hash,
         )
     except segments_svc.SegmentNotFoundError as e:
@@ -98,7 +98,7 @@ async def confirm_all_segments(
             conn,
             novel_id,
             chapter_num,
-            chapter_rev=payload.chapter_rev,
+            client_rev=payload.chapter_rev,
             statuses=payload.statuses,
         )
     except segments_svc.SegmentNotFoundError as e:

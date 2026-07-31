@@ -230,8 +230,8 @@ async def test_perfect_1to1_backfill():
         assert s["status"] == "machine"
         assert s["origin"] == "aligned_backfill"
         assert s["aligned"] is True
-        assert s["source_hash"] == segments_svc._hash16(s["source_text"])
-        assert s["target_hash"] == segments_svc._hash16(s["target_text"])
+        assert s["source_hash"] == segments_svc.hash16(s["source_text"])
+        assert s["target_hash"] == segments_svc.hash16(s["target_text"])
         assert s["confirmed_at"] is None
     # machine_text mirrors target_text on backfill; chapter state stamped.
     rows = _db_segments(chapter_id)
@@ -482,7 +482,7 @@ async def _patch(
             conn, novel_id, ch, seg_index,
             action=action,
             after_text=after,
-            chapter_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
+            client_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
             before_target_hash=(
                 before_hash if before_hash is not None
                 else (seg["target_hash"] if seg else "0" * 16)
@@ -675,7 +675,7 @@ async def test_not_done_chapter_409_kind_chapter_translating():
                 await segments_svc.update_segment(
                     conn, novel_id, 1, 0,
                     action="save", after_text="x",
-                    chapter_rev=segments_svc.chapter_rev(_TGT_3),
+                    client_rev=segments_svc.chapter_rev(_TGT_3),
                     before_target_hash="0" * 16,
                 )
         assert exc.value.kind == "chapter_translating"
@@ -691,7 +691,7 @@ async def test_unaligned_chapter_refuses_writes():
             await segments_svc.update_segment(
                 conn, novel_id, 1, 0,
                 action="save", after_text="x",
-                chapter_rev=payload["chapter_rev"],
+                client_rev=payload["chapter_rev"],
                 before_target_hash="0" * 16,
             )
     assert exc.value.kind == "stale_chapter"
@@ -704,12 +704,12 @@ async def test_missing_chapter_and_segment_raise_not_found():
         with pytest.raises(segments_svc.SegmentNotFoundError):
             await segments_svc.update_segment(
                 conn, novel_id, 99, 0, action="save", after_text="x",
-                chapter_rev="0" * 16, before_target_hash="0" * 16,
+                client_rev="0" * 16, before_target_hash="0" * 16,
             )
         with pytest.raises(segments_svc.SegmentNotFoundError):
             await segments_svc.update_segment(
                 conn, novel_id, 1, 99, action="save", after_text="x",
-                chapter_rev=segments_svc.chapter_rev(_TGT_3),
+                client_rev=segments_svc.chapter_rev(_TGT_3),
                 before_target_hash="0" * 16,
             )
 
@@ -779,7 +779,7 @@ async def _confirm_all(
     async with open_conn() as conn:
         result = await segments_svc.confirm_all(
             conn, novel_id, ch,
-            chapter_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
+            client_rev=rev if rev is not None else (payload["chapter_rev"] or ""),
             statuses=statuses,
         )
         await conn.commit()

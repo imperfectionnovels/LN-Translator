@@ -89,7 +89,7 @@ async def _confirm(novel_id: int, seg_index: int) -> None:
         await segments_svc.update_segment(
             conn, novel_id, 1, seg_index,
             action="confirm", after_text=None,
-            chapter_rev=payload["chapter_rev"],
+            client_rev=payload["chapter_rev"],
             before_target_hash=seg["target_hash"],
         )
         await conn.commit()
@@ -110,12 +110,15 @@ def _db_rows(chapter_id: int) -> list[sqlite3.Row]:
 
 
 def _assert_i1(chapter_id: int) -> None:
+    """Same shape as test_segments_service._assert_i1: join(non-empty
+    targets) reproduces the displayed body AND the stamped segments_rev
+    matches it."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         ch = conn.execute(
-            "SELECT translated_text, refined_text, refinement_status "
-            "FROM chapters WHERE id = ?",
+            "SELECT translated_text, refined_text, refinement_status, "
+            "segments_rev FROM chapters WHERE id = ?",
             (chapter_id,),
         ).fetchone()
     finally:
@@ -127,6 +130,7 @@ def _assert_i1(chapter_id: int) -> None:
     targets = [r["target_text"] for r in _db_rows(chapter_id)]
     assert "\n\n".join(t for t in targets if t) == \
         "\n\n".join(split_target_paragraphs(body))
+    assert ch["segments_rev"] == segments_svc.chapter_rev(body)
 
 
 async def _commit_replace(
@@ -267,6 +271,52 @@ async def test_refined_variant_chapter_reprojects_refined_body():
     )
     assert rows[1]["status"] == "confirmed"
     _assert_i1(chapter_id)
+
+
+@pytest.mark.asyncio
+async def test_unaligned_retained_chapter_skips_positional_fast_path():
+    """A retained-rows 'unaligned' chapter can coincidentally count-match
+    the body (the retained rows have zero alignment confidence for it).
+    The reproject hook must route it through the preservation-aware
+    rebuild, never the positional in-place update, or the preserved human
+    text would be overwritten by unrelated body paragraphs."""
+    novel_id, chapter_id = await _seed_chapter()
+    await _confirm(novel_id, 1)
+    # Vanish the source (every hash changes) and force a rebuild: the
+    # confirmed row cannot anchor, so ALL rows are retained as 'unaligned'
+    # while the 3-paragraph body still count-matches the 3 retained rows.
+    new_src = "\n\n".join([_zh_para("戊"), _zh_para("己"), _zh_para("庚")])
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET original_text = ?, segmentation_version = 0 "
+        "WHERE id = ?",
+        (new_src, chapter_id),
+    )
+    conn.commit()
+    conn.close()
+    payload = await _build_store(novel_id)
+    assert payload["segments_state"] == "unaligned"
+    assert len(payload["segments"]) == 3
+    before = [dict(r) for r in _db_rows(chapter_id)]
+
+    # Body-mutating find-replace fires the reproject hook. Row 0's target
+    # contains the match; a positional fast path would overwrite it (and
+    # stamp a fresh rev under the unaligned verdict).
+    await _commit_replace(novel_id, "Bai Xiaochun", "Lord Bai")
+
+    rows = _db_rows(chapter_id)
+    assert [r["id"] for r in rows] == [r["id"] for r in before]
+    assert rows[0]["target_text"] == before[0]["target_text"]  # untouched
+    assert rows[1]["status"] == "confirmed"
+    assert rows[1]["target_text"] == before[1]["target_text"]
+    conn = sqlite3.connect(DB_PATH)
+    state, body = conn.execute(
+        "SELECT segments_state, translated_text FROM chapters WHERE id = ?",
+        (chapter_id,),
+    ).fetchone()
+    conn.close()
+    assert state == "unaligned"
+    assert "Lord Bai" in body  # the replacement itself landed in the body
 
 
 @pytest.mark.asyncio

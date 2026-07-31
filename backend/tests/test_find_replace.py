@@ -403,7 +403,7 @@ async def test_commit_reprojects_segment_store_preserving_statuses():
     async with open_conn() as conn:
         await segments_svc.update_segment(
             conn, novel_id, 1, 0, action="confirm", after_text=None,
-            chapter_rev=payload["chapter_rev"],
+            client_rev=payload["chapter_rev"],
             before_target_hash=seg0["target_hash"],
         )
         await conn.commit()

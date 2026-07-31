@@ -300,6 +300,69 @@ def test_patch_404s(client):
     assert r.status_code == 404
 
 
+def test_chained_writes_using_only_returned_guards(client):
+    """The frontend's serialized save chain never re-GETs between writes:
+    each PATCH is built from the PREVIOUS response's chapter_rev plus the
+    stored payload's target hashes. Pin that contract end to end so a
+    future normalization drift in the materialization (join vs stored
+    column) cannot start 409ing every second client write while the
+    single-write tests stay green."""
+    novel_id, _ = _seed_chapter()
+    initial = _get_payload(client, novel_id)
+
+    # Write 1: save segment 0 with the initial GET's guards.
+    r1 = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/0",
+        json={
+            "action": "save",
+            "after_text": "Rewritten first.",
+            "chapter_rev": initial["chapter_rev"],
+            "before_target_hash": initial["segments"][0]["target_hash"],
+        },
+    )
+    assert r1.status_code == 200, r1.text
+    out1 = r1.json()
+
+    # Write 2: confirm the SAME segment using only write 1's response.
+    r2 = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/0",
+        json={
+            "action": "confirm",
+            "chapter_rev": out1["chapter_rev"],
+            "before_target_hash": out1["segment"]["target_hash"],
+        },
+    )
+    assert r2.status_code == 200, r2.text
+    out2 = r2.json()
+
+    # Write 3: save a DIFFERENT segment using write 2's chapter_rev and the
+    # ORIGINAL GET's hash for that untouched row (exactly what the client
+    # holds: other rows' hashes are not refreshed by a save elsewhere).
+    r3 = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/2",
+        json={
+            "action": "save",
+            "after_text": "Rewritten third.",
+            "chapter_rev": out2["chapter_rev"],
+            "before_target_hash": initial["segments"][2]["target_hash"],
+        },
+    )
+    assert r3.status_code == 200, r3.text
+    out3 = r3.json()
+    assert out3["progress"] == {"confirmed": 1, "total": 3}
+
+    # And write 3's rev is immediately reusable too.
+    r4 = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/2",
+        json={
+            "action": "confirm",
+            "chapter_rev": out3["chapter_rev"],
+            "before_target_hash": out3["segment"]["target_hash"],
+        },
+    )
+    assert r4.status_code == 200, r4.text
+
+
 def test_confirm_all_route(client):
     novel_id, chapter_id = _seed_chapter()
     data = _get_payload(client, novel_id)
