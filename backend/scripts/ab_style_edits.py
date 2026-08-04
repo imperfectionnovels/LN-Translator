@@ -34,8 +34,11 @@ Caveats:
     the absolute ratios for both arms equally; the arm-A-minus-arm-B DELTA
     stays a clean read of the style-edit effect on the draft.
   - This deliberately bypasses fetch_style_edits / the global flag and feeds
-    style_edits directly, because fetch_style_edits has no held-out-chapter
-    exclusion and would leak the ground truth.
+    style_edits directly: the harness A/Bs the LEGACY style_edits arm against
+    its own ground-truth rows, so it needs flag-independence and a legacy-side
+    held-out exclusion. (fetch_style_edits grew an exclude_chapter_id with the
+    2026-08-04 segment-pair merge, but that exclusion covers only the
+    segment-ledger side, not the style_edits rows this harness trains on.)
 """
 
 from __future__ import annotations
@@ -60,7 +63,12 @@ from backend.services.translators import translate_chapter
 
 
 def _dedupe_pairs(rows) -> list[tuple[str, str]]:
-    """Mirror fetch_style_edits' within-window dedup of (before, after)."""
+    """Within-window (before, after) pair dedup for the legacy style_edits
+    rows this harness feeds directly. (fetch_style_edits historically used
+    the same pair key; since the 2026-08-04 segment-pair merge it dedupes on
+    the before side across both sources. The pair key stays here on purpose:
+    ground-truth rows with one before and two afters are distinct data points
+    for scoring, not prompt noise.)"""
     seen: set[tuple[str, str]] = set()
     out: list[tuple[str, str]] = []
     for r in rows:
