@@ -1193,35 +1193,6 @@ body[data-chapter-status="error"] .reading-rail {
   opacity: 0;
   pointer-events: none;
 }
-/* ===== Pre-flight saturation check card ===== */
-.saturation-card {
-  margin: 14px 0 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-tint);
-  font-family: var(--font-family-sans);
-  font-size: 13px;
-}
-.saturation-card .ok { color: var(--accent, var(--fg)); }
-.saturation-card .sat-head { margin-bottom: 6px; }
-.saturation-card .sat-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 12px; }
-.saturation-card .sat-list li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.saturation-card .ocr-chip {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 8px;
-  background: rgba(170, 70, 70, 0.14);
-  border-radius: var(--r-pill);
-  font-size: 11px;
-  color: var(--fg);
-}
-.saturation-card .sat-sep {
-  border: 0;
-  border-top: 1px dashed var(--border);
-  margin: 10px 0;
-}
-
 /* ===== Chapter reader — in-progress loading screen ===== */
 /* Shown while translation is running for the active chapter. It is the only
  * thing on screen: the reading column is hidden by JS. The bar is a pure-CSS
@@ -1284,30 +1255,6 @@ body[data-chapter-status="error"] .reading-rail {
 .chapter-loader-meta .dot { opacity: 0.5; }
 .chapter-loader-cancel { margin-top: 18px; }
 .chapter-loader-cancel[hidden] { display: none; }
-
-/* ===== Bilingual paragraph rows (legacy compat) ===== */
-.bilingual { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.bilingual-row { display: contents; }
-.col-zh { font-family: var(--font-family-han); line-height: 2; }
-
-/* ===== Sticky append banner with back link ===== */
-.append-banner-row {
-  position: sticky; top: 0; z-index: 4;
-  display: flex; align-items: center; gap: 10px;
-  margin: 0 0 14px;
-}
-.append-banner-row .status { flex: 1; margin: 0; }
-.append-banner-row .back-link {
-  font-family: var(--font-family-sans);
-  font-size: 12.5px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  border-radius: var(--r-md);
-  background: var(--pane-bg);
-  white-space: nowrap;
-}
-.append-banner-row .back-link:hover { color: var(--fg); background: var(--bg-tint); }
 
 /* ===== Stale-chapter banner button ===== */
 #chapter-status .stale-action {

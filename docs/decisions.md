@@ -625,9 +625,10 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   base.css). The terms rail became a "Terms in this chapter" tier in the
   editor's assist rail (click a card to revise; + Add term for the blank
   form) and the consistency rail's locked-term tier became the
-  "Missing locked terms" tier (client-computed over glossary x segments,
-  click jumps to the offending row); the fuzzy-match half of the old rail
-  was already covered by the assist rail's TM tiers. The select-to-add
+  "Missing locked terms" tier (initially client-computed over glossary x
+  segments; SUPERSEDED by the review fix below, which repoints it at the
+  server's narrowed GET /consistency glossary tier); the fuzzy-match half
+  of the old rail was already covered by the assist rail's TM tiers. The select-to-add
   popover was REIMPLEMENTED clean on the segment grid (Add / Revise /
   Concordance) rather than porting the reader's selection machinery,
   and the add/revise forms are one term-form dialog (revise with an EN
@@ -690,3 +691,10 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   detectors with zero churn. Refetch is debounced (600ms) on segment
   edits. The terms-in-chapter listing stays client-computed on purpose:
   it is a neutral inventory, not a warning, so naive matching is fine.
+- **flags_only fast path on GET /consistency (final review).** The
+  editor's debounced missing-locked refetch was paying for the
+  whole-novel corpus build + fuzzy matcher just to discard the matches
+  tier. The route now takes ?flags_only=1 backed by the previously
+  caller-less consistency.glossary_flags_for_chapter (single-owner
+  preserved; no corpus build); editor-tools passes it; the full two-tier
+  payload stays available without the param.

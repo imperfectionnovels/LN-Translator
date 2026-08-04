@@ -226,8 +226,10 @@ const api = {
   glossaryHealth: (novelId) => apiFetch(`/api/novels/${novelId}/glossary/health`),
   chapterSaturation: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/saturation`),
-  getChapterConsistency: (novelId, chapterNum) =>
-    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/consistency`),
+  // flagsOnly=true runs only the glossary tier server-side (no whole-novel
+  // corpus build / fuzzy matcher) — the editor's missing-locked tier path.
+  getChapterConsistency: (novelId, chapterNum, flagsOnly = false) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/consistency${flagsOnly ? "?flags_only=1" : ""}`),
   // Quality cockpit (read-only). qualityScorecard takes an optional "LO-HI"
   // chapter range; qualityConsistency is the novel-level TCR + worst-terms feed.
   qualityScorecard: (novelId, range = null) =>

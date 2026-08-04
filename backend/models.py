@@ -354,12 +354,14 @@ class ConsistencyGlossaryFlag(BaseModel):
 
 
 class ConsistencyFindings(BaseModel):
-    """Response for GET /novels/{id}/chapters/{n}/consistency. The edit-mode
-    rail reads this. `status` drives the empty-state copy:
+    """Response for GET /novels/{id}/chapters/{n}/consistency (consumed by
+    the CAT editor's Missing-locked-terms tier). `status` values:
       - "ok": ran; `matches`/`glossary_flags` may still be empty (no drift).
       - "not_translated": the chapter has no English yet.
       - "tm_unavailable": source/translation couldn't be aligned, so the fuzzy
-        tier is skipped (glossary flags may still be present)."""
+        tier is skipped (glossary flags may still be present).
+      - "flags_only": the ?flags_only=1 fast path ran only the glossary tier
+        (`matches` is always empty there)."""
 
     status: str
     matches: list[ConsistencyMatch]

@@ -771,10 +771,11 @@ function zhAliases(termZh) {
  * is glossary.missing_translator_terms(atomic_only=True): slash-split
  * alternatives, parenthetical stripping, idiom inflections, 1-char-zh guard,
  * and the 2026-06-23 atomic-only narrowing (an all-locked naive client
- * matcher was measured ~96% false-fire; don't reimplement it here). The
- * route's fuzzy `matches` tier is deliberately IGNORED: the assist rail's
- * per-segment TM exact/fuzzy tiers already cover reuse over the segment
- * store. Refetched (debounced) on chapter load and after segment edits. */
+ * matcher was measured ~96% false-fire; don't reimplement it here). Fetched
+ * with flags_only=1 so the server runs ONLY the glossary tier (no
+ * whole-novel corpus build / fuzzy matcher; the assist rail's per-segment
+ * TM tiers already cover fuzzy reuse). Refetched (debounced) on chapter
+ * load and after segment edits. */
 let missingLockedSeq = 0;
 let missingLockedDebounce = null;
 
@@ -794,7 +795,7 @@ async function refreshMissingLockedTier() {
   }
   let res;
   try {
-    res = await api.getChapterConsistency(novelId, forCh);
+    res = await api.getChapterConsistency(novelId, forCh, true);
   } catch (_) {
     if (seq !== missingLockedSeq || forCh !== currentCh) return;
     missingLockedEl.innerHTML =

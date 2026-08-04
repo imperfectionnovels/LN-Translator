@@ -107,6 +107,15 @@ def test_editor_util_menu_and_tools_wiring():
         "api.getChapterConsistency",
     ):
         assert wrapper in tools, f"editor-tools.js does not call {wrapper}"
+    # The tier asks for the flags-only fast path (no whole-novel corpus
+    # build / fuzzy matcher server-side; the editor discards matches anyway).
+    assert "getChapterConsistency(novelId, forCh, true)" in tools, (
+        "the missing-locked tier must request flags_only"
+    )
+    api_src = (JS / "api.js").read_text(encoding="utf-8")
+    assert "flags_only=1" in api_src, (
+        "api.getChapterConsistency lost its flags_only fast-path param"
+    )
 
 
 def test_edit_paragraph_write_path_is_gone():

@@ -530,13 +530,42 @@ async def get_chapter_last_prompt(
 async def get_chapter_consistency(
     novel_id: int,
     chapter_num: int,
+    flags_only: bool = False,
     conn: aiosqlite.Connection = Depends(get_conn),
 ) -> ConsistencyFindings:
-    """Edit-mode consistency rail data: near-duplicate Chinese source
+    """Consistency findings for one chapter: near-duplicate Chinese source
     paragraphs rendered differently elsewhere in the novel (fuzzy TM) plus
     locked glossary terms missing from this chapter's translation. Read-only,
-    on-demand. 404 only when the chapter row is missing; an untranslated or
-    unalignable chapter returns a populated `status` with empty findings."""
+    on-demand. Its live consumer is the CAT editor's Missing-locked-terms
+    tier, which passes `flags_only=1` so only the glossary tier runs
+    (`glossary_flags_for_chapter`: no whole-novel corpus build, no fuzzy
+    matcher; the editor discards `matches` anyway, its assist rail covers
+    fuzzy reuse). Without the param the full two-tier payload is unchanged.
+    404 only when the chapter row is missing; an untranslated or unalignable
+    chapter returns a populated `status` with empty findings."""
+    if flags_only:
+        cur = await conn.execute(
+            "SELECT 1 FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        )
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="chapter not found")
+        flags = await consistency_svc.glossary_flags_for_chapter(
+            conn, novel_id, chapter_num
+        )
+        return ConsistencyFindings(
+            status="flags_only",
+            matches=[],
+            glossary_flags=[
+                ConsistencyGlossaryFlag(
+                    term_id=f.term_id,
+                    term_zh=f.term_zh,
+                    expected_en=f.expected_en,
+                    paragraph_index=f.paragraph_index,
+                )
+                for f in flags
+            ],
+        )
     result = await consistency_svc.consistency_for_chapter(
         conn, novel_id, chapter_num
     )

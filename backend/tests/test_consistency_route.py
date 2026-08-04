@@ -119,3 +119,23 @@ def test_consistency_route_pending_chapter_is_not_500(client):
     r = client.get(f"/api/novels/{novel_id}/chapters/1/consistency")
     assert r.status_code == 200
     assert r.json()["status"] == "not_translated"
+
+def test_consistency_route_flags_only_skips_fuzzy_tier(client):
+    """?flags_only=1 (the editor's Missing-locked-terms path) runs only the
+    glossary tier: same flags as the full payload, matches always empty,
+    status 'flags_only'. 404 contract unchanged."""
+    novel_id = _seed()
+    full = client.get(f"/api/novels/{novel_id}/chapters/2/consistency").json()
+    r = client.get(
+        f"/api/novels/{novel_id}/chapters/2/consistency", params={"flags_only": 1}
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "flags_only"
+    assert data["matches"] == []
+    assert data["glossary_flags"] == full["glossary_flags"]
+    assert any(f["term_zh"] == "灵宝" for f in data["glossary_flags"])
+    # 404 still fires for a missing chapter on the fast path.
+    assert client.get(
+        f"/api/novels/{novel_id}/chapters/999/consistency", params={"flags_only": 1}
+    ).status_code == 404

@@ -95,14 +95,10 @@ const endStat = document.getElementById("end-stat");
 const endBlock = document.getElementById("end-block");
 const readPct = document.getElementById("read-pct");
 const readEta = document.getElementById("read-eta");
+// Glossary link in the TOC drawer head (also the `g` shortcut's target).
+// Null-guarded so older cached HTML without the row doesn't crash boot.
 const glossaryLink = document.getElementById("toc-glossary-link");
-
-glossaryLink.href = `/glossary?novel=${novelId}`;
-// Mobile-only cross-page nav inside the TOC drawer head. Mirrors the spine's
-// glossary link with the current novel context preserved. Null-guarded so
-// older cached HTML without the new toc-cross-nav row doesn't crash boot.
-const tocGlossaryLink = document.getElementById("toc-glossary-link");
-if (tocGlossaryLink) tocGlossaryLink.href = `/glossary?novel=${novelId}`;
+if (glossaryLink) glossaryLink.href = `/glossary?novel=${novelId}`;
 document.getElementById("download-txt").href = `/api/novels/${novelId}/download?format=txt`;
 document.getElementById("download-md").href = `/api/novels/${novelId}/download?format=md`;
 // Initiative 7 EPUB export. Null-guard for cached old HTML.
