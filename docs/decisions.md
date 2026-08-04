@@ -698,3 +698,58 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   caller-less consistency.glossary_flags_for_chapter (single-owner
   preserved; no corpus build); editor-tools passes it; the full two-tier
   payload stays available without the param.
+
+## 2026-08-04: Post-pivot gap audit, two CAT-ecosystem restorations
+
+Audited every feature the pivot retired against the shipped editor; four
+candidates, two restorations.
+
+- **B withdrawn: the premise was wrong.** The audit began from "the old
+  reader term popover offered retranslate-affected and the editor lost
+  it". Verified at eb290c2: the deleted reader-glossary.js NEVER offered
+  retranslate-affected; it was deliberately instant-rewrite-only (the
+  WTR-lab feel, with an in-code note that retranslate-paragraph is
+  absent by design), and the editor's term dialog (updateGlossary ->
+  glossaryApplyInPlace -> grid reload) matches it exactly. Only the
+  glossary PAGE ever had the three-way choice, and it still does.
+  Parity holds; adding the offer to the editor would be a NEW feature,
+  available on request.
+- **D skips confirmed correct.** Palette editor-context actions (the
+  editor is fully keyboard-driven), the aligned bilingual reading grid
+  (edit-mode-only chrome by the 2026-06-04 directive; the editor grid IS
+  the aligned view), the reader consistency fuzzy rail (superseded by
+  the assist rail's per-segment tiers), and per-paragraph
+  contenteditable in the reader (the pivot's whole point was one write
+  path) all stay retired.
+- **A shipped: style-pairs prompt arm re-sourced from the ledger
+  (c18bb0f).** Phase 6 severed the USER STYLE PREFERENCES producer: the
+  edit-paragraph endpoint wrote style_edits rows, the block froze at
+  historical data, and in-app edits reached prompts only as confirmed
+  zh->EN exemplars (voice precedent, a different signal from before-after
+  correction). segments.recent_edited_pairs (single-owner rule) feeds
+  edited|confirmed machine->target pairs, and fetch_style_edits merges
+  them ahead of legacy style_edits rows under the SAME flag
+  (PROMPT_INCLUDE_STYLE_EDITS) and cap (10), deduped on the before side;
+  the queue site drops pairs whose AFTER already rides the chapter's
+  approved block. This is parity RESTORATION of a pre-pivot arm under
+  its existing default-true flag, not a default flip: the graduation
+  rule (single-variable A/B vs ground truth) governs flag DEFAULTS and
+  is not triggered by reconnecting a producer the pivot disconnected.
+  Cache safety pinned: no pairs -> byte-identical prompt, no
+  PROMPT_TEMPLATE_VERSION bump.
+- **C shipped: pull-based observation recheck (d8eb983).** Fixing a
+  flagged line in the editor left the stale QA flag until manual
+  dismiss (observation writes lived only in the queue's translate
+  commit; judgment call 5 of Phase 6). recheck_body_observations
+  re-runs body_correctness_observations against the current displayed
+  body and scope-replaces ONLY the kinds it can itself recompute
+  (BODY_RECHECK_KINDS, including the 'observation' fallback kind that
+  only body observers produce); translate-time-only kinds stay
+  untouched, and title-targeted glossary_predicate_loss rows (the one
+  kind shared between body and title callers) are carved out by their
+  ' in chapter title: ' excerpt label, pinned against the real message
+  format. Dismissals carry over on (kind, excerpt) so a re-check never
+  resurrects a waved-off judgment call. Pull-based on purpose: the
+  editor rechecks on panel open, Re-check click, and debounced segment
+  saves while the panel is open; no background sweeps, and a
+  translating chapter 409s (the queue owns the rows mid-commit).
