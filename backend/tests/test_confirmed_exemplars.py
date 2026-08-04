@@ -302,6 +302,34 @@ async def test_worker_passes_exemplars_and_stamps_snapshot(monkeypatch):
     assert snap["flags"]["PROMPT_INCLUDE_CONFIRMED_EXEMPLARS"] is True
 
 
+async def test_worker_drops_exemplars_already_in_approved_block(monkeypatch):
+    """A confirmed source that also recurs in the chapter being translated
+    rides the APPROVED TRANSLATIONS block (cross-chapter exact match); the
+    fetch site drops its exemplar copy so the prompt carries it once."""
+    await providers_svc.create_provider(
+        name="translator", provider_type="gemini", model_id="m", is_default=True,
+    )
+    novel_id, (ch1, _ch2, _ch3) = await _seed_novel_with_chapters(3)
+    # _zh("癸") is the pending chapter's own source paragraph: its confirmed
+    # rendering lands in approved_pairs, so the exemplar copy must drop.
+    await _insert_segment(novel_id, ch1, 0, _zh("癸"), "Shared rendering.",
+                          confirmed_at="2026-08-03 10:00:00")
+    await _insert_segment(novel_id, ch1, 1, _zh("乙"), "Voice exemplar.",
+                          confirmed_at="2026-08-03 09:00:00")
+    pending_id = await _seed_pending_chapter(novel_id, 4)
+
+    calls: list = []
+    _stub_translate(monkeypatch, calls)
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_id)
+
+    call = calls[0]
+    assert [(zh, en) for _i, zh, en in call["approved_pairs"]] == [
+        (_zh("癸"), "Shared rendering.")
+    ]
+    assert call["confirmed_exemplars"] == [(_zh("乙"), "Voice exemplar.")]
+
+
 async def test_worker_flag_off_drops_exemplars(monkeypatch):
     await providers_svc.create_provider(
         name="translator", provider_type="gemini", model_id="m", is_default=True,

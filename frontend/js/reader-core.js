@@ -465,8 +465,9 @@ toggleSource?.addEventListener("click", (e) => {
 const READER_MODE_KEY = "readerMode";
 const READER_MODE_VIEW_KEY = "readerMode_savedViewMode";  // stash on flip-to-edit
 const READER_MODE_SOURCE_KEY = "readerMode_savedTranslationSource";  // 2026-05-27
-// `?mode=edit` deep-links (from the quality cockpit's worst-chapter worklist)
-// land directly in edit mode; otherwise the sticky localStorage choice wins.
+// Legacy `?mode=edit` deep-links (old bookmarks; Phase 6 redirects these to
+// /editor) land directly in edit mode; otherwise the sticky localStorage
+// choice wins.
 let readerMode = (params.get("mode") === "edit"
   || localStorage.getItem(READER_MODE_KEY) === "edit") ? "edit" : "read";
 const readerModeToggle = document.getElementById("reader-mode-toggle");

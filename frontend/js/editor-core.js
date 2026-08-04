@@ -163,7 +163,9 @@ function updateContinueCard() {
     continueEl.hidden = false;
   }).catch(() => {
     if (seq !== continueSeq || forCh !== currentCh) return;
-    continueForCh = forCh;
+    // Deliberately do NOT set continueForCh: the memo would pin this
+    // buttonless fallback until a chapter switch, so leave it unset and
+    // let the next updateActions() retry the editorNext fetch.
     continueEl.innerHTML =
       `<span class="continue-msg">Chapter fully confirmed</span>`;
     continueEl.hidden = false;

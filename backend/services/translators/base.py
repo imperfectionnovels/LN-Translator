@@ -591,9 +591,13 @@ def format_confirmed_exemplars(
 
     Each tuple is (source_zh, confirmed_en): a segment pair the user
     CONFIRMED in another chapter of this novel. Voice precedent, not
-    verbatim reuse: the paragraphs listed here are not in this chapter (the
-    same-chapter feed is the APPROVED TRANSLATIONS block). Sides truncate
-    defensively to the same ~400-char bound as the style-edits block."""
+    verbatim reuse. The exclusion is by CHAPTER only, so a source paragraph
+    that also recurs in the chapter being translated can appear in both
+    this block and the APPROVED TRANSLATIONS block (which carries
+    cross-chapter exact confirmed matches too); the queue's fetch site
+    drops such duplicates from the exemplar list before the prompt is
+    built. Sides truncate defensively to the same ~400-char bound as the
+    style-edits block."""
     if not confirmed_exemplars:
         return ""
     lines: list[str] = []

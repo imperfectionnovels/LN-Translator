@@ -549,7 +549,7 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   _displayedEnglish / _paragraphTextAt / _editVariant, and the "refined
   by X" pane chip is presence-keyed so it does not vanish mid-retry.
 
-## 2026-08-03 — CAT Phase 5: feed-the-AI + provenance TM surfaces + navigation
+## 2026-08-03: CAT-pivot Phase 5, feed-the-AI + provenance TM surfaces + navigation
 
 - **Confirmed exemplars are a separate block from approved translations.**
   APPROVED TRANSLATION EXAMPLES carries the 5 most recently confirmed

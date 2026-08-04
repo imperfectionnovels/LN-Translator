@@ -914,6 +914,16 @@ async def _translate_chapter_in_db(
         confirmed_exemplars = await fetch_confirmed_exemplars(
             conn, novel_id, chapter_id
         ) or None
+        if confirmed_exemplars and approved_pairs:
+            # A confirmed source that also recurs in THIS chapter already
+            # rides the approved block (cross-chapter exact match), so the
+            # exemplar copy is redundant; drop it. Exemplar sides are
+            # truncated to 400 chars, so compare on the truncated form.
+            approved_srcs = {zh[:400] for _i, zh, _en in approved_pairs}
+            confirmed_exemplars = [
+                (zh, en) for zh, en in confirmed_exemplars
+                if zh not in approved_srcs
+            ] or None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,
