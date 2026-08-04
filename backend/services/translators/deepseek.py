@@ -181,6 +181,7 @@ class DeepSeekTranslator(BaseTranslator):
         source_language: str | None = None,
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
+        confirmed_exemplars: list[tuple[str, str]] | None = None,
     ) -> TranslationResult:
         """DeepSeek-specific flow: a single free-form delimited translation
         pass, with a parse-retry and a plain-text fallback. Carries the same
@@ -197,6 +198,7 @@ class DeepSeekTranslator(BaseTranslator):
             chapter_zh, title_zh, glossary, previous_context, style_edits,
             style_note=style_note, genre=genre, custom_brief=custom_brief,
             free_draft=free_draft, approved_pairs=approved_pairs,
+            confirmed_exemplars=confirmed_exemplars,
         )
         # use_cache=False (an explicit Retranslate) skips the read but still
         # stores the fresh result below, so the cache stays warm afterward.

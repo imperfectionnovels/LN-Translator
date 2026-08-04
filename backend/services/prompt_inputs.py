@@ -9,8 +9,9 @@ queue-worker internals: the queue worker and the ab_style_edits A/B script both
 consume them.
 
 Each fetcher honors its A/B env flag (PROMPT_INCLUDE_STYLE_EDITS /
-PROMPT_INCLUDE_STYLE_NOTE / PREVIOUS_CONTEXT_ENABLED) at the fetch site, so a
-single flag flip suppresses one block for an A/B arm without DB mutation.
+PROMPT_INCLUDE_STYLE_NOTE / PROMPT_INCLUDE_CONFIRMED_EXEMPLARS /
+PREVIOUS_CONTEXT_ENABLED) at the fetch site, so a single flag flip
+suppresses one block for an A/B arm without DB mutation.
 """
 
 from __future__ import annotations
@@ -24,9 +25,11 @@ from backend.config import (
     PREVIOUS_CONTEXT_ENABLED,
     PREVIOUS_CONTEXT_MAX_GAP,
     PREVIOUS_CONTEXT_PARAGRAPHS,
+    PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
     PROMPT_INCLUDE_STYLE_EDITS,
     PROMPT_INCLUDE_STYLE_NOTE,
 )
+from backend.services import segments as segments_svc
 from backend.services.providers import (
     Provider,
     get_default_provider,
@@ -36,6 +39,30 @@ from backend.services.providers import (
 logger = logging.getLogger(__name__)
 
 STYLE_EDIT_LIMIT = 10
+CONFIRMED_EXEMPLAR_LIMIT = 5
+
+
+async def fetch_confirmed_exemplars(
+    conn: aiosqlite.Connection, novel_id: int, exclude_chapter_id: int
+) -> list[tuple[str, str]]:
+    """Recent CONFIRMED segment pairs from OTHER chapters of this novel, for
+    the APPROVED TRANSLATION EXAMPLES prompt block (CAT Phase 5): zh->EN
+    renderings the user explicitly confirmed in the CAT editor, shown to the
+    model as voice and phrasing precedent. Capped at
+    CONFIRMED_EXEMPLAR_LIMIT, recency-selected, deduped by source.
+
+    Returns [] when the flag is off, when nothing is confirmed yet, or when
+    the chapter_segments table doesn't exist (older DB). The SQL lives in
+    services/segments.py (the single chapter_segments owner); this wrapper
+    owns the flag gate + limit, matching its sibling fetchers."""
+    if not PROMPT_INCLUDE_CONFIRMED_EXEMPLARS:
+        return []
+    try:
+        return await segments_svc.fetch_confirmed_exemplar_pairs(
+            conn, novel_id, exclude_chapter_id, CONFIRMED_EXEMPLAR_LIMIT
+        )
+    except aiosqlite.OperationalError:
+        return []
 
 
 async def fetch_style_edits(

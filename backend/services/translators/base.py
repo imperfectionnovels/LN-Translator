@@ -584,6 +584,36 @@ def format_approved_translations(
     )
 
 
+def format_confirmed_exemplars(
+    confirmed_exemplars: list[tuple[str, str]] | None,
+) -> str:
+    """Render the APPROVED TRANSLATION EXAMPLES block (CAT Phase 5).
+
+    Each tuple is (source_zh, confirmed_en): a segment pair the user
+    CONFIRMED in another chapter of this novel. Voice precedent, not
+    verbatim reuse: the paragraphs listed here are not in this chapter (the
+    same-chapter feed is the APPROVED TRANSLATIONS block). Sides truncate
+    defensively to the same ~400-char bound as the style-edits block."""
+    if not confirmed_exemplars:
+        return ""
+    lines: list[str] = []
+    for i, (zh, en) in enumerate(confirmed_exemplars, start=1):
+        z = (zh or "").strip().replace("\n", " ")[:400]
+        e = (en or "").strip().replace("\n", " ")[:400]
+        if not z or not e:
+            continue
+        lines.append(f"Example {i}:\n  SOURCE:    {z}\n  CONFIRMED: {e}")
+    if not lines:
+        return ""
+    return (
+        "APPROVED TRANSLATION EXAMPLES (the user confirmed these renderings "
+        "in earlier chapters; treat them as the strongest voice and phrasing "
+        "precedent; glossary and structural rules still win):\n"
+        + "\n\n".join(lines)
+        + "\n\n"
+    )
+
+
 def build_prompt(
     chapter_zh: str,
     title_zh: str | None,
@@ -594,6 +624,7 @@ def build_prompt(
     style_note: str | None = None,
     free_draft: str | None = None,
     approved_pairs: list[tuple[int, str, str]] | None = None,
+    confirmed_exemplars: list[tuple[str, str]] | None = None,
 ) -> str:
     # Both locked (user-curated) and unlocked (auto-detected) entries are
     # filtered to ones whose `term_zh` appears in this chapter — terms absent
@@ -665,6 +696,13 @@ def build_prompt(
     # llm_cache key automatically: confirming a segment changes the prompt
     # and a later retranslate is a cache miss by design.
     approved_block = format_approved_translations(approved_pairs)
+    # APPROVED TRANSLATION EXAMPLES (Phase 5): confirmed pairs from OTHER
+    # chapters, rendered next to the USER STYLE PREFERENCES block because
+    # both are voice precedent. Rides the prompt body like the approved
+    # block, so it too folds into the llm_cache key; absent when empty, so
+    # a no-exemplar prompt is byte-identical to the pre-Phase-5 shape (no
+    # PROMPT_TEMPLATE_VERSION bump needed).
+    exemplar_block = format_confirmed_exemplars(confirmed_exemplars)
     instruction = (
         output_instruction if output_instruction is not None
         else DELIMITED_OUTPUT_INSTRUCTION
@@ -675,7 +713,7 @@ def build_prompt(
 GLOSSARY THIS CHAPTER (auto-detected terms appearing here):
 {chapter_block}
 
-{style_block}{context_block}{free_draft_block}{approved_block}{title_line}CHAPTER (Chinese):
+{style_block}{exemplar_block}{context_block}{free_draft_block}{approved_block}{title_line}CHAPTER (Chinese):
 {chapter_zh}
 
 {instruction}
@@ -840,6 +878,7 @@ class BaseTranslator(ABC):
         custom_brief: str | None,
         free_draft: str | None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
+        confirmed_exemplars: list[tuple[str, str]] | None = None,
     ) -> tuple[str, str]:
         """Shared translate_chapter prologue: reset the per-chapter call
         counter + usage accumulator, stash the genre-aware system instruction,
@@ -858,6 +897,7 @@ class BaseTranslator(ABC):
             style_note=style_note,
             free_draft=free_draft,
             approved_pairs=approved_pairs,
+            confirmed_exemplars=confirmed_exemplars,
         )
         cache_key = llm_cache.translation_key(
             backend_id=self.cache_identity(),
@@ -923,6 +963,7 @@ class BaseTranslator(ABC):
         source_language: str | None = None,
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
+        confirmed_exemplars: list[tuple[str, str]] | None = None,
     ) -> TranslationResult:
         # ``source_language`` is accepted by the BaseTranslator surface so
         # downstream MT-only backends can route it to their underlying
@@ -935,6 +976,9 @@ class BaseTranslator(ABC):
         # ``approved_pairs`` is the APPROVED TRANSLATIONS block feed (CAT
         # Phase 4): human-approved paragraph renderings the prompt asks the
         # model to reuse verbatim (the worker merge enforces regardless).
+        # ``confirmed_exemplars`` is the APPROVED TRANSLATION EXAMPLES feed
+        # (CAT Phase 5): confirmed pairs from OTHER chapters, voice
+        # precedent only.
 
         # Reset the per-chapter call counter + usage accumulator, stash the
         # genre-aware system instruction, build the prompt, and derive the
@@ -949,6 +993,7 @@ class BaseTranslator(ABC):
             chapter_zh, title_zh, glossary, previous_context, style_edits,
             style_note=style_note, genre=genre, custom_brief=custom_brief,
             free_draft=free_draft, approved_pairs=approved_pairs,
+            confirmed_exemplars=confirmed_exemplars,
         )
         if use_cache:
             cached = llm_cache.load_translation(cache_key)

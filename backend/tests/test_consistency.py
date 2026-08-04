@@ -279,3 +279,101 @@ async def test_not_translated_status():
     assert res.status == "not_translated"
     assert res.matches == []
     assert res.glossary_flags == []
+
+
+# ---- Provenance-aware corpus (CAT Phase 5) -------------------------------
+
+
+async def _insert_segment_row(
+    novel_id, chapter_num, seg_index, src, tgt, status="confirmed",
+):
+    """Direct-SQL seed of a chapter_segments row (tests are exempt from the
+    services/segments.py single-owner rule)."""
+    import hashlib
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        )
+        chapter_id = (await cur.fetchone())["id"]
+        await conn.execute(
+            "INSERT INTO chapter_segments (novel_id, chapter_id, seg_index, "
+            "source_text, source_hash, target_text, machine_text, status, "
+            "origin, aligned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'human', 1)",
+            (novel_id, chapter_id, seg_index, src,
+             hashlib.sha256(src.encode("utf-8")).hexdigest()[:16],
+             tgt, tgt, status),
+        )
+        await conn.commit()
+
+
+async def test_corpus_prefers_segments_over_stale_tm_with_status():
+    """A segment-covered chapter contributes its chapter_segments renderings
+    (status-carrying, current) and its stale tm_segments rows are suppressed."""
+    src = "他取出了一件灵宝。"
+    novel = await _seed_novel([
+        # ch1's auto-derived tm row holds a stale rendering; its segment
+        # store holds the current confirmed one.
+        {"chapter_num": 1, "original_text": src,
+         "translated_text": "Old TM rendering of the treasure line."},
+        {"chapter_num": 2, "original_text": src,
+         "translated_text": "He took out a Spiritual Treasure."},
+    ])
+    await _insert_segment_row(
+        novel, 1, 0, src, "He took out a Spirit Treasure.",
+        status="confirmed",
+    )
+    res = await _run(novel, 2)
+    assert res.status == "ok"
+    assert len(res.matches) == 1
+    targets = {o.target_text: o for o in res.matches[0].others}
+    assert "He took out a Spirit Treasure." in targets
+    assert targets["He took out a Spirit Treasure."].status == "confirmed"
+    assert "Old TM rendering of the treasure line." not in targets, (
+        "stale tm_segments rendering of a segment-covered chapter leaked in"
+    )
+
+
+async def test_legacy_fallback_carries_status_none():
+    """A chapter with no segment rows still serves via tm_segments; its
+    renderings carry status None (the UI shows no provenance badge)."""
+    novel = await _seed_novel([
+        {"chapter_num": 1, "original_text": "他取出了一件灵宝。",
+         "translated_text": "He took out a Spirit Treasure."},
+        {"chapter_num": 2, "original_text": "他取出了一件灵宝。",
+         "translated_text": "He took out a Spiritual Treasure."},
+    ])
+    res = await _run(novel, 2)
+    assert len(res.matches) == 1
+    assert res.matches[0].others[0].status is None
+
+
+async def test_ranking_confirmed_before_machine():
+    """Within the same exactness tier, a confirmed rendering outranks a
+    machine one regardless of chapter order."""
+    src = "他取出了一件灵宝。"
+    novel = await _seed_novel([
+        {"chapter_num": 1, "original_text": src, "translated_text": None,
+         "status": "done", "tm": []},
+        {"chapter_num": 2, "original_text": src, "translated_text": None,
+         "status": "done", "tm": []},
+        {"chapter_num": 3, "original_text": src,
+         "translated_text": "He took out a Spiritual Treasure."},
+    ])
+    await _insert_segment_row(
+        novel, 1, 0, src, "Machine variant of the treasure line.",
+        status="machine",
+    )
+    await _insert_segment_row(
+        novel, 2, 0, src, "Confirmed variant of the treasure line.",
+        status="confirmed",
+    )
+    res = await _run(novel, 3)
+    assert len(res.matches) == 1
+    others = res.matches[0].others
+    assert [o.target_text for o in others[:2]] == [
+        "Confirmed variant of the treasure line.",
+        "Machine variant of the treasure line.",
+    ]
+    assert others[0].status == "confirmed"
+    assert others[1].status == "machine"

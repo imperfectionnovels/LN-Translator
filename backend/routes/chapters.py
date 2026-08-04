@@ -799,6 +799,7 @@ async def get_chapter_consistency(
                         target_text=o.target_text,
                         similarity=o.similarity,
                         exact=o.exact,
+                        status=o.status,
                     )
                     for o in m.others
                 ],

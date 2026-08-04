@@ -88,10 +88,12 @@ def test_concordance_route_returns_full_hit_shape(client):
     hits = resp.json()
     assert len(hits) == 1
     hit = hits[0]
-    # ConcordanceHit shape is fully populated.
+    # ConcordanceHit shape is fully populated. `status` is the CAT Phase 5
+    # additive provenance field: None on a legacy tm_segments hit.
     assert set(hit) == {
         "chapter_id", "chapter_num", "chapter_title_en",
         "paragraph_index", "source_text", "target_text", "matched_side",
+        "status",
     }
     assert hit["chapter_num"] == 1
     assert hit["chapter_title_en"] == "Chapter 1"
@@ -99,6 +101,78 @@ def test_concordance_route_returns_full_hit_shape(client):
     assert hit["source_text"] == "他大笑。"
     assert hit["target_text"] == "He laughed loudly."
     assert hit["matched_side"] == "target"
+    assert hit["status"] is None
+
+
+def _seed_segment_row(
+    novel_id: int, chapter_num: int, seg_index: int,
+    src: str, tgt: str, status: str = "confirmed",
+) -> None:
+    """Insert a chapter_segments row for an existing chapter (direct SQL is
+    fine in a test; production code goes through services/segments.py)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        chapter_id = conn.execute(
+            "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO chapter_segments (novel_id, chapter_id, seg_index, "
+            "source_text, source_hash, target_text, machine_text, status, "
+            "origin, aligned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'human', 1)",
+            (novel_id, chapter_id, seg_index, src, _hash(src), tgt, tgt, status),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_concordance_prefers_segments_with_status_and_tm_fallback(client):
+    """CAT Phase 5: a segment-covered chapter serves its chapter_segments
+    rows (status-carrying, current text) and its stale tm_segments rows are
+    suppressed; a chapter with no segment rows still serves via the legacy
+    tm fallback with status None."""
+    novel_id = _seed_segments()
+    # Chapter 1 gains a segment store whose text superseded the tm row:
+    # the concordance must show the segment rendering, not the stale tm one.
+    _seed_segment_row(
+        novel_id, 1, 0, "他大笑。", "He laughed thunderously.",
+        status="confirmed",
+    )
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance", params={"q": "laughed"}
+    )
+    assert resp.status_code == 200
+    hits = resp.json()
+    assert len(hits) == 1
+    assert hits[0]["target_text"] == "He laughed thunderously."
+    assert hits[0]["status"] == "confirmed"
+
+    # Chapter 2 has no segment rows: the tm fallback still serves it.
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance", params={"q": "sighed"}
+    )
+    hits = resp.json()
+    assert len(hits) == 1
+    assert hits[0]["chapter_num"] == 2
+    assert hits[0]["status"] is None
+
+
+def test_concordance_merges_in_reading_order(client):
+    """Segment hits and legacy tm hits interleave sorted by chapter."""
+    novel_id = _seed_segments()
+    # Both chapters' targets match "He "; chapter 1 is segment-covered with
+    # an edited row, chapter 2 stays legacy.
+    _seed_segment_row(
+        novel_id, 1, 0, "他大笑。", "He laughed loudly.", status="edited",
+    )
+    resp = client.get(
+        f"/api/novels/{novel_id}/tm/concordance", params={"q": "He "}
+    )
+    hits = resp.json()
+    assert [(h["chapter_num"], h["status"]) for h in hits] == [
+        (1, "edited"), (2, None),
+    ]
 
 
 def test_concordance_route_side_filter_and_empty(client):

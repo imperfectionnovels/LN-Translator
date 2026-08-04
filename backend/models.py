@@ -342,12 +342,17 @@ class ChapterSearchResults(BaseModel):
 
 
 class OtherRendering(BaseModel):
-    """How a near-duplicate source paragraph was rendered in another chapter."""
+    """How a near-duplicate source paragraph was rendered in another chapter.
+
+    `status` (CAT Phase 5, additive) is the segment provenance
+    ('confirmed' | 'edited' | 'machine') when the rendering came from
+    chapter_segments; None for a legacy tm_segments fallback row."""
 
     chapter_num: int
     target_text: str
     similarity: float  # 0..1
     exact: bool
+    status: str | None = None
 
 
 class ConsistencyMatch(BaseModel):
@@ -498,6 +503,15 @@ class SegmentAssistFuzzy(BaseModel):
     chapter_num: int
     source_text: str
     target_text: str
+
+
+class EditorNext(BaseModel):
+    """Response for GET /novels/{id}/editor-next (the editor's continue
+    card): the next chapter that still needs editing work (untranslated, or
+    carrying any non-confirmed segment), searching forward from `after` and
+    wrapping. None when every chapter is fully confirmed."""
+
+    next_chapter_num: int | None = None
 
 
 class SegmentAssist(BaseModel):

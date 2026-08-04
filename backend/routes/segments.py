@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.db import get_conn
 from backend.models import (
+    EditorNext,
     SegmentAssist,
     SegmentConfirmAll,
     SegmentConfirmAllResult,
@@ -31,6 +32,26 @@ from backend.models import (
 from backend.services import segments as segments_svc
 
 router = APIRouter()
+
+
+@router.get("/novels/{novel_id}/editor-next")
+async def editor_next(
+    novel_id: int,
+    after: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> EditorNext:
+    """The editor's continue card (CAT Phase 5): the next chapter that still
+    needs work (untranslated, or its segment store is missing or carries any
+    non-confirmed row), searching forward from `after` then wrapping.
+    next_chapter_num is None when every chapter is fully confirmed. 404 when
+    the novel does not exist."""
+    cur = await conn.execute(
+        "SELECT 1 FROM novels WHERE id = ?", (novel_id,)
+    )
+    if await cur.fetchone() is None:
+        raise HTTPException(status_code=404, detail="novel not found")
+    nxt = await segments_svc.next_chapter_to_edit(conn, novel_id, after)
+    return EditorNext(next_chapter_num=nxt)
 
 
 @router.get("/novels/{novel_id}/chapters/{chapter_num}/segments")

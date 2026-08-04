@@ -23,7 +23,13 @@ Correctness contracts (see the consistency-aid plan):
   - `displayed_body` is `refined_text` whenever it is non-empty (the
     segments.displayed_body presence rule), else `translated_text`,
     matching the reader's `_displayedEnglish`.
-  - Only OTHER chapters' `tm_segments` form the comparison corpus.
+  - Only OTHER chapters form the comparison corpus. Since CAT Phase 5 the
+    corpus prefers `chapter_segments` (status-carrying, always current: the
+    editor rematerializes it on every write), read through the segments
+    service (single chapter_segments owner); `tm_segments` remains a legacy
+    fallback ONLY for chapters that have no segment rows yet. Renderings
+    rank confirmed > edited > machine > legacy-tm and carry `status` so the
+    rail can badge human-vetted matches.
 
 This module performs NO writes. The rail's fix actions reuse the reader's
 existing in-context tools (paragraph edit, glossary editor); nothing here
@@ -40,6 +46,7 @@ from rapidfuzz import fuzz, process
 
 from backend.models import GlossaryEntry
 from backend.services import glossary as glossary_svc
+from backend.services import segments as segments_svc
 from backend.services import tm as tm_svc
 from backend.services.glossary_filters import canonical_zh, split_aliases
 from backend.services.segments import displayed_body as _segments_displayed_body
@@ -64,12 +71,17 @@ _EXACT_SCORE = 99.5
 
 @dataclass
 class OtherRendering:
-    """How a near-duplicate source paragraph was rendered in another chapter."""
+    """How a near-duplicate source paragraph was rendered in another chapter.
+
+    `status` is the segment provenance ('confirmed' | 'edited' | 'machine')
+    when the rendering came from chapter_segments; None for a legacy
+    tm_segments fallback row. The UI badges confirmed/edited."""
 
     chapter_num: int
     target_text: str
     similarity: float  # 0..1 (rapidfuzz ratio / 100)
     exact: bool
+    status: str | None = None
 
 
 @dataclass
@@ -187,8 +199,44 @@ async def glossary_flags_for_chapter(
 class _CorpusEntry:
     canon: str
     length: int
-    # distinct rendering -> earliest chapter_num that produced it
-    renderings: dict[str, int]
+    # distinct rendering -> (chapter_num, status): the best-status producer
+    # of that rendering (earliest chapter among status ties). status None =
+    # legacy tm_segments row.
+    renderings: dict[str, tuple[int, str | None]]
+
+
+# Provenance ranking for corpus renderings: human-vetted first. Legacy
+# tm_segments rows (status None) rank below machine segments because the
+# segment store is rematerialized on every editor write while tm rows can
+# be stale.
+_PROVENANCE_RANK = {"confirmed": 0, "edited": 1, "machine": 2}
+
+
+def _rank(status: str | None) -> int:
+    return _PROVENANCE_RANK.get(status, 3)
+
+
+def _fold_corpus_row(
+    by_canon: dict[str, _CorpusEntry],
+    src: str,
+    target: str,
+    chapter_num: int,
+    status: str | None,
+    min_source_len: int,
+) -> None:
+    canon = canonical_zh(src)
+    if len(canon) < min_source_len or not target:
+        return
+    entry = by_canon.get(canon)
+    if entry is None:
+        by_canon[canon] = _CorpusEntry(
+            canon=canon, length=len(canon),
+            renderings={target: (chapter_num, status)},
+        )
+        return
+    prev = entry.renderings.get(target)
+    if prev is None or (_rank(status), chapter_num) < (_rank(prev[1]), prev[0]):
+        entry.renderings[target] = (chapter_num, status)
 
 
 async def _build_other_corpus(
@@ -197,33 +245,38 @@ async def _build_other_corpus(
     current_chapter_id: int,
     min_source_len: int,
 ) -> list[_CorpusEntry]:
-    """Dedup every OTHER chapter's TM source paragraphs by script-folded form,
-    collecting the distinct renderings (and the earliest chapter each)."""
+    """Dedup every OTHER chapter's source paragraphs by script-folded form,
+    collecting the distinct renderings (with the best-status producer each).
+
+    CAT Phase 5: `chapter_segments` is the preferred corpus (read via the
+    segments service, the single chapter_segments owner) because the editor
+    rematerializes it on every write and its rows carry status. `tm_segments`
+    contributes ONLY the chapters that have no segment rows at all (legacy
+    chapters never opened in the editor); their renderings carry status None.
+    """
+    by_canon: dict[str, _CorpusEntry] = {}
+    seg_rows = await segments_svc.corpus_for_consistency(
+        conn, novel_id, current_chapter_id
+    )
+    for r in seg_rows:
+        _fold_corpus_row(
+            by_canon, r["source_text"] or "", r["target_text"] or "",
+            r["chapter_num"], r["status"], min_source_len,
+        )
+    covered = await segments_svc.chapter_ids_with_segments(conn, novel_id)
     cur = await conn.execute(
-        "SELECT t.source_text, t.target_text, c.chapter_num "
+        "SELECT t.chapter_id, t.source_text, t.target_text, c.chapter_num "
         "FROM tm_segments t JOIN chapters c ON c.id = t.chapter_id "
         "WHERE t.novel_id = ? AND t.chapter_id != ?",
         (novel_id, current_chapter_id),
     )
-    rows = await cur.fetchall()
-    by_canon: dict[str, _CorpusEntry] = {}
-    for r in rows:
-        src = r["source_text"] or ""
-        canon = canonical_zh(src)
-        if len(canon) < min_source_len:
+    for r in await cur.fetchall():
+        if r["chapter_id"] in covered:
             continue
-        target = r["target_text"] or ""
-        if not target:
-            continue
-        ch = r["chapter_num"]
-        entry = by_canon.get(canon)
-        if entry is None:
-            by_canon[canon] = _CorpusEntry(canon=canon, length=len(canon),
-                                           renderings={target: ch})
-            continue
-        prev = entry.renderings.get(target)
-        if prev is None or ch < prev:
-            entry.renderings[target] = ch
+        _fold_corpus_row(
+            by_canon, r["source_text"] or "", r["target_text"] or "",
+            r["chapter_num"], None, min_source_len,
+        )
     return list(by_canon.values())
 
 
@@ -264,15 +317,19 @@ def _fuzzy_matches(
             entry = index[choice]
             exact = score >= _EXACT_SCORE
             sim = round(score / 100.0, 3)
-            for target, ch in entry.renderings.items():
+            for target, (ch, status) in entry.renderings.items():
                 if target == current or target in seen_targets:
                     continue
                 seen_targets.add(target)
                 others.append(OtherRendering(chapter_num=ch, target_text=target,
-                                             similarity=sim, exact=exact))
+                                             similarity=sim, exact=exact,
+                                             status=status))
         if not others:
             continue
-        others.sort(key=lambda o: (not o.exact, -o.similarity, o.chapter_num))
+        # Exact matches first; within a tier, human-vetted provenance
+        # (confirmed > edited > machine > legacy tm) outranks similarity.
+        others.sort(key=lambda o: (not o.exact, _rank(o.status),
+                                   -o.similarity, o.chapter_num))
         matches.append(ConsistencyMatch(
             paragraph_index=p.paragraph_index,
             source_text=p.source_text,

@@ -44,6 +44,16 @@ Phase 4 makes the WORKER segments-authoritative for human rows:
   - `segment_assist`: the editor's per-segment assist rail feed (TM exact +
     fuzzy + the stored machine rendering).
 
+Phase 5 adds the provenance read surfaces (this module stays the ONLY one
+with chapter_segments SQL):
+  - `fetch_confirmed_exemplar_pairs`: recent confirmed pairs novel-wide for
+    the APPROVED TRANSLATION EXAMPLES prompt block.
+  - `corpus_for_consistency` / `chapter_ids_with_segments` /
+    `search_segments`: the consistency rail and concordance now read
+    chapter_segments first (status-carrying), with tm_segments demoted to a
+    legacy fallback for chapters that have no segment rows.
+  - `next_chapter_to_edit`: the editor's continue card feed.
+
 Async, aiosqlite. No route logic; callers own the commit.
 """
 
@@ -1202,6 +1212,231 @@ async def approved_prompt_pairs(
         out.append((i, src_paras[i], pairs[i]))
         total += entry_chars
     return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: feed-the-AI exemplars + provenance-aware TM read surfaces
+# ---------------------------------------------------------------------------
+
+# Per-side truncation for a confirmed exemplar pair, matching the ~400-char
+# convention of format_style_edits (enough to convey voice, bounded prompt).
+_EXEMPLAR_SIDE_MAX_CHARS = 400
+# Candidate-pool multiplier: the recency query over-fetches so the source
+# dedupe below can still fill `limit` distinct pairs when the most recent
+# confirmations repeat a source paragraph.
+_EXEMPLAR_POOL_FACTOR = 20
+
+
+async def fetch_confirmed_exemplar_pairs(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    exclude_chapter_id: int,
+    limit: int,
+) -> list[tuple[str, str]]:
+    """(source_text, target_text) pairs of the most recently CONFIRMED
+    segments novel-wide, excluding the chapter being translated, for the
+    APPROVED TRANSLATION EXAMPLES prompt block (CAT Phase 5).
+
+    Recency-selected (ORDER BY confirmed_at DESC; teaches the user's voice,
+    not chapter-relevant vocabulary; no relevance filter by design), deduped
+    by source text (newest confirmation of a repeated source wins), empty
+    targets skipped, both sides truncated to ~400 chars. Read-only."""
+    if limit <= 0:
+        return []
+    cur = await conn.execute(
+        "SELECT source_text, target_text FROM chapter_segments "
+        "WHERE novel_id = ? AND chapter_id != ? AND status = 'confirmed' "
+        "  AND target_text != '' "
+        "ORDER BY confirmed_at DESC, id DESC LIMIT ?",
+        (novel_id, exclude_chapter_id, limit * _EXEMPLAR_POOL_FACTOR),
+    )
+    rows = await cur.fetchall()
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for r in rows:
+        src = (r["source_text"] or "").strip()
+        tgt = (r["target_text"] or "").strip()
+        if not src or not tgt or src in seen:
+            continue
+        seen.add(src)
+        out.append((
+            src[:_EXEMPLAR_SIDE_MAX_CHARS],
+            tgt[:_EXEMPLAR_SIDE_MAX_CHARS],
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def chapter_ids_with_segments(
+    conn: aiosqlite.Connection, novel_id: int
+) -> set[int]:
+    """Every chapter id of this novel that has ANY chapter_segments rows.
+
+    The provenance-aware TM surfaces (consistency rail corpus, concordance)
+    treat these chapters as segment-covered: their tm_segments rows are
+    legacy duplicates and must not re-enter through the fallback path, even
+    when a covered chapter contributes no usable segment row (all-empty
+    targets on a 'partial' chapter)."""
+    cur = await conn.execute(
+        "SELECT DISTINCT chapter_id FROM chapter_segments WHERE novel_id = ?",
+        (novel_id,),
+    )
+    return {r["chapter_id"] for r in await cur.fetchall()}
+
+
+async def corpus_for_consistency(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    exclude_chapter_id: int,
+) -> list[aiosqlite.Row]:
+    """Rows for the consistency rail's fuzzy corpus: same-novel OTHER-chapter
+    segments with a non-empty target, carrying status so the payload can
+    rank confirmed > edited > machine and the UI can badge provenance.
+    Columns: source_text, target_text, status, chapter_num. Read-only;
+    consistency.py owns the folding/scoring on top."""
+    cur = await conn.execute(
+        "SELECT cs.source_text, cs.target_text, cs.status, c.chapter_num "
+        "FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
+        "WHERE cs.novel_id = ? AND cs.chapter_id != ? "
+        "  AND cs.target_text != ''",
+        (novel_id, exclude_chapter_id),
+    )
+    return list(await cur.fetchall())
+
+
+# Concordance semantics mirrored from tm.search (INSTR for the Chinese side,
+# case-insensitive LIKE for the English side, same 50-hit cap).
+_SEARCH_LIMIT = 50
+
+
+async def search_segments(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    query: str,
+    search_sides: tuple[str, ...] = ("source", "target"),
+) -> list[dict]:
+    """Concordance search over chapter_segments, mirroring tm.search's
+    semantics (verbatim INSTR on the Chinese source, case-insensitive LIKE
+    on the English target, capped at 50 hits in reading order). Hits carry
+    `status` so the dialogs can render a provenance chip; `paragraph_index`
+    is the seg_index (the editor's row key and, for 1:1 chapters, the
+    reader's display-paragraph index)."""
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
+    conditions: list[str] = []
+    params: list = [novel_id]
+    if "source" in search_sides:
+        conditions.append("INSTR(cs.source_text, ?) > 0")
+        params.append(q)
+    if "target" in search_sides:
+        conditions.append("LOWER(cs.target_text) LIKE LOWER(?)")
+        params.append(f"%{q}%")
+    if not conditions:
+        return []
+    sql = (
+        "SELECT cs.chapter_id, c.chapter_num, c.title_en, cs.seg_index, "
+        "       cs.source_text, cs.target_text, cs.status, "
+        "       CASE WHEN INSTR(cs.source_text, ?) > 0 THEN 'source' "
+        "            ELSE 'target' END AS matched_side "
+        "FROM chapter_segments cs "
+        "JOIN chapters c ON c.id = cs.chapter_id "
+        f"WHERE cs.novel_id = ? AND cs.target_text != '' "
+        f"  AND ({' OR '.join(conditions)}) "
+        "ORDER BY c.chapter_num, cs.seg_index "
+        "LIMIT ?"
+    )
+    bound = [q, novel_id] + params[1:] + [_SEARCH_LIMIT]
+    cur = await conn.execute(sql, bound)
+    return [
+        {
+            "chapter_id": r["chapter_id"],
+            "chapter_num": r["chapter_num"],
+            "chapter_title_en": r["title_en"],
+            "paragraph_index": r["seg_index"],
+            "source_text": r["source_text"],
+            "target_text": r["target_text"],
+            "matched_side": r["matched_side"],
+            "status": r["status"],
+        }
+        for r in await cur.fetchall()
+    ]
+
+
+async def concordance_search(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    query: str,
+    search_sides: tuple[str, ...] = ("source", "target"),
+) -> list[dict]:
+    """Provenance-aware concordance (CAT Phase 5): chapter_segments hits
+    first (status-carrying, always current), then legacy tm_segments hits
+    ONLY for chapters that have no segment rows at all (their status is
+    None). Deduped by (chapter, paragraph), merged in reading order, capped
+    at the shared 50-hit limit. Lives here rather than tm.py because this
+    module is the single chapter_segments owner and already imports tm."""
+    seg_hits = await search_segments(conn, novel_id, query, search_sides)
+    covered = await chapter_ids_with_segments(conn, novel_id)
+    tm_hits = await tm_svc.search(conn, novel_id, query, search_sides)
+    merged = list(seg_hits)
+    seen = {(h["chapter_id"], h["paragraph_index"]) for h in seg_hits}
+    for h in tm_hits:
+        if h.chapter_id in covered:
+            continue
+        key = (h.chapter_id, h.paragraph_index)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "chapter_id": h.chapter_id,
+            "chapter_num": h.chapter_num,
+            "chapter_title_en": h.chapter_title_en,
+            "paragraph_index": h.paragraph_index,
+            "source_text": h.source_text,
+            "target_text": h.target_text,
+            "matched_side": h.matched_side,
+            "status": None,
+        })
+    merged.sort(key=lambda h: (h["chapter_num"], h["paragraph_index"]))
+    return merged[:_SEARCH_LIMIT]
+
+
+async def next_chapter_to_edit(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    after_chapter_num: int,
+) -> int | None:
+    """The editor's continue card: the next chapter that still needs work,
+    meaning it is not yet translated (status != 'done') OR its segment store
+    is missing or carries any non-confirmed row. Searches forward from
+    `after_chapter_num`, then wraps to the beginning; a fully confirmed
+    chapter (done + every segment confirmed) is skipped. None when every
+    chapter of the novel is fully confirmed."""
+    needs_work = (
+        "NOT ("
+        "  ch.status = 'done'"
+        "  AND EXISTS (SELECT 1 FROM chapter_segments s "
+        "              WHERE s.chapter_id = ch.id)"
+        "  AND NOT EXISTS (SELECT 1 FROM chapter_segments s "
+        "                  WHERE s.chapter_id = ch.id "
+        "                    AND s.status != 'confirmed')"
+        ")"
+    )
+    for clause, args in (
+        ("ch.chapter_num > ?", (novel_id, after_chapter_num)),
+        ("ch.chapter_num < ?", (novel_id, after_chapter_num)),
+    ):
+        cur = await conn.execute(
+            f"SELECT ch.chapter_num FROM chapters ch "
+            f"WHERE ch.novel_id = ? AND {clause} AND {needs_work} "
+            f"ORDER BY ch.chapter_num LIMIT 1",
+            args,
+        )
+        row = await cur.fetchone()
+        if row is not None:
+            return row["chapter_num"]
+    return None
 
 
 # Assist-rail knobs. Same conventions as services/consistency.py's edit-mode

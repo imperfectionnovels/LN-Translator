@@ -26,6 +26,7 @@ import aiosqlite
 from backend.config import (
     PREVIOUS_CONTEXT_ENABLED,
     PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
+    PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
     PROMPT_INCLUDE_FREE_DRAFT,
     PROMPT_INCLUDE_REFINER,
     PROMPT_INCLUDE_STYLE_EDITS,
@@ -54,6 +55,7 @@ from backend.services.parser import (
 )
 from backend.services.prompt_inputs import (
     NovelGenreBrief,
+    fetch_confirmed_exemplars,
     fetch_novel_genre_brief,
     fetch_previous_chapter_tail,
     fetch_style_edits,
@@ -106,6 +108,7 @@ def _build_prompt_config_snapshot(
     style_note_included: bool,
     style_edits_included: bool,
     approved_translations_included: bool,
+    confirmed_exemplars_included: bool,
 ) -> str:
     """JSON blob recording the prompt-assembly config that produced this
     chapter. Stamped onto chapters.prompt_config_snapshot in the same
@@ -129,6 +132,7 @@ def _build_prompt_config_snapshot(
         "style_note_included": style_note_included,
         "style_edits_included": style_edits_included,
         "approved_translations_included": approved_translations_included,
+        "confirmed_exemplars_included": confirmed_exemplars_included,
         "flags": {
             "PROMPT_INCLUDE_FREE_DRAFT": PROMPT_INCLUDE_FREE_DRAFT,
             "PROMPT_INCLUDE_STYLE_NOTE": PROMPT_INCLUDE_STYLE_NOTE,
@@ -136,6 +140,8 @@ def _build_prompt_config_snapshot(
             "PROMPT_INCLUDE_REFINER": PROMPT_INCLUDE_REFINER,
             "PROMPT_INCLUDE_APPROVED_TRANSLATIONS":
                 PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
+            "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS":
+                PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
             "PREVIOUS_CONTEXT_ENABLED": PREVIOUS_CONTEXT_ENABLED,
         },
     }, sort_keys=True)
@@ -591,6 +597,7 @@ async def _record_commit_provenance(
     style_note: str | None,
     style_edits: list[tuple[str, str]] | None,
     approved_pairs: list[tuple[int, str, str]] | None = None,
+    confirmed_exemplars: list[tuple[str, str]] | None = None,
     fixup_counts: dict | None = None,
 ) -> None:
     """Post-commit diagnostics for a successful chapter translate: the
@@ -657,6 +664,7 @@ async def _record_commit_provenance(
         style_note_included=bool(style_note and style_note.strip()),
         style_edits_included=bool(style_edits),
         approved_translations_included=bool(approved_pairs),
+        confirmed_exemplars_included=bool(confirmed_exemplars),
     )
     # Fixup self-audit: record which deterministic enforce_* fixups rewrote the
     # model output and by how much, in the same UPDATE as the snapshot. Makes
@@ -897,6 +905,15 @@ async def _translate_chapter_in_db(
             approved_pairs = await segments_svc.approved_prompt_pairs(
                 conn, novel_id, chapter_id, source_paragraphs
             ) or None
+        # CAT Phase 5: APPROVED TRANSLATION EXAMPLES block feed. Distinct
+        # from the APPROVED TRANSLATIONS block above: that one lists
+        # verbatim-reuse renderings for THIS chapter's own paragraphs;
+        # exemplars teach voice from OTHER chapters' recently confirmed
+        # pairs. Both blocks can appear in the same prompt. The flag gate
+        # lives inside the fetcher (sibling pattern).
+        confirmed_exemplars = await fetch_confirmed_exemplars(
+            conn, novel_id, chapter_id
+        ) or None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,
@@ -911,6 +928,7 @@ async def _translate_chapter_in_db(
             source_language=novel_meta["source_language"],
             expected_paragraph_count=expected_paragraph_count,
             approved_pairs=approved_pairs,
+            confirmed_exemplars=confirmed_exemplars,
         )
         logger.info(
             "queue: chapter %d translate stage %.1fs",
@@ -1159,6 +1177,7 @@ async def _translate_chapter_in_db(
             style_note=style_note,
             style_edits=style_edits,
             approved_pairs=approved_pairs,
+            confirmed_exemplars=confirmed_exemplars,
             fixup_counts=fixup_counts,
         )
         await conn.commit()

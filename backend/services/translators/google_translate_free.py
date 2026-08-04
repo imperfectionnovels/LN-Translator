@@ -161,17 +161,19 @@ class GoogleTranslateFreeTranslator(BaseTranslator):
         source_language: str | None = None,
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
+        confirmed_exemplars: list[tuple[str, str]] | None = None,
     ) -> TranslationResult:
         """Translate ``chapter_zh`` via Google Translate and return the result.
 
         ``glossary``, ``previous_context``, ``style_edits``, ``style_note``,
-        ``genre``, ``custom_brief``, ``free_draft`` are accepted to match the
-        BaseTranslator surface but are deliberately ignored. MT can't act on
-        instructions, and the glossary is applied authoritatively by the LLM
-        PEMT pass downstream. ``expected_paragraph_count`` is likewise
-        accepted but ignored: mechanical NMT is chunked on paragraph bounds
-        and cannot follow a corrective retry, so the 1:1 ladder is an
-        LLM-backend concern.
+        ``genre``, ``custom_brief``, ``free_draft``, ``approved_pairs``, and
+        ``confirmed_exemplars`` are accepted to match the BaseTranslator
+        surface but are deliberately ignored. MT can't act on instructions,
+        and the glossary is applied authoritatively by the LLM PEMT pass
+        downstream. ``expected_paragraph_count`` is likewise accepted but
+        ignored: mechanical NMT is chunked on paragraph bounds and cannot
+        follow a corrective retry, so the 1:1 ladder is an LLM-backend
+        concern.
         """
         src = _lang_for_google(source_language)
 

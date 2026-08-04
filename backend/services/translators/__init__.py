@@ -39,6 +39,7 @@ async def translate_chapter(
     source_language: str | None = None,
     expected_paragraph_count: int | None = None,
     approved_pairs: list[tuple[int, str, str]] | None = None,
+    confirmed_exemplars: list[tuple[str, str]] | None = None,
 ) -> TranslationResult:
     backend = get_translator(provider) if provider is not None else translator_factory()
     return await backend.translate_chapter(
@@ -51,4 +52,5 @@ async def translate_chapter(
         source_language=source_language,
         expected_paragraph_count=expected_paragraph_count,
         approved_pairs=approved_pairs,
+        confirmed_exemplars=confirmed_exemplars,
     )

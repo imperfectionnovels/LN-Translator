@@ -208,6 +208,17 @@ PROMPT_INCLUDE_REFINER = _bool_env("PROMPT_INCLUDE_REFINER", True)
 PROMPT_INCLUDE_APPROVED_TRANSLATIONS = _bool_env(
     "PROMPT_INCLUDE_APPROVED_TRANSLATIONS", True
 )
+# CAT Phase 5: APPROVED TRANSLATION EXAMPLES block. The most recently
+# confirmed segment pairs from OTHER chapters of the novel, shown as voice
+# and phrasing precedent (extends the style_edits idea with zh->EN pairs the
+# user explicitly confirmed). Distinct from APPROVED TRANSLATIONS above,
+# which lists verbatim-reuse renderings for THIS chapter's own paragraphs;
+# both blocks can appear in one prompt. The block rides the user prompt, so
+# it folds into the llm_cache key automatically; when no exemplars exist the
+# block is absent and the prompt is byte-identical to the pre-Phase-5 shape.
+PROMPT_INCLUDE_CONFIRMED_EXEMPLARS = _bool_env(
+    "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", True
+)
 
 # Cap on the embedded free-draft REFERENCE TRANSLATION block, in characters.
 # The free draft is a full mechanical translation of the same chapter, so
