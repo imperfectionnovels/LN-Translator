@@ -31,6 +31,7 @@ import aiosqlite
 
 from backend import config
 from backend.config import (
+    PREVIOUS_CONTEXT_MAX_CHARS,
     PREVIOUS_CONTEXT_MAX_GAP,
     PREVIOUS_CONTEXT_PARAGRAPHS,
 )
@@ -87,8 +88,9 @@ async def fetch_style_edits(
     the fresher signal since Phase 6 retired the style_edits in-app
     producer), then legacy style_edits rows to fill the remaining slots
     (the CLI ingest script is that table's only remaining producer).
-    `exclude_chapter_id` keeps the chapter being translated out of the
-    segment side (its own edits ride the APPROVED TRANSLATIONS block).
+    `exclude_chapter_id` keeps the chapter being translated out of BOTH
+    sides, segment pairs and legacy rows alike (its own edits ride the
+    APPROVED TRANSLATIONS block).
 
     Returns [] when the tables don't exist (older DB), no edits are
     captured yet, or PROMPT_INCLUDE_STYLE_EDITS is disabled."""
@@ -120,12 +122,18 @@ async def fetch_style_edits(
         try:
             # Over-fetch the legacy window so rows that dedupe against the
             # fresher segment pairs (or against each other) do not under-fill
-            # the block when older distinct rows exist.
+            # the block when older distinct rows exist. The legacy arm
+            # carries the same current-chapter exclusion as the segment arm
+            # (F3, bug hunt 2026-08-04): the ingest script stamps
+            # chapter_id, and a chapter's own edits must not teach its own
+            # retranslate (they ride the APPROVED TRANSLATIONS block).
+            # NULL chapter_id rows (novel-scoped legacy edits) stay in.
             cur = await conn.execute(
                 "SELECT before_text, after_text FROM style_edits "
                 "WHERE novel_id = ? "
+                "  AND (chapter_id IS NULL OR chapter_id != ?) "
                 "ORDER BY id DESC LIMIT ?",
-                (novel_id, STYLE_EDIT_LIMIT * 2),
+                (novel_id, exclude_chapter_id or 0, STYLE_EDIT_LIMIT * 2),
             )
             rows = await cur.fetchall()
         except aiosqlite.OperationalError:
@@ -234,9 +242,11 @@ async def fetch_previous_chapter_tail(
     DISPLAYED body (refined when refined_text is non-empty, else the draft;
     the same presence-keyed rule as segments.displayed_body; bug hunt
     2026-08-04, B11) so the model reads the polished previous chapter,
-    not a draft the reader never sees. Returns None on the first chapter,
-    when no done chapter exists within the gap window, or when the feature
-    is disabled."""
+    not a draft the reader never sees. The tail is the last
+    PREVIOUS_CONTEXT_PARAGRAPHS paragraphs, additionally bounded to
+    ~PREVIOUS_CONTEXT_MAX_CHARS characters (F10; leading paragraphs drop
+    first). Returns None on the first chapter, when no done chapter exists
+    within the gap window, or when the feature is disabled."""
     if not config.PREVIOUS_CONTEXT_ENABLED or chapter_num <= 1:
         return None
     floor = chapter_num - PREVIOUS_CONTEXT_MAX_GAP
@@ -258,4 +268,14 @@ async def fetch_previous_chapter_tail(
     if not paragraphs:
         return None
     tail = paragraphs[-PREVIOUS_CONTEXT_PARAGRAPHS:]
+    # Generous char bound (F10): the paragraph count is the primary knob;
+    # this only defends against pathological paragraphs. Drop LEADING
+    # paragraphs first (it is a tail reference), and if a single paragraph
+    # alone exceeds the cap, keep its final slice.
+    def _joined_len(parts: list[str]) -> int:
+        return sum(len(p) for p in parts) + 2 * (len(parts) - 1)
+    while len(tail) > 1 and _joined_len(tail) > PREVIOUS_CONTEXT_MAX_CHARS:
+        tail = tail[1:]
+    if len(tail) == 1 and len(tail[0]) > PREVIOUS_CONTEXT_MAX_CHARS:
+        tail = [tail[0][-PREVIOUS_CONTEXT_MAX_CHARS:]]
     return "\n\n".join(tail)

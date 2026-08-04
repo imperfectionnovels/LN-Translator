@@ -570,6 +570,15 @@ TITLE_EN: <the English chapter title on one line>
 <a JSON array of new glossary terms you introduced this chapter: [{{"zh": "...", "en": "...", "category": "..."}}, ...]; categories are character, technique, item, place, other, idiom. If there are none, output exactly: []>"""
 
 
+# Render-side character bound for the APPROVED TRANSLATIONS block,
+# mirroring approved_prompt_pairs' fetch-side max_chars (F10, bug hunt
+# 2026-08-04). The fetch cap is the primary guard; this belt keeps a caller
+# that bypasses the capped fetch (tests, future feeds) from ballooning the
+# prompt. Accounting matches the fetch side: len(source) + len(approved)
+# per entry.
+APPROVED_BLOCK_MAX_CHARS = 8000
+
+
 def format_approved_translations(
     approved_pairs: list[tuple[int, str, str]] | None,
 ) -> str:
@@ -580,15 +589,20 @@ def format_approved_translations(
     is a coherence aid: the deterministic worker merge re-inserts the
     approved text verbatim regardless of what the model returns, so the
     instruction asks for verbatim reuse purely so the surrounding prose is
-    written to fit it."""
+    written to fit it. Entries beyond ~APPROVED_BLOCK_MAX_CHARS are dropped
+    (a skipped row still survives the retranslate verbatim via the merge)."""
     if not approved_pairs:
         return ""
     lines: list[str] = []
+    total = 0
     for idx, zh, en in approved_pairs:
         z = (zh or "").strip()
         e = (en or "").strip()
         if not z or not e:
             continue
+        if total + len(z) + len(e) > APPROVED_BLOCK_MAX_CHARS:
+            break
+        total += len(z) + len(e)
         lines.append(f"Paragraph {idx + 1}:\n  SOURCE: {z}\n  APPROVED: {e}")
     if not lines:
         return ""

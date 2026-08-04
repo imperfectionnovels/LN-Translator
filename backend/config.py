@@ -176,6 +176,11 @@ DEEPSEEK_REQUEST_TIMEOUT = _float_env("DEEPSEEK_REQUEST_TIMEOUT", 240.0)
 PREVIOUS_CONTEXT_ENABLED = _bool_env("PREVIOUS_CONTEXT_ENABLED", True)
 PREVIOUS_CONTEXT_PARAGRAPHS = _int_env("PREVIOUS_CONTEXT_PARAGRAPHS", 4)
 PREVIOUS_CONTEXT_MAX_GAP = _int_env("PREVIOUS_CONTEXT_MAX_GAP", 10)
+# Generous character bound on the previous-chapter tail block (F10, bug hunt
+# 2026-08-04). The paragraph count above is the primary knob; this cap only
+# defends against pathological paragraphs (an unbroken wall of text) blowing
+# up the prompt. Leading paragraphs drop first (it is a TAIL reference).
+PREVIOUS_CONTEXT_MAX_CHARS = _int_env("PREVIOUS_CONTEXT_MAX_CHARS", 6000)
 
 # Prompt-assembly A/B knobs. Each gates one dynamic block of the runtime
 # user-prompt at the queue worker's fetch site. Most default true; flip via

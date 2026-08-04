@@ -354,3 +354,108 @@ async def test_prev_tail_empty_refined_falls_back_to_draft():
             conn, novel_id, 2,
         )
     assert tail == "draft p1\n\ndraft p2"
+# ============================================================
+# Bug hunt 2026-08-04: F3 (legacy-arm chapter exclusion) and
+# F10 (previous-tail char cap + approved-block render bound)
+# ============================================================
+
+
+async def _add_style_edit(
+    novel_id: int, before: str, after: str, chapter_id: int | None = None,
+) -> None:
+    async with open_conn() as conn:
+        await conn.execute(
+            "INSERT INTO style_edits (novel_id, chapter_id, before_text, "
+            "after_text) VALUES (?, ?, ?, ?)",
+            (novel_id, chapter_id, before, after),
+        )
+        await conn.commit()
+
+
+async def test_style_edits_legacy_arm_excludes_current_chapter():
+    """F3: the legacy style_edits arm carries the same current-chapter
+    exclusion as the segment arm (the ingest script stamps chapter_id, and
+    a chapter's own edits must not teach its own retranslate). NULL
+    chapter_id rows stay in."""
+    novel_id = await _new_novel()
+    await _add_chapter(novel_id, 1, status="done", translated_text="b")
+    await _add_chapter(novel_id, 2, status="done", translated_text="b")
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM chapters WHERE novel_id = ? ORDER BY chapter_num",
+            (novel_id,),
+        )
+        ch1_id, ch2_id = [r["id"] for r in await cur.fetchall()]
+
+    await _add_style_edit(novel_id, "own before", "own after", ch2_id)
+    await _add_style_edit(novel_id, "other before", "other after", ch1_id)
+    await _add_style_edit(novel_id, "null before", "null after", None)
+
+    async with open_conn() as conn:
+        excluded = await prompt_inputs.fetch_style_edits(
+            conn, novel_id, exclude_chapter_id=ch2_id
+        )
+        unexcluded = await prompt_inputs.fetch_style_edits(conn, novel_id)
+    assert ("own before", "own after") not in excluded
+    assert ("other before", "other after") in excluded
+    assert ("null before", "null after") in excluded
+    # No exclusion requested: every row is eligible.
+    assert ("own before", "own after") in unexcluded
+
+
+async def test_prev_tail_char_cap_drops_leading_paragraphs(monkeypatch):
+    """F10: the tail keeps last-N-paragraph behavior but is additionally
+    bounded by PREVIOUS_CONTEXT_MAX_CHARS, dropping LEADING paragraphs
+    first (it is a tail reference)."""
+    monkeypatch.setattr(prompt_inputs, "PREVIOUS_CONTEXT_MAX_CHARS", 30)
+    novel_id = await _new_novel()
+    await _add_chapter(
+        novel_id, 1, status="done",
+        translated_text="AAAAAAAAAAAAAAA\n\nBBBBBBBBBBBBBBB\n\nCCCCCCCCCC",
+    )
+    async with open_conn() as conn:
+        tail = await prompt_inputs.fetch_previous_chapter_tail(
+            conn, novel_id, 2,
+        )
+    # 3 paragraphs total 44 chars (with joins): the first drops; the last
+    # two fit within 30 (15 + 10 + 2).
+    assert tail == "BBBBBBBBBBBBBBB\n\nCCCCCCCCCC"
+
+
+async def test_prev_tail_single_oversized_paragraph_keeps_final_slice(
+    monkeypatch,
+):
+    monkeypatch.setattr(prompt_inputs, "PREVIOUS_CONTEXT_MAX_CHARS", 20)
+    novel_id = await _new_novel()
+    await _add_chapter(
+        novel_id, 1, status="done", translated_text="X" * 50 + "TAILMARKER",
+    )
+    async with open_conn() as conn:
+        tail = await prompt_inputs.fetch_previous_chapter_tail(
+            conn, novel_id, 2,
+        )
+    assert tail is not None
+    assert len(tail) == 20
+    assert tail.endswith("TAILMARKER")
+
+
+def test_format_approved_translations_render_bound():
+    """F10: the renderer stops adding entries past ~APPROVED_BLOCK_MAX_CHARS
+    (len(source) + len(approved) accounting, mirroring the fetch cap), so a
+    caller bypassing the capped fetch cannot balloon the prompt. Skipped
+    rows still land verbatim via the worker merge."""
+    from backend.services.translators.base import (
+        APPROVED_BLOCK_MAX_CHARS,
+        format_approved_translations,
+    )
+    big = "x" * 3000
+    pairs = [(i, f"src{i} " + big, f"en{i} " + big) for i in range(5)]
+    block = format_approved_translations(pairs)
+    # Each entry costs ~6010 chars: only the first fits under 8000.
+    assert "src0" in block and "en0" in block
+    assert "src1" not in block and "src4" not in block
+    assert len(block) < APPROVED_BLOCK_MAX_CHARS + 500  # header + framing
+
+    # Small pairs are unaffected.
+    small = format_approved_translations([(0, "\u7532", "A line."), (1, "\u4e59", "B line.")])
+    assert "A line." in small and "B line." in small
