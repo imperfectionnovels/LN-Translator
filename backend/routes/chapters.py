@@ -5,6 +5,7 @@ import logging
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend import config
 from backend.db import get_conn
 from backend.models import (
     CandidateTerm,
@@ -252,8 +253,18 @@ async def retry_refinement(
     Useful when refinement_status='error' and the user wants to retry
     without re-running the translator. Refuses (409) when the chapter has
     no draft yet (status != 'done'), when refinement is already pending /
-    in-progress, or when the novel has no refinement_provider_id.
+    in-progress, when the novel has no refinement_provider_id, or when the
+    global PROMPT_INCLUDE_REFINER kill-switch is off (F6, bug hunt
+    2026-08-04: the flag was previously consulted only at fresh-translate
+    queueing, so this route could queue paid refiner work during an A/B
+    arm that disabled the refiner).
     """
+    if not config.PROMPT_INCLUDE_REFINER:
+        raise HTTPException(
+            status_code=409,
+            detail="refinement is globally disabled "
+            "(PROMPT_INCLUDE_REFINER=false). Re-enable it, then retry.",
+        )
     cur = await conn.execute(
         "SELECT id, status, refinement_status FROM chapters "
         "WHERE novel_id = ? AND chapter_num = ?",

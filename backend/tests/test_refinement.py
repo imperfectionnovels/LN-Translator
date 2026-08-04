@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from backend import config
 from backend.db import init_db, open_conn
 from backend.models import TranslationResult
 from backend.services import providers as providers_svc
@@ -710,3 +711,120 @@ async def test_inflight_refine_discards_after_retranslate_reset(monkeypatch):
     assert "llm_refined" not in seg_origins
     # No refinement-stage observation writes either.
     assert obs_count == 0
+# ----- F6 (bug hunt 2026-08-04): the global refiner kill-switch --------------
+
+
+async def test_retry_refinement_409_when_kill_switch_off(quiet_app, monkeypatch):
+    """The retry route consults PROMPT_INCLUDE_REFINER: with the global
+    kill-switch off it must refuse instead of queueing paid refiner work
+    (previously the flag was consulted only at fresh-translate queueing)."""
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = 'd', "
+            "refinement_status = 'error', refinement_error = 'old' "
+            "WHERE id = ?", (chapter_id,),
+        )
+        await conn.commit()
+
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", False)
+    from fastapi.testclient import TestClient
+
+    with TestClient(quiet_app) as client:
+        resp = client.post(
+            f"/api/novels/{novel_id}/chapters/1/retry-refinement"
+        )
+    assert resp.status_code == 409
+    assert "globally disabled" in resp.json()["detail"]
+
+    # The row is untouched: still 'error', ready for a later flag-on retry.
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT refinement_status FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["refinement_status"] == "error"
+
+
+async def test_worker_entry_belt_holds_pending_when_kill_switch_off(monkeypatch):
+    """_refine_chapter_in_db no-ops under the kill-switch (belt for tasks
+    spawned before the flag flipped): no LLM call, and the row is left
+    'pending' so a later flag-on drain resumes it (not demoted)."""
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = ?, "
+            "refinement_status = 'pending' WHERE id = ?",
+            (_FIXTURE_DRAFT_BODY, chapter_id),
+        )
+        await conn.commit()
+
+    async def _fail(*a, **kw):
+        raise AssertionError("refiner ran under PROMPT_INCLUDE_REFINER=false")
+    monkeypatch.setattr("backend.services.queue.refine_chapter", _fail)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", False)
+
+    async with open_conn() as conn:
+        await queue_svc._refine_chapter_in_db(conn, novel_id, chapter_id)
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT refinement_status, refined_text FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["refinement_status"] == "pending"
+    assert row["refined_text"] is None
+
+
+async def test_drain_holds_refinements_when_kill_switch_off(monkeypatch):
+    """drain_on_startup with the kill-switch off still normalizes a stuck
+    'in_progress' row to 'pending' (crash recovery is orthogonal to the
+    switch) but spawns NO refine worker; the pending row is held for a
+    later flag-on drain."""
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = 'd', "
+            "translate_queued = 0, refinement_status = 'in_progress' "
+            "WHERE id = ?", (chapter_id,),
+        )
+        await conn.commit()
+
+    spawned: list[tuple[int, int]] = []
+
+    def _record_run_refine(novel_id, chapter_id):
+        # Record at coroutine-CREATION time (the spawn decision), not at
+        # task execution, so the assert below does not race the scheduler.
+        spawned.append((novel_id, chapter_id))
+
+        async def _noop():
+            return None
+        return _noop()
+    monkeypatch.setattr(queue_svc, "_run_refine", _record_run_refine)
+
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", False)
+    await queue_svc.drain_on_startup()
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT refinement_status FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["refinement_status"] == "pending"  # normalized, not demoted
+    assert spawned == []  # and NOT respawned
+
+    # Flag back on: the next drain resumes the held row.
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", True)
+    await queue_svc.drain_on_startup()
+    assert spawned == [(novel_id, chapter_id)]

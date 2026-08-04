@@ -464,8 +464,15 @@ async def drain_on_startup() -> None:
         refine_rows = await cur.fetchall()
     for r in translate_rows:
         _spawn_translate(r["novel_id"], r["id"])
-    for r in refine_rows:
-        _spawn(_run_refine(r["novel_id"], r["id"]))
+    # F6 (bug hunt 2026-08-04): the global refiner kill-switch is consulted
+    # here too, not just at fresh-translate queueing. With the flag off,
+    # pending rows are HELD (not demoted: flipping the flag back on resumes
+    # them on the next drain); the in_progress -> pending normalization
+    # above still runs, since a crashed refinement's true state is
+    # "pending retry" regardless of the kill-switch.
+    if config.PROMPT_INCLUDE_REFINER:
+        for r in refine_rows:
+            _spawn(_run_refine(r["novel_id"], r["id"]))
     if translate_rows:
         logger.info("queue drain: %d translate tasks resumed", len(translate_rows))
     if recovered.rowcount:
@@ -473,8 +480,13 @@ async def drain_on_startup() -> None:
             "queue drain: %d stuck refinements reset in_progress → pending",
             recovered.rowcount,
         )
-    if refine_rows:
+    if refine_rows and config.PROMPT_INCLUDE_REFINER:
         logger.info("queue drain: %d refine tasks resumed", len(refine_rows))
+    elif refine_rows:
+        logger.info(
+            "queue drain: %d pending refinement(s) held "
+            "(PROMPT_INCLUDE_REFINER=false)", len(refine_rows),
+        )
 
 
 async def _run_translate(novel_id: int, chapter_id: int) -> None:
@@ -1435,6 +1447,17 @@ async def _refine_chapter_in_db(
     chapter may have been refined already, errored out, or never had a
     refiner configured). Single LLM call via refiner.refine_chapter.
     """
+    # Belt for the global kill-switch (F6): every entry path is separately
+    # gated (fresh-translate queueing, drain respawn, the retry route), but
+    # a task spawned before the flag flipped could still reach here. Leave
+    # the row untouched (pending survives for a later flag-on drain) and
+    # burn nothing.
+    if not config.PROMPT_INCLUDE_REFINER:
+        logger.info(
+            "refine ch_id=%d skipped: PROMPT_INCLUDE_REFINER=false "
+            "(row left as-is)", chapter_id,
+        )
+        return
     cur = await conn.execute(
         "SELECT chapter_num, translated_text, original_text, refinement_status "
         "FROM chapters WHERE id = ? AND novel_id = ?",
