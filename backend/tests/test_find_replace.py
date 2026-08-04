@@ -430,3 +430,135 @@ async def test_commit_reprojects_segment_store_preserving_statuses():
     assert rows[0]["status"] == "confirmed"
     assert rows[0]["target_text"] == "Lord Bai bowed."
     assert ch["translated_text"] == "\n\n".join(r["target_text"] for r in rows)
+
+
+# ---- Bug hunt 2026-08-04 (B1): archived novels are out of scope ----------
+
+
+async def _archive(novel_id: int) -> None:
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE novels SET deleted_at = datetime('now') WHERE id = ?",
+            (novel_id,),
+        )
+        await conn.commit()
+
+
+async def _restore(novel_id: int) -> None:
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE novels SET deleted_at = NULL WHERE id = ?", (novel_id,)
+        )
+        await conn.commit()
+
+
+async def _chapter_body(novel_id: int, chapter_num: int) -> str:
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT translated_text FROM chapters "
+            "WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        )
+        return (await cur.fetchone())["translated_text"]
+
+
+@pytest.mark.asyncio
+async def test_scope_all_preview_and_commit_skip_archived_novels():
+    """soft_delete contract: an archived novel's chapters are preserved
+    untouched, so scope='all' must neither count nor rewrite them."""
+    active_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    archived_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun slept.", None),
+    ])
+    await _archive(archived_id)
+
+    query = fr.FindReplaceQuery(
+        find="Bai Xiaochun", replacement="Lord Bai",
+        scope_kind="all", scope_ids=[],
+    )
+    async with open_conn() as conn:
+        preview = await fr.build_preview(conn, query)
+        assert preview.total_chapters == 1  # active only
+        assert {r.novel_id for r in preview.rows} == {active_id}
+        result = await fr.commit_preview(conn, preview.token)
+    assert result.chapters_updated == 1
+    assert await _chapter_body(active_id, 1) == "Lord Bai walked."
+    assert await _chapter_body(archived_id, 1) == "Bai Xiaochun slept."
+
+
+@pytest.mark.asyncio
+async def test_explicit_novel_scope_on_archived_novel_matches_nothing():
+    """The single-novel scope excludes archived too (consistent with the
+    contract; the only UI path to it would be a stale tab)."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    await _archive(novel_id)
+    query = fr.FindReplaceQuery(
+        find="Bai Xiaochun", replacement="Lord Bai",
+        scope_kind="novel", scope_ids=[novel_id],
+    )
+    async with open_conn() as conn:
+        preview = await fr.build_preview(conn, query)
+    assert preview.total_chapters == 0
+
+
+@pytest.mark.asyncio
+async def test_archive_between_preview_and_commit_counts_as_drift():
+    """A novel archived AFTER the preview drops out of the commit fetch and
+    registers as drift: the commit refuses instead of rewriting it."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    query = fr.FindReplaceQuery(
+        find="Bai Xiaochun", replacement="Lord Bai",
+        scope_kind="all", scope_ids=[],
+    )
+    async with open_conn() as conn:
+        preview = await fr.build_preview(conn, query)
+    await _archive(novel_id)
+    async with open_conn() as conn:
+        with pytest.raises(fr.PreviewDriftError):
+            await fr.commit_preview(conn, preview.token)
+    assert await _chapter_body(novel_id, 1) == "Bai Xiaochun walked."
+
+
+@pytest.mark.asyncio
+async def test_global_glossary_apply_in_place_skips_archived_novels():
+    """apply_in_place_for_glossary_term with novel_id=None (the global
+    glossary route's shape) rewrites active novels only."""
+    active_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    archived_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun slept.", None),
+    ])
+    await _archive(archived_id)
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=None,
+        )
+    assert result.chapters_updated == 1
+    assert await _chapter_body(active_id, 1) == "Lord Bai walked."
+    assert await _chapter_body(archived_id, 1) == "Bai Xiaochun slept."
+
+
+@pytest.mark.asyncio
+async def test_restore_then_apply_reaches_the_novel_again():
+    """Restoring an archived novel puts it back in scope."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    await _archive(novel_id)
+    await _restore(novel_id)
+    query = fr.FindReplaceQuery(
+        find="Bai Xiaochun", replacement="Lord Bai",
+        scope_kind="all", scope_ids=[],
+    )
+    async with open_conn() as conn:
+        preview = await fr.build_preview(conn, query)
+        assert preview.total_chapters == 1
+        await fr.commit_preview(conn, preview.token)
+    assert await _chapter_body(novel_id, 1) == "Lord Bai walked."

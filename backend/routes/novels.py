@@ -495,6 +495,8 @@ async def get_delete_counts(
         chapter_observations=counts.chapter_observations,
         tm_segments=counts.tm_segments,
         fr_snapshots=counts.fr_snapshots,
+        chapter_segments=counts.chapter_segments,
+        chapter_segments_human=counts.chapter_segments_human,
     )
 
 

@@ -279,12 +279,20 @@ async def _select_chapters_for_scope(
     Per-chapter materialization is required because we need the body text
     to count hits and compute the drift hash. A pure-SQL count via INSTR
     wouldn't honor regex / case-sensitivity / word-boundary.
+
+    Archived novels are OUT OF SCOPE for every scope kind (bug hunt
+    2026-08-04, B1): soft_delete's contract is that an archived novel's
+    chapters are "preserved untouched", so neither a novel-wide / global
+    find-replace nor the glossary apply-in-place may rewrite them. The
+    explicit chapter / single-novel scopes exclude archived too. This is
+    consistent (the only UI path to an archived novel is a stale tab), and
+    restore-then-apply works again.
     """
     base_select = (
         "SELECT c.id, c.novel_id, c.chapter_num, c.title_en, "
         "c.translated_text, c.refined_text, n.title AS novel_title "
         "FROM chapters c JOIN novels n ON n.id = c.novel_id "
-        "WHERE c.status = 'done' "
+        "WHERE c.status = 'done' AND n.deleted_at IS NULL "
     )
     where_clause = ""
     params: list = []
@@ -444,9 +452,14 @@ async def commit_preview(
 
     chapter_ids = list(stored.chapter_hashes.keys())
     placeholders = ",".join("?" * len(chapter_ids))
+    # Same archived-novel exclusion as _select_chapters_for_scope (B1): a
+    # novel archived BETWEEN preview and commit drops out of this fetch, so
+    # its chapters register as drift below and the commit refuses. Both
+    # halves of the flow therefore resolve through the same predicate.
     cur = await conn.execute(
-        f"SELECT id, novel_id, translated_text, refined_text FROM chapters "
-        f"WHERE id IN ({placeholders})",
+        f"SELECT c.id, c.novel_id, c.translated_text, c.refined_text "
+        f"FROM chapters c JOIN novels n ON n.id = c.novel_id "
+        f"WHERE c.id IN ({placeholders}) AND n.deleted_at IS NULL",
         chapter_ids,
     )
     fetched = list(await cur.fetchall())

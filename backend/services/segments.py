@@ -911,6 +911,24 @@ async def edited_pairs_for_chapter(
     return [(r["machine_text"], r["target_text"]) for r in await cur.fetchall()]
 
 
+async def novel_segment_counts(
+    conn: aiosqlite.Connection, novel_id: int
+) -> tuple[int, int]:
+    """(total, human) chapter_segments counts for one novel, where human is
+    the status != 'machine' subset (edited|confirmed): the rows carrying
+    user work. Feeds the archive/purge quantified-confirm dialog
+    (soft_delete.delete_counts, bug hunt 2026-08-04 B4); lives here because
+    this module is the single chapter_segments SQL owner."""
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN status != 'machine' THEN 1 ELSE 0 END) AS human "
+        "FROM chapter_segments WHERE novel_id = ?",
+        (novel_id,),
+    )
+    r = await cur.fetchone()
+    return int(r["total"] or 0), int(r["human"] or 0)
+
+
 async def novel_segment_edit_stamp(conn: aiosqlite.Connection, novel_id: int) -> str:
     """Cheap change stamp over this novel's segment rows for cache version
     tokens (quality_dashboard): every editor write (save / confirm /

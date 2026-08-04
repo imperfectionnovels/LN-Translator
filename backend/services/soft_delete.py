@@ -23,7 +23,11 @@ from fastapi import HTTPException
 class DeleteCounts:
     """Quantified-confirm dialog inputs: tell the user exactly what they're
     archiving (or purging) before they confirm. Computed once at delete time
-    so the dialog text matches what the action will actually affect."""
+    so the dialog text matches what the action will actually affect.
+
+    `chapter_segments` is the CAT-editor ledger total;
+    `chapter_segments_human` is its edited/confirmed subset, the
+    highest-value user data a purge destroys (bug hunt 2026-08-04, B4)."""
     novel_id: int
     chapters: int
     glossary_entries: int
@@ -31,6 +35,8 @@ class DeleteCounts:
     chapter_observations: int
     tm_segments: int
     fr_snapshots: int
+    chapter_segments: int
+    chapter_segments_human: int
 
 
 async def _novel_row(conn: aiosqlite.Connection, novel_id: int) -> aiosqlite.Row:
@@ -66,6 +72,12 @@ async def delete_counts(
         (novel_id, novel_id, novel_id, novel_id, novel_id, novel_id),
     )
     row = await cur.fetchone()
+    # CAT segment counts come from the segments service (the single
+    # chapter_segments SQL owner).
+    from backend.services import segments as segments_svc  # noqa: PLC0415
+    seg_total, seg_human = await segments_svc.novel_segment_counts(
+        conn, novel_id
+    )
     return DeleteCounts(
         novel_id=novel_id,
         chapters=int(row["chapters"] or 0),
@@ -74,6 +86,8 @@ async def delete_counts(
         chapter_observations=int(row["observations"] or 0),
         tm_segments=int(row["tm"] or 0),
         fr_snapshots=int(row["fr"] or 0),
+        chapter_segments=seg_total,
+        chapter_segments_human=seg_human,
     )
 
 
@@ -81,11 +95,29 @@ async def archive_novel(
     conn: aiosqlite.Connection, novel_id: int
 ) -> DeleteCounts:
     """Soft-delete. Sets deleted_at = datetime('now'). Idempotent — calling
-    archive on an already-archived novel is a no-op (no error)."""
+    archive on an already-archived novel is a no-op (no error).
+
+    Also stops this novel's queued work in the SAME transaction (bug hunt
+    2026-08-04, B2): archived novels must not keep burning paid LLM calls.
+    Queued chapters are de-queued (the cancel-queue UPDATE shape from
+    routes/novels.py; in-flight 'translating' rows are left for the worker
+    to finish, matching cancel semantics) and refinement_status 'pending'
+    demotes to 'none'. Restore does NOT resurrect these flags: the user
+    re-queues explicitly after a restore."""
     counts = await delete_counts(conn, novel_id)
     await conn.execute(
         "UPDATE novels SET deleted_at = datetime('now') "
         "WHERE id = ? AND deleted_at IS NULL",
+        (novel_id,),
+    )
+    await conn.execute(
+        "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
+        "WHERE novel_id = ? AND translate_queued = 1 AND status != 'translating'",
+        (novel_id,),
+    )
+    await conn.execute(
+        "UPDATE chapters SET refinement_status = 'none' "
+        "WHERE novel_id = ? AND refinement_status = 'pending'",
         (novel_id,),
     )
     await conn.commit()

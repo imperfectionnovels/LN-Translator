@@ -617,3 +617,96 @@ async def test_refine_preclaim_crash_recovery(monkeypatch):
         row = await cur.fetchone()
     assert row["refinement_status"] == "error"
     assert row["refinement_error"]
+
+
+# ----- Bug hunt 2026-08-04 (B5): retranslate during an in-flight refine ------
+
+async def test_reset_for_retranslate_clears_refinement_state():
+    """reset_chapters_for_retranslate demotes refinement_status to 'none'
+    and clears refinement_error for the rows it resets. refined_text and
+    refined_at stay paired and untouched (the reader keeps showing the old
+    refined body until the retranslate commits, which nulls both)."""
+    novel_id, chapter_id = await _make_novel_with_chapter()
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = 'draft', "
+            "refinement_status = 'error', refinement_error = 'boom', "
+            "refined_text = 'old refined', refined_at = '2026-08-01 00:00:00' "
+            "WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+
+    async with open_conn() as conn:
+        reset_ids = await queue_svc.reset_chapters_for_retranslate(
+            conn, novel_id, [chapter_id]
+        )
+        cur = await conn.execute(
+            "SELECT status, refinement_status, refinement_error, "
+            "refined_text, refined_at FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert reset_ids == [chapter_id]
+    assert row["status"] == "pending"
+    assert row["refinement_status"] == "none"
+    assert row["refinement_error"] is None
+    assert row["refined_text"] == "old refined"
+    assert row["refined_at"] is not None
+
+
+async def test_inflight_refine_discards_after_retranslate_reset(monkeypatch):
+    """An in-flight refinement whose chapter is reset for retranslate
+    mid-call loses its claim: the commit UPDATE (gated on
+    refinement_status='in_progress') writes 0 rows, so refined_text does
+    NOT land, the segment ledger sees no merge, and no refinement
+    observations are written."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    _stub_translate(monkeypatch)
+
+    async def _refine_with_concurrent_reset(draft, provider, glossary=None, **_kw):
+        # Simulate the user clicking Retranslate while the refiner's LLM
+        # call is in flight (the refine claim was committed before this
+        # coroutine runs, so the reset can commit here).
+        async with open_conn() as reset_conn:
+            await queue_svc.reset_chapters_for_retranslate(
+                reset_conn, novel_id, [chapter_id]
+            )
+        return f"REFINED({draft})"
+    monkeypatch.setattr(
+        "backend.services.queue.refine_chapter", _refine_with_concurrent_reset
+    )
+
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, chapter_id)
+        await queue_svc._refine_chapter_in_db(conn, novel_id, chapter_id)
+        cur = await conn.execute(
+            "SELECT status, refinement_status, refined_text, refined_at, "
+            "translated_text FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+        cur = await conn.execute(
+            "SELECT origin FROM chapter_segments WHERE chapter_id = ?",
+            (chapter_id,),
+        )
+        seg_origins = {r["origin"] for r in await cur.fetchall()}
+        cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM chapter_observations "
+            "WHERE chapter_id = ?",
+            (chapter_id,),
+        )
+        obs_count = (await cur.fetchone())["n"]
+    # The reset won: chapter is pending again, refinement fully discarded.
+    assert row["status"] == "pending"
+    assert row["refinement_status"] == "none"
+    assert row["refined_text"] is None
+    assert row["refined_at"] is None
+    # No ledger churn from the discarded refine: no llm_refined rows landed.
+    assert "llm_refined" not in seg_origins
+    # No refinement-stage observation writes either.
+    assert obs_count == 0

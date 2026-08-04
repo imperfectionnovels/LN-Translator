@@ -808,11 +808,20 @@ function wireCardActions() {
     if (purgeBtn) purgeBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const n = novels.find(x => x.id == id);
+      // B4: quantify what a purge destroys, in particular the CAT-editor
+      // segments (the edited/confirmed subset is the user's own work).
+      let counts = null;
+      try { counts = await api.deleteCounts(id); } catch { counts = null; }
+      const segLine = counts && counts.chapter_segments
+        ? `<p>Includes <strong>${counts.chapter_segments}</strong> CAT segment${counts.chapter_segments === 1 ? "" : "s"} ` +
+          `(edited/confirmed: <strong>${counts.chapter_segments_human || 0}</strong>).</p>`
+        : "";
       const ok = await confirmDialog({
         title: "Purge permanently?",
         body:
           `<p>This permanently deletes <strong>${escapeHtml(n.title)}</strong> ` +
           `and all its chapters, glossary entries, bookmarks, and snapshots.</p>` +
+          segLine +
           `<p class="muted">This action cannot be undone.</p>`,
         okText: "Purge permanently",
         danger: true,

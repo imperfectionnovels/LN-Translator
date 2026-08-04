@@ -295,6 +295,16 @@ async def reset_chapters_for_retranslate(
     has `WHERE status='translating'`. The `status != 'translating'` guard
     here skips in-flight rows entirely; the worker's UPDATE still wins.
 
+    Refinement claim (bug hunt 2026-08-04, B5): the reset also demotes
+    refinement_status to 'none' (clearing refinement_error) for the rows it
+    resets. An in-flight refine worker thereby loses its claim: its commit
+    UPDATE is gated on refinement_status='in_progress' and discards the
+    whole result (refined_text, ledger merge, drift observation) on
+    rowcount 0, so a refinement can no longer land on a chapter already
+    reset to 'pending'. refined_text / refined_at stay paired and untouched
+    (the reader keeps showing the old body until the retranslate commits,
+    which nulls both).
+
     Crash-window durability: single atomic UPDATE means reset and flag
     commit together or not at all."""
     if not chapter_ids:
@@ -311,7 +321,8 @@ async def reset_chapters_for_retranslate(
             f"UPDATE chapters SET "
             f"status = 'pending', error_msg = NULL, "
             f"force_retranslate = 1, translate_queued = 1, queue_priority = 0, "
-            f"translation_degraded = 0, glossary_merge_error = NULL "
+            f"translation_degraded = 0, glossary_merge_error = NULL, "
+            f"refinement_status = 'none', refinement_error = NULL "
             f"WHERE novel_id = ? AND id IN ({placeholders}) "
             f"  AND status != 'translating'",
             [novel_id, *chunk],
@@ -337,10 +348,15 @@ async def prioritize_chapter(
     MAX+1 semantics: the most recent translate-next click wins the front.
     The subquery reads MAX across ALL queued chapters (not just this novel)
     so a prioritized chapter beats any other waiting chapter globally.
+    Archived novels' rows are excluded from the MAX (B2): archive clears
+    their queue flags, but a stale flag on an old DB must not inflate the
+    priority baseline.
     """
     cur = await conn.execute(
         "UPDATE chapters SET queue_priority = ("
-        "  SELECT COALESCE(MAX(queue_priority), 0) + 1 FROM chapters WHERE translate_queued = 1"
+        "  SELECT COALESCE(MAX(c.queue_priority), 0) + 1 FROM chapters c "
+        "  JOIN novels n ON n.id = c.novel_id "
+        "  WHERE c.translate_queued = 1 AND n.deleted_at IS NULL"
         ") WHERE novel_id = ? AND chapter_num = ? "
         "  AND translate_queued = 1 AND status = 'pending'",
         (novel_id, chapter_num),
@@ -390,17 +406,40 @@ async def drain_on_startup() -> None:
     Also resumes refinement work: reset refinement_status='in_progress' →
     'pending' (server died mid-refinement) then spawn refine workers for
     every 'pending' row.
+
+    Archived novels are excluded end to end (bug hunt 2026-08-04, B2):
+    archive_novel clears their queue flags, and the drain additionally
+    sweeps any stale flags an older DB still carries (a novel archived
+    mid-flight before this fix, or by a pre-fix build) instead of merely
+    skipping them, so a later restore cannot resurrect forgotten work.
     """
     async with open_conn() as conn:
+        # B2 sweep: clear stale queue/refinement state on ARCHIVED novels'
+        # chapters before selecting work. Runs before the in_progress →
+        # pending recovery so a mid-refinement archive demotes to 'none'
+        # rather than becoming a dormant 'pending'.
+        await conn.execute(
+            "UPDATE chapters SET translate_queued = 0, queue_priority = 0 "
+            "WHERE translate_queued = 1 AND novel_id IN "
+            "  (SELECT id FROM novels WHERE deleted_at IS NOT NULL)"
+        )
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'none' "
+            "WHERE refinement_status IN ('pending', 'in_progress') "
+            "  AND novel_id IN "
+            "  (SELECT id FROM novels WHERE deleted_at IS NOT NULL)"
+        )
         cur = await conn.execute(
-            "SELECT id, novel_id FROM chapters WHERE translate_queued = 1 "
-            "ORDER BY novel_id, chapter_num"
+            "SELECT c.id, c.novel_id FROM chapters c "
+            "JOIN novels n ON n.id = c.novel_id "
+            "WHERE c.translate_queued = 1 AND n.deleted_at IS NULL "
+            "ORDER BY c.novel_id, c.chapter_num"
         )
         translate_rows = await cur.fetchall()
         # Refinement recovery: reset in_progress → pending. Locked in 2026-05-23
         # over the 'mark error / require manual retry' alternative because the
         # user picked auto-recovery — they don't want a stuck refinement to
-        # require manual action.
+        # require manual action. (Archived novels' rows were demoted above.)
         recovered = await conn.execute(
             "UPDATE chapters SET refinement_status = 'pending', "
             "refinement_error = NULL "
@@ -408,9 +447,10 @@ async def drain_on_startup() -> None:
         )
         await conn.commit()
         cur = await conn.execute(
-            "SELECT id, novel_id FROM chapters "
-            "WHERE refinement_status = 'pending' "
-            "ORDER BY novel_id, chapter_num"
+            "SELECT c.id, c.novel_id FROM chapters c "
+            "JOIN novels n ON n.id = c.novel_id "
+            "WHERE c.refinement_status = 'pending' AND n.deleted_at IS NULL "
+            "ORDER BY c.novel_id, c.chapter_num"
         )
         refine_rows = await cur.fetchall()
     for r in translate_rows:
@@ -459,10 +499,16 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
                 # registered under the original chapter_id; re-key the map so
                 # cancel_translate can find the task by the chapter it actually
                 # processes.
+                # Archived novels never claim (B2): archive clears the queue
+                # flags, and this join keeps even a stale flag from burning a
+                # paid call.
                 cur = await conn.execute(
-                    "SELECT id, novel_id FROM chapters "
-                    "WHERE translate_queued = 1 AND status = 'pending' "
-                    "ORDER BY queue_priority DESC, novel_id ASC, chapter_num ASC LIMIT 1"
+                    "SELECT c.id, c.novel_id FROM chapters c "
+                    "JOIN novels n ON n.id = c.novel_id "
+                    "WHERE c.translate_queued = 1 AND c.status = 'pending' "
+                    "  AND n.deleted_at IS NULL "
+                    "ORDER BY c.queue_priority DESC, c.novel_id ASC, "
+                    "  c.chapter_num ASC LIMIT 1"
                 )
                 row = await cur.fetchone()
                 if row is not None:

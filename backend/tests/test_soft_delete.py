@@ -222,3 +222,156 @@ async def test_archive_is_idempotent():
     conn_sync.close()
 
     assert ts_first == ts_second
+
+
+# ---- Bug hunt 2026-08-04 (B2): archive stops queued work -------------------
+
+
+def _insert_chapter_row(novel_id: int, chapter_num: int, **cols) -> int:
+    """Chapter insert with arbitrary column overrides (queue flags etc.)."""
+    base = {
+        "novel_id": novel_id, "chapter_num": chapter_num,
+        "original_text": "...", "status": "done",
+    }
+    base.update(cols)
+    keys = ", ".join(base)
+    placeholders = ", ".join("?" for _ in base)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.execute(
+        f"INSERT INTO chapters ({keys}) VALUES ({placeholders})",
+        tuple(base.values()),
+    )
+    conn.commit()
+    chapter_id = cur.lastrowid
+    conn.close()
+    return chapter_id
+
+
+def _chapter_state(chapter_id: int) -> dict:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT translate_queued, queue_priority, refinement_status, status "
+        "FROM chapters WHERE id = ?",
+        (chapter_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@pytest.mark.asyncio
+async def test_archive_clears_queue_flags_and_demotes_pending_refinement():
+    from backend.db import open_conn
+    from backend.services.soft_delete import archive_novel
+
+    _setup_db()
+    novel_id = _insert_novel()
+    queued = _insert_chapter_row(
+        novel_id, 1, status="pending", translate_queued=1, queue_priority=7,
+    )
+    refining = _insert_chapter_row(
+        novel_id, 2, status="done", refinement_status="pending",
+    )
+    in_flight = _insert_chapter_row(
+        novel_id, 3, status="translating", translate_queued=1,
+    )
+
+    async with open_conn() as conn:
+        await archive_novel(conn, novel_id)
+
+    q = _chapter_state(queued)
+    assert (q["translate_queued"], q["queue_priority"]) == (0, 0)
+    assert _chapter_state(refining)["refinement_status"] == "none"
+    # In-flight rows are left for the worker to finish (cancel semantics).
+    assert _chapter_state(in_flight)["translate_queued"] == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_leaves_other_novels_queue_untouched():
+    from backend.db import open_conn
+    from backend.services.soft_delete import archive_novel
+
+    _setup_db()
+    archived = _insert_novel("A")
+    active = _insert_novel("B")
+    _insert_chapter_row(archived, 1, status="pending", translate_queued=1)
+    other = _insert_chapter_row(
+        active, 1, status="pending", translate_queued=1, queue_priority=3,
+    )
+
+    async with open_conn() as conn:
+        await archive_novel(conn, archived)
+
+    o = _chapter_state(other)
+    assert (o["translate_queued"], o["queue_priority"]) == (1, 3)
+
+
+@pytest.mark.asyncio
+async def test_restore_does_not_resurrect_queue_flags():
+    """Restore brings the novel back but NOT its queue: the user re-queues
+    explicitly (documented B2 behavior)."""
+    from backend.db import open_conn
+    from backend.services.soft_delete import archive_novel, restore_novel
+
+    _setup_db()
+    novel_id = _insert_novel()
+    queued = _insert_chapter_row(
+        novel_id, 1, status="pending", translate_queued=1, queue_priority=5,
+    )
+    refining = _insert_chapter_row(
+        novel_id, 2, status="done", refinement_status="pending",
+    )
+
+    async with open_conn() as conn:
+        await archive_novel(conn, novel_id)
+        await restore_novel(conn, novel_id)
+
+    q = _chapter_state(queued)
+    assert (q["translate_queued"], q["queue_priority"]) == (0, 0)
+    assert _chapter_state(refining)["refinement_status"] == "none"
+
+
+# ---- Bug hunt 2026-08-04 (B4): CAT segment counts in delete_counts ---------
+
+
+def _insert_segment(novel_id: int, chapter_id: int, seg_index: int,
+                    status: str) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT INTO chapter_segments (novel_id, chapter_id, seg_index, "
+        "source_text, source_hash, target_text, machine_text, status, "
+        "origin, aligned) VALUES (?, ?, ?, '原', 'h', 'T', 'T', ?, 'llm', 1)",
+        (novel_id, chapter_id, seg_index, status),
+    )
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_counts_include_cat_segments_total_and_human():
+    from backend.db import open_conn
+    from backend.services.soft_delete import delete_counts
+
+    _setup_db()
+    novel_id = _insert_novel()
+    ch = _insert_chapter(novel_id, 1)
+    _insert_segment(novel_id, ch, 0, "machine")
+    _insert_segment(novel_id, ch, 1, "edited")
+    _insert_segment(novel_id, ch, 2, "confirmed")
+
+    async with open_conn() as conn:
+        counts = await delete_counts(conn, novel_id)
+    assert counts.chapter_segments == 3
+    assert counts.chapter_segments_human == 2
+
+
+def test_delete_counts_route_exposes_segment_fields(client):
+    novel_id = _insert_novel()
+    ch = _insert_chapter(novel_id, 1)
+    _insert_segment(novel_id, ch, 0, "confirmed")
+
+    resp = client.get(f"/api/novels/{novel_id}/delete-counts")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chapter_segments"] == 1
+    assert body["chapter_segments_human"] == 1

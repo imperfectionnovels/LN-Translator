@@ -544,6 +544,7 @@ els.archiveBtn.addEventListener("click", async () => {
     if (counts.chapters) lines.push(`${counts.chapters} chapter${counts.chapters === 1 ? "" : "s"}`);
     if (counts.glossary_entries) lines.push(`${counts.glossary_entries} glossary ${counts.glossary_entries === 1 ? "entry" : "entries"}`);
     if (counts.bookmarks) lines.push(`${counts.bookmarks} bookmark${counts.bookmarks === 1 ? "" : "s"}`);
+    if (counts.chapter_segments) lines.push(`${counts.chapter_segments} CAT segment${counts.chapter_segments === 1 ? "" : "s"} (edited/confirmed: ${counts.chapter_segments_human || 0})`);
   }
   const breakdown = lines.length
     ? `<p>This will archive: <strong>${lines.join(" + ")}</strong>.</p>`

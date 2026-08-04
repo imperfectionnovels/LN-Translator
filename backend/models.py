@@ -518,6 +518,10 @@ class DeleteCounts(BaseModel):
     chapter_observations: int
     tm_segments: int
     fr_snapshots: int
+    # CAT-editor ledger (bug hunt 2026-08-04, B4): total segment rows and
+    # the edited/confirmed subset (the human work a purge would destroy).
+    chapter_segments: int
+    chapter_segments_human: int
 
 
 class DeleteResult(DeleteCounts):
