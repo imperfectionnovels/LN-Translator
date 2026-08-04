@@ -1,160 +1,41 @@
-// Returns [{ entry, count }] for every glossary term occurring in `ch`,
-// ordered by first appearance in the English body (the side being edited),
-// with terms that only surface on the Chinese side appended after. Counts sum
-// occurrences across both panes. Reuses buildTermPattern() + termInfo().
-function collectChapterTerms(ch) {
-  if (!ch) return [];
-  const pattern = buildTermPattern();
-  if (!pattern) return [];
-  const found = new Map(); // entry.id -> { entry, count, firstIdx, firstSide }
-  const scan = (text, side, re) => {
-    if (!re || !text) return;
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text))) {
-      const g = termInfo(m[0], side);
-      // Guard against a zero-width match wedging the loop (defensive; our
-      // patterns never match empty, but advancing keeps this total).
-      if (m.index === re.lastIndex) re.lastIndex++;
-      if (!g) continue;
-      const cur = found.get(g.id);
-      if (cur) {
-        cur.count++;
-      } else {
-        found.set(g.id, { entry: g, count: 1, firstIdx: m.index, firstSide: side });
-      }
-    }
-  };
-  // English first so the ordering matches reading order in the edited pane.
-  scan(_displayedEnglish(ch), "en", pattern.en);
-  scan(ch.original_text || "", "zh", pattern.zh);
-  return Array.from(found.values()).sort((a, b) => {
-    if (a.firstSide !== b.firstSide) return a.firstSide === "en" ? -1 : 1;
-    return a.firstIdx - b.firstIdx;
-  });
-}
+/* ---- Chapter body renderers (Phase 6) ----
+ * Relocated from the retired reader-glossary.js and simplified: the reader is
+ * a pure reading surface, so bodies render WITHOUT glossary-term highlight
+ * spans (read mode never showed them after the 2026-05-25 mode split; the
+ * CAT editor owns glossary tooling now). glossaryCache stays loaded for the
+ * pre-translation cockpit's preflight pane. */
 
-function renderTermsRail(ch) {
-  if (!termsList) return;
-  // Compute only in edit mode; the rail is hidden otherwise, and skipping the
-  // scan keeps read-mode renders cheap.
-  const items = (readerMode === "edit") ? collectChapterTerms(ch) : [];
-  if (termsCount) termsCount.textContent = items.length ? `· ${items.length}` : "";
-  if (!items.length) {
-    termsList.innerHTML =
-      `<div class="terms-empty">No glossary terms appear in this chapter. Select any phrase in the body and choose <em>Add to glossary</em> to create one.</div>`;
-    return;
+// Shared paragraph splitter for both reading panes. Blank lines delimit
+// paragraphs. When a raw has internal newlines but no blank-line separator
+// (some scraped CN raws), each non-empty line becomes its own paragraph so
+// the source pane does not collapse into one giant <p>.
+function _splitParas(text) {
+  const raw = String(text || "");
+  if (raw.includes("\n") && !/\n\s*\n/.test(raw)) {
+    return raw.split(/\n+/).map(p => p.trim()).filter(Boolean);
   }
-  termsList.innerHTML = items.map(({ entry, count }) => {
-    const cat = entry.category || "other";
-    const lock = entry.locked ? `<span class="tc-lock" title="Locked">🔒</span>` : "";
-    const cnt = count > 1 ? `<span class="tc-count">(${count})</span>` : "";
-    return `
-      <div class="term-card" data-id="${entry.id}" role="button" tabindex="0" title="Click to find it in the chapter · ✎ to edit">
-        <div class="tc-main">
-          <div class="tc-zh">${escapeHtml(entry.term_zh)}</div>
-          <div class="tc-en">${escapeHtml(entry.term_en)}</div>
-        </div>
-        <button type="button" class="tc-edit" data-act="edit" title="Edit this term" aria-label="Edit ${escapeHtml(entry.term_en)}">✎</button>
-        <div class="tc-foot">
-          <span class="tc-cat">${escapeHtml(cat)}</span>
-          ${cnt}
-          ${lock}
-        </div>
-      </div>`;
-  }).join("");
+  return raw.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
 }
 
-// Scrolls the visible body to the first highlighted occurrence of `entry` and
-// flashes it. Matches by entry id via termInfo so casing differences between
-// the stored term and the prose don't matter. Prefers the aligned edit grid,
-// then the EN pane, then the ZH pane.
-function _jumpToTermInBody(entry, card) {
-  const aligned = document.getElementById("aligned-body");
-  const enHost = (aligned && !aligned.hidden && aligned.innerHTML) ? aligned : bodyEn;
-  let target = null;
-  const pick = (host, side) => {
-    if (target || !host) return;
-    const spans = host.querySelectorAll(".term");
-    for (const span of spans) {
-      const shown = (span.textContent || "").trim();
-      const g = termInfo(shown, side)
-        || termInfo(span.getAttribute("data-term") || "", side === "en" ? "zh" : "en");
-      if (g && g.id === entry.id) { target = span; break; }
-    }
-  };
-  pick(enHost, "en");
-  if (!target) pick((aligned && !aligned.hidden && aligned.innerHTML) ? aligned : bodyZh, "zh");
-  if (target) {
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
-    target.classList.add("term-flash");
-    setTimeout(() => target.classList.remove("term-flash"), 1200);
-  } else if (card) {
-    showFloatToast("Not highlighted in the current view", card.getBoundingClientRect());
+function renderParagraphs(text) {
+  return _splitParas(text)
+    .map(para => `<p>${escapeHtml(para).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+function renderEnglishMarkdown(text) {
+  // The translator emits Markdown: **bold** around 【】 system blocks,
+  // *italics* for first-person present-tense thought / recited text / titles
+  // of works. Parse with marked, sanitize with DOMPurify (LLM output is
+  // untrusted; a passthrough <script> must never reach the DOM). If either
+  // lib failed to load, degrade to the plain escape-and-render path.
+  const src = String(text || "");
+  if (!window.marked || !window.DOMPurify || !src) {
+    return renderParagraphs(src);
   }
-}
-
-if (termsList) {
-  termsList.addEventListener("click", (ev) => {
-    const card = ev.target.closest(".term-card");
-    if (!card) return;
-    const id = Number(card.getAttribute("data-id"));
-    const entry = glossaryCache.find(g => g.id === id);
-    if (!entry) return;
-    if (ev.target.closest("[data-act='edit']")) {
-      ev.preventDefault();
-      showTermEditPop(card, entry, "en");
-    } else {
-      _jumpToTermInBody(entry, card);
-    }
-  });
-  // Keyboard parity: Enter / Space on a focused card opens its editor.
-  termsList.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
-    const card = ev.target.closest(".term-card");
-    if (!card) return;
-    ev.preventDefault();
-    const entry = glossaryCache.find(g => g.id === Number(card.getAttribute("data-id")));
-    if (entry) showTermEditPop(card, entry, "en");
-  });
-}
-
-// Walks up from `range.commonAncestorContainer` to the nearest <p> child of
-// `pane` and returns its 0-based index among siblings (any-tag), matching the
-// indexing convention bookmarks already use. Returns null when no enclosing
-// <p> is found (e.g. selection inside the chapter mark or another container).
-function _paragraphIndexFromRange(range, pane) {
-  if (!range || !pane) return null;
-  let node = range.commonAncestorContainer;
-  if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
-  while (node && node !== pane) {
-    if (node.tagName === "P" && node.parentNode === pane) {
-      const kids = Array.from(pane.children).filter(el => el.tagName === "P");
-      const idx = kids.indexOf(node);
-      return idx >= 0 ? idx : null;
-    }
-    node = node.parentNode;
-  }
-  return null;
-}
-
-// Opens the existing bookmark-add-dialog with the paragraph index pre-set
-// from the selection. Reuses the same _pendingBookmarkParagraph state and
-// the same dialog the ☆ button uses — no duplicated submit handler.
-function _openBookmarkAddDialogFromSelection(paraIndex, selText) {
-  _pendingBookmarkParagraph = paraIndex;
-  if (bookmarkAddContext) {
-    const paraTxt = paraIndex != null
-      ? `paragraph ${paraIndex + 1}`
-      : "chapter-level (no paragraph)";
-    const excerpt = selText && selText.length > 60
-      ? `${selText.slice(0, 60)}…`
-      : selText || "";
-    bookmarkAddContext.textContent =
-      `Saving to Chapter ${currentCh} · ${paraTxt}${excerpt ? ` · "${excerpt}"` : ""}.`;
-  }
-  if (bookmarkAddNote) bookmarkAddNote.value = "";
-  if (!bookmarkAddDialog.open) bookmarkAddDialog.showModal();
+  return window.DOMPurify.sanitize(
+    window.marked.parse(src, { breaks: true, gfm: true })
+  );
 }
 
 /* Tiny ephemeral toast anchored near a rect (selection rect or button rect).
@@ -171,309 +52,6 @@ function showFloatToast(msg, rect) {
   el.style.top  = `${Math.max(window.scrollY + 8, top)}px`;
   el.style.transform = "translateX(-50%)";
   setTimeout(() => el.remove(), 1600);
-}
-
-// Host the glossary mini-form inside a native <dialog> so we get a focus
-// trap, Esc-to-close, and a modal backdrop for free — and so the form can't
-// render off-screen near a viewport edge. `formEl` is still the `.sel-form`
-// div, but it's now a child of the dialog instead of position:absolute on
-// document.body.
-function mountForm(_rect) {
-  glossaryMiniDialog.innerHTML = "";
-  glossaryMiniDialog.appendChild(formEl);
-  if (popoverEl) popoverEl.style.display = "none";
-  if (!glossaryMiniDialog.open) glossaryMiniDialog.showModal();
-}
-
-// Returns the raw paragraph text at `idx` on the given side, splitting the
-// chapter body on \n\n. Used by the Add form's source-reference panel to
-// surface the partner-side paragraph when the user selected from one pane.
-function _paragraphTextAt(side, idx) {
-  if (!lastChapter || idx == null || idx < 0) return "";
-  let body = "";
-  if (side === "zh") {
-    body = lastChapter.original_text || "";
-  } else {
-    // Mirror _displayedEnglish's body-picker via the shared variant helper.
-    body = _displayedVariant(lastChapter) === "refined"
-      ? lastChapter.refined_text
-      : (lastChapter.translated_text || "");
-  }
-  return body.split("\n\n")[idx] || "";
-}
-
-function showAddForm(text, inZh, rect, paragraphIdx) {
-  formEl = document.createElement("div");
-  formEl.className = "sel-form";
-  const guessZh = inZh ? text : "";
-  const guessEn = !inZh ? text : "";
-  // Source-paragraph reference panel: when the user opened the form from a
-  // selection, show the partner-side paragraph and let them click/drag in
-  // it to fill the opposite input. Skipped when paragraphIdx is null (the
-  // standalone "+ Term" button case, or a selection that didn't resolve
-  // to a single <p>).
-  const partnerSide = inZh ? "en" : "zh";
-  const partnerText = _paragraphTextAt(partnerSide, paragraphIdx);
-  const targetInputId = inZh ? "gf-en" : "gf-zh";
-  const sourcePanel = (paragraphIdx != null && partnerText)
-    ? `
-    <div class="sel-form-source src-${partnerSide}" data-target="${targetInputId}">
-      <div class="sel-form-source-label">
-        <span>${partnerSide === "zh" ? "Source · 中文" : "Translation · English"} · ¶${paragraphIdx + 1}</span>
-        <span class="hint">Select text to copy into the form ↓</span>
-      </div>
-      <div class="sel-form-source-body">${escapeHtml(partnerText)}</div>
-    </div>`
-    : "";
-  formEl.innerHTML = `
-    <div class="muted">Add to glossary</div>
-    ${sourcePanel}
-    <div class="row"><label style="width:60px;">Chinese</label><input id="gf-zh" value="${escapeHtml(guessZh)}" placeholder="中文 term" ${guessZh ? "readonly" : ""}></div>
-    <div class="row"><label style="width:60px;">English</label><input id="gf-en" value="${escapeHtml(guessEn)}" placeholder="English term" ${guessEn ? "readonly" : ""}></div>
-    <div class="row"><label style="width:60px;">Category</label>
-      <select id="gf-cat">
-        <option value="character" selected>character</option>
-        <option value="place">place</option>
-        <option value="technique">technique</option>
-        <option value="item">item</option>
-        <option value="other">other</option>
-        <option value="idiom">idiom</option>
-      </select>
-    </div>
-    <div class="row"><label style="width:60px;">Notes</label><input id="gf-notes" placeholder="optional"></div>
-    <div id="gf-err" class="muted" style="color: var(--signal-error);"></div>
-    <div class="actions">
-      <button class="btn-ghost" data-act="cancel">Cancel</button>
-      <button class="btn-primary" data-act="save">Save</button>
-    </div>
-  `;
-  mountForm(rect);
-
-  // Wire source-panel click-to-fill. On mouseup inside the panel, if the
-  // user has a non-empty selection, copy it into the partner input and
-  // briefly flash the panel so the action is acknowledged.
-  formEl.querySelectorAll(".sel-form-source").forEach(panel => {
-    panel.addEventListener("mouseup", () => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
-      const picked = sel.toString().trim();
-      if (!picked) return;
-      // Only react when the selection lives inside this panel — otherwise
-      // text selected elsewhere in the dialog (e.g. a notes field) would
-      // also overwrite the input.
-      const anchor = sel.anchorNode;
-      if (!anchor || !panel.contains(anchor.nodeType === 1 ? anchor : anchor.parentNode)) return;
-      const input = formEl.querySelector("#" + panel.dataset.target);
-      if (!input || input.hasAttribute("readonly")) return;
-      input.value = picked;
-      panel.classList.remove("flash-fill");
-      void panel.offsetWidth; /* restart animation */
-      panel.classList.add("flash-fill");
-      // Leave the selection intact (don't removeAllRanges) so the reference
-      // text stays copyable with Ctrl+C / right-click → Copy after the
-      // click-to-fill. The fill is additive; copy must still work here.
-    });
-  });
-
-  formEl.querySelector("[data-act='cancel']").addEventListener("click", clearPopover);
-  formEl.querySelector("[data-act='save']").addEventListener("click", async () => {
-    const zh = formEl.querySelector("#gf-zh").value.trim();
-    const en = formEl.querySelector("#gf-en").value.trim();
-    const cat = formEl.querySelector("#gf-cat").value;
-    const notes = formEl.querySelector("#gf-notes").value.trim();
-    const errEl = formEl.querySelector("#gf-err");
-    if (!zh || !en) { errEl.textContent = "Chinese and English are both required."; return; }
-    try {
-      // Backend already inserts manual entries as locked=1; no need to pass it.
-      const created = await api.createGlossary(novelId, {
-        term_zh: zh, term_en: en, category: cat,
-        notes: notes || null,
-      });
-      // createGlossary can either insert OR overwrite a prior unlocked entry,
-      // so reconcile by id rather than always pushing.
-      const idx = glossaryCache.findIndex(g => g.id === created.id);
-      if (idx >= 0) glossaryCache[idx] = created; else glossaryCache.push(created);
-      invalidateTermPattern();
-      window.getSelection()?.removeAllRanges();
-      reHighlight();
-      showPostSavePrompt(created, rect, "add");
-    } catch (e) {
-      errEl.textContent = `Failed: ${e.message}`;
-    }
-  });
-}
-
-function showReviseForm(entry, rect) {
-  formEl = document.createElement("div");
-  formEl.className = "sel-form";
-  const cats = ["character","place","technique","item","other","idiom"];
-  // The Locked checkbox renders CHECKED regardless of the row's current
-  // state: a revision is an endorsement of the new rendering, and the
-  // server's update_entry() would implicitly lock on any edit anyway.
-  // Unchecking is the explicit opt-out. It used to default to the row's
-  // current state, which for auto-detected entries silently sent
-  // locked=false and let the next translation's merge_new_terms revert
-  // the user's rendering (the upsert overwrites WHERE locked = 0).
-  const wasAutoTag = entry.locked ? "" : "<span class=\"sel-form-tag\">was auto</span>";
-  formEl.innerHTML = `
-    <div class="muted">Revise glossary term ${wasAutoTag}</div>
-    <div class="row"><label style="width:60px;">Chinese</label><input id="gf-zh" value="${escapeHtml(entry.term_zh)}" readonly title="term_zh is the lookup key. Delete and re-add to change it"></div>
-    <div class="row"><label style="width:60px;">English</label><input id="gf-en" value="${escapeHtml(entry.term_en)}"></div>
-    <div class="row"><label style="width:60px;">Category</label>
-      <select id="gf-cat">
-        ${cats.map(c => `<option value="${c}" ${c === entry.category ? "selected" : ""}>${c}</option>`).join("")}
-      </select>
-    </div>
-    <div class="row"><label style="width:60px;">Notes</label><input id="gf-notes" value="${escapeHtml(entry.notes || "")}" placeholder="optional"></div>
-    <div class="row"><label style="width:60px;">Locked</label>
-      <label style="display:flex;align-items:center;gap:6px;font-size:0.95em;">
-        <input type="checkbox" id="gf-locked" checked>
-        <span class="muted">Protect from auto-overwrite by future translations</span>
-      </label>
-    </div>
-    <div id="gf-err" class="muted" style="color: var(--signal-error);"></div>
-    <div class="actions">
-      <button class="btn-ghost" data-act="cancel">Cancel</button>
-      <button class="btn-primary" data-act="save">Save</button>
-    </div>
-  `;
-  mountForm(rect);
-
-  formEl.querySelector("[data-act='cancel']").addEventListener("click", clearPopover);
-  formEl.querySelector("[data-act='save']").addEventListener("click", async () => {
-    const en = formEl.querySelector("#gf-en").value.trim();
-    const cat = formEl.querySelector("#gf-cat").value;
-    const notes = formEl.querySelector("#gf-notes").value.trim();
-    const locked = formEl.querySelector("#gf-locked").checked;
-    const errEl = formEl.querySelector("#gf-err");
-    if (!en) { errEl.textContent = "English is required."; return; }
-    try {
-      // Pass locked explicitly so the server uses the user's choice instead
-      // of its implicit lock-on-edit default.
-      const updated = await api.updateGlossary(entry.id, {
-        term_en: en,
-        category: cat,
-        notes: notes || null,
-        locked,
-      });
-      const idx = glossaryCache.findIndex(g => g.id === updated.id);
-      if (idx >= 0) glossaryCache[idx] = updated; else glossaryCache.push(updated);
-      invalidateTermPattern();
-      window.getSelection()?.removeAllRanges();
-      reHighlight();
-      showPostSavePrompt(updated, rect, "revise");
-    } catch (e) {
-      errEl.textContent = `Failed: ${e.message}`;
-    }
-  });
-}
-
-async function showPostSavePrompt(entry, rect, mode) {
-  // Transition the in-place form into a propagation prompt: list how many
-  // already-translated chapters contain this term, and offer one-click
-  // re-translation via the existing /glossary/{id}/retranslate-affected
-  // endpoint. We keep the same formEl mounted so the click target stays put.
-  if (!formEl) {
-    formEl = document.createElement("div");
-    formEl.className = "sel-form";
-    mountForm(rect);
-  }
-  const verb = mode === "revise" ? "Revised" : "Saved";
-  formEl.innerHTML = `
-    <div class="muted">${verb} <strong>${escapeHtml(entry.term_zh)}</strong> → <strong>${escapeHtml(entry.term_en)}</strong></div>
-    <div class="muted" id="gf-affected">Checking which chapters use this term…</div>
-    <div class="actions">
-      <button class="btn-ghost" data-act="dismiss">Done</button>
-      <button class="btn-primary" data-act="retranslate" disabled>Re-translate</button>
-    </div>
-  `;
-  formEl.querySelector("[data-act='dismiss']").addEventListener("click", clearPopover);
-  const goBtn = formEl.querySelector("[data-act='retranslate']");
-  const affectedEl = formEl.querySelector("#gf-affected");
-
-  let affected;
-  try {
-    affected = await api.affectedChapters(entry.id);
-  } catch (e) {
-    affectedEl.textContent = `Couldn't list affected chapters: ${e.message}`;
-    goBtn.remove();
-    return;
-  }
-  if (!affected || !affected.length) {
-    affectedEl.textContent = "No prior chapters contain this term. Nothing to re-translate.";
-    goBtn.remove();
-    return;
-  }
-  const nums = affected.map(c => c.chapter_num);
-  const shown = nums.slice(0, 8).join(", ");
-  const more = nums.length > 8 ? `, +${nums.length - 8} more` : "";
-  const n = nums.length;
-  affectedEl.innerHTML = `<strong>${n}</strong> chapter${n === 1 ? "" : "s"} use this term: ${escapeHtml(shown + more)}.`;
-  goBtn.disabled = false;
-  goBtn.textContent = `Re-translate ${n} chapter${n === 1 ? "" : "s"}`;
-  goBtn.addEventListener("click", async () => {
-    goBtn.disabled = true;
-    goBtn.textContent = "Queuing…";
-    try {
-      const res = await api.retranslateAffected(entry.id);
-      const queued = res.queued_count || 0;
-      const queuedNums = res.chapter_nums || [];
-      statusEl.className = "status info";
-      const preview = queuedNums.slice(0, 12).join(", ");
-      const tail = queuedNums.length > 12 ? "…" : "";
-      statusEl.textContent =
-        `Re-translation queued for ${queued} chapter${queued === 1 ? "" : "s"}` +
-        (preview ? `: ${preview}${tail}.` : ".");
-      clearPopover();
-      // Refresh the TOC so reset chapters show their pending state, and
-      // re-load the current chapter if it was caught in the sweep so the
-      // reader switches into its in-progress view. Reset the per-chapter
-      // backoff so the first post-action poll fires at base cadence (the
-      // chapter may have been stuck mid-translate before; we don't want
-      // to inherit its old 30s poll interval).
-      loadChapters();
-      if (queuedNums.includes(currentCh)) {
-        clearPollStart(currentCh);
-        loadChapter(currentCh);
-      }
-    } catch (e) {
-      goBtn.disabled = false;
-      goBtn.textContent = "Re-translate";
-      affectedEl.textContent = `Failed: ${e.message}`;
-    }
-  });
-}
-
-document.addEventListener("mouseup", (e) => {
-  // Don't re-evaluate selection when the mouseup is inside the popover or
-  // the add-to-glossary form — that would close them mid-interaction.
-  if (popoverEl && popoverEl.contains(e.target)) return;
-  if (formEl && formEl.contains(e.target)) return;
-  setTimeout(showPopoverForSelection, 1);
-});
-document.addEventListener("mousedown", (e) => {
-  if (popoverEl && popoverEl.contains(e.target)) return;
-  if (formEl && formEl.contains(e.target)) return;
-  clearPopover();
-});
-
-// Hide the floating reading-rail whenever the user has an active text
-// selection in either reader pane — otherwise it collides with the selection
-// popover at the bottom-right corner.
-document.addEventListener("selectionchange", () => {
-  const sel = window.getSelection();
-  let active = false;
-  if (sel && !sel.isCollapsed && sel.toString().trim().length > 0 && sel.rangeCount > 0) {
-    const node = sel.getRangeAt(0).commonAncestorContainer;
-    const alignedEl = document.getElementById("aligned-body");
-    if (bodyEn.contains(node) || bodyZh.contains(node) || (alignedEl && alignedEl.contains(node))) active = true;
-  }
-  document.body.classList.toggle("has-selection", active);
-});
-
-function reHighlight() {
-  // Re-render the current body in place using the current glossary cache.
-  if (lastChapter) renderChapterBody(lastChapter);
 }
 
 /* ---- Chapter loading & rendering ---- */
@@ -776,19 +354,6 @@ function _prefetchNext(currentDoneChapter) {
 }
 
 async function loadChapter(num) {
-  // Navigation guard: if there are unsaved paragraph edits on the current
-  // chapter and the user is navigating away, confirm before discarding them.
-  // Must run before any DOM rewrite so the failed paragraphs are still visible.
-  if (currentCh !== num && _failedEdits.size > 0) {
-    const ok = await confirmDialog({
-      title: "Unsaved edit",
-      body: "<p>A paragraph edit failed to save and will be lost if you leave this chapter.</p>",
-      okText: "Leave anyway", cancelText: "Stay", danger: true,
-    });
-    if (!ok) return;
-    _failedEdits.clear();
-  }
-
   // Cancel any prior poll handle unconditionally. This is the single guard
   // that prevents a stale timer captured against an old `num` from firing
   // loadChapter(oldNum), snapping the URL back via history.replaceState,
@@ -820,7 +385,6 @@ async function loadChapter(num) {
     // reset still fires before render — easier than carving out a
     // shortcut path.
     if (currentCh !== num) {
-      if (typeof _exitEditMode === "function") _exitEditMode();
       if (_scrollSaveTimer) { clearTimeout(_scrollSaveTimer); _scrollSaveTimer = null; }
       _persistCurrentScroll();
       _ignoreScrollFor(400);
@@ -863,12 +427,6 @@ async function loadChapter(num) {
   // chapter is shorter). Skip the reset on same-chapter re-entry (a poll
   // tick) so the user's scroll progress is preserved during in-flight polls.
   if (currentCh !== num) {
-    // If the user was editing a paragraph, exit edit mode now. The
-    // re-render inside _exitEditMode replaces bodyEn.innerHTML which steals
-    // focus from any contenteditable <p>; the blur handler fires using the
-    // dataset captured at focus time, so the pending edit posts against
-    // the ORIGINAL chapter, not the one we're about to navigate to.
-    if (typeof _exitEditMode === "function") _exitEditMode();
     // Flush any pending save for the OUTGOING chapter (the user may have
     // navigated faster than the debounce timer).
     if (_scrollSaveTimer) { clearTimeout(_scrollSaveTimer); _scrollSaveTimer = null; }
@@ -923,12 +481,6 @@ async function loadChapter(num) {
     // render for a network round-trip the user doesn't need.
     refreshTocIfStale(ch);
     if (ch.status === "pending" || ch.status === "translating") {
-      // Refresh the per-chapter terms rail here too: this branch early-returns
-      // before renderChapterBody (which is the rail's usual refresh point), so
-      // without this the rail would stay stuck on the PREVIOUS chapter's terms
-      // when navigating into a not-yet-translated chapter. collectChapterTerms
-      // falls back to the raw ZH source when there's no translation yet.
-      renderTermsRail(ch);
       setChapterBarTitle(num, null, ch.title_zh);
       // Title hasn't been translated yet; fall back to the Han title (with
       // any 第N章 prefix stripped) or "Chapter N" as last resort. The Han
@@ -1375,12 +927,6 @@ function renderChapterBody(ch) {
   // stash was set in loadChapter's chapter-change guard). Same-chapter poll
   // re-renders don't set it, so they don't animate.
   if (_pendingTurnDir) { _playPageTurn(_pendingTurnDir); _pendingTurnDir = null; }
-  // Glossary-term highlights are an edit-mode affordance. In read mode
-  // the chapter renders as clean prose — the dotted underlines + hover
-  // pills clutter a relaxed read. The cockpit's own raw preview still
-  // marks terms unconditionally because the cockpit IS pre-translation
-  // prep.
-  const pattern = (readerMode === "edit") ? buildTermPattern() : null;
   // Masthead title layout: prefix-stripped English title in the H1
   // (the chapter index lives in the mono dateline now, not in the H1
   // string), Han subtitle directly below, Chinese-pane H1 in bilingual
@@ -1400,27 +946,8 @@ function renderChapterBody(ch) {
   // via _displayedEnglish's guard — no extra render-path needed.
   applyTranslationSource(ch);
   const enSource = _displayedEnglish(ch);
-  bodyEn.innerHTML = renderEnglishMarkdownWithTerms(enSource, pattern);
-  bodyZh.innerHTML = renderParagraphsWithTerms(ch.original_text || "", "zh", pattern);
-  // Feature B: paragraph-aligned grid. Pair source + translation paragraphs
-  // into shared rows wherever the ZH pane is visible (edit mode AND bilingual
-  // read mode): the translator merges paragraphs and drops boilerplate, so
-  // independent panes drift visibly off by the chapter tail. Keep the legacy
-  // bodies populated (above) as the fallback + classic-mode surface;
-  // _buildAlignedRows returns null (so we stay on the legacy panes) in single
-  // column or when the counts diverge too far to align.
-  const alignedEl = document.getElementById("aligned-body");
-  let aligned = false;
-  if ((readerMode === "edit" || dualMode) && alignedEl) {
-    const rows = _buildAlignedRows(ch.original_text || "", enSource, pattern);
-    if (rows) {
-      alignedEl.innerHTML = rows;
-      alignedEl.hidden = false;
-      aligned = true;
-    }
-  }
-  if (!aligned && alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
-  stage.dataset.aligned = aligned ? "on" : "off";
+  bodyEn.innerHTML = renderEnglishMarkdown(enSource);
+  bodyZh.innerHTML = renderParagraphs(ch.original_text || "");
   // F14 (2026-05-25): pre-render next chapter so Next click feels
   // instant. Only fires when the current chapter is done; pending /
   // translating chapters skip (no point cacheing what isn't ready).
@@ -1428,22 +955,11 @@ function renderChapterBody(ch) {
   applyGlossaryMergeBanner(ch);
   applyQualityBanner(ch);
   applyRefinementBanner(ch);
-  // Refresh the per-chapter glossary cards rail. Runs on every body render, so
-  // it tracks chapter nav, poll re-renders, mode flips, and post-edit
-  // re-renders (showTermEditPop ends here) with no extra wiring.
-  renderTermsRail(ch);
-  // On-demand consistency rail: caches the chapter and refetches only when the
-  // rail is open (no-op otherwise), so chapter open stays cheap.
-  renderConsistencyRail(ch);
   // Per-chapter quality badge (cockpit). Guarded: reader-quality.js loads after
   // this module, but by the time a chapter actually renders (after awaited
-  // network loads) it has executed. Edit-mode-only gating lives in the fn.
+  // network loads) it has executed.
   if (typeof renderQualityBadge === "function") renderQualityBadge(ch);
   updatePaneEnLabel(ch);
-  // QA dashboard (Initiative 1) — fire-and-forget; the observations panel
-  // populates whenever the chapter has any persisted detect_* rows. Hidden
-  // entirely when count is 0 so unflagged chapters don't see the chip.
-  loadObservationsForChapter(ch.chapter_num);
   // Bookmark button highlight (Initiative 2) — cheap, reads in-memory
   // cache, runs every time the chapter switches.
   if (typeof _updateBookmarkButtonState === "function") {
@@ -1650,3 +1166,644 @@ function persistLastRead(ch) {
   } catch (_) { /* storage disabled/full — snippet is a nice-to-have */ }
 }
 
+
+/* ===========================================================================
+ * Nav, actions, reading chrome, bookmarks + boot.
+ * Relocated from the retired reader-edit.js (Phase 6): everything below is
+ * READING chrome. The editing surfaces that file carried (paragraph editing,
+ * QA observations, attempts/last-prompt, insert-chapter, style note,
+ * concordance, refresh-free-draft) live in the CAT editor now.
+ * ======================================================================== */
+
+/* ---- Nav / actions ----
+ * All four affordances (prev / next / nextGo / nextCard) navigate via
+ * `neighborChapter` against the ordered TOC cache instead of arithmetic on
+ * currentCh, so partial-import novels (chapters 296-298) and novels with
+ * deletion gaps (1, 2, 5, 6) still work. The chapter that's actually next
+ * may be currentCh+5, not currentCh+1. */
+prevBtn.addEventListener("click", () => {
+  const n = neighborChapter(currentCh, -1);
+  if (n != null) loadChapter(n);
+});
+nextBtn.addEventListener("click", () => {
+  const n = neighborChapter(currentCh, +1);
+  if (n != null) loadChapter(n);
+});
+nextGo.addEventListener("click", () => {
+  if (nextGo.disabled) return;
+  const n = neighborChapter(currentCh, +1);
+  if (n != null) loadChapter(n);
+});
+nextCard.addEventListener("click", (e) => {
+  if (e.target.closest("button")) return;
+  if (nextCard.classList.contains("disabled")) return;
+  const n = neighborChapter(currentCh, +1);
+  if (n != null) loadChapter(n);
+});
+rereadBtn.addEventListener("click", () => loadChapter(currentCh));
+
+// Cancel the in-flight translation from the loading screen. activeLoader
+// carries the chapter currently being processed.
+loaderCancel?.addEventListener("click", () => {
+  const num = activeLoader ? activeLoader.chapterNum : currentCh;
+  loaderCancel.textContent = "Cancelling…";
+  cancelOneFromQueue(num, loaderCancel);
+});
+
+// Swap the icon for a spinner while a queue request is in flight; the
+// existing chapter polling (pollHandle) will refresh the body when the
+// status flips back to done.
+async function runAction(btn, fn, queuedMsg) {
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinning" aria-hidden="true">⟳</span>`;
+  try {
+    await fn();
+    statusEl.className = "status info";
+    statusEl.textContent = queuedMsg;
+    // Show a near-button toast so the action feels acknowledged even if the
+    // user has scrolled away from the status banner.
+    const rect = btn.getBoundingClientRect();
+    showFloatToast("Queued", rect);
+    // The action moved this chapter's state immediately on the server
+    // (translate_queued=1); pull the TOC now so the queued glyph appears
+    // without waiting for the 1.2s reload.
+    loadChapters();
+    // Reset the per-chapter backoff so the first post-action poll fires
+    // at ~1.2s instead of 30s — a chapter that was stuck for >2 min and
+    // is now being explicitly retried by the user shouldn't inherit its
+    // old "stuck" cadence.
+    clearPollStart(currentCh);
+    _cancelPoll();
+    pollHandle = setTimeout(() => loadChapter(currentCh), 1200);
+  } catch (e) {
+    statusEl.className = "status err";
+    statusEl.textContent = `Failed: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// Pre-flight confirm gate on the Retranslate action. This is part of the
+// TRANSLATE flow (it guards an LLM spend), not edit chrome; the standalone
+// pre-check report lives in the CAT editor's util menu.
+async function _confirmPreCheck(novelId, chapter) {
+  // Cheap GET — fires per click rather than caching, because the
+  // chapter's pre-check inputs (length, glossary saturation) can change
+  // between clicks if the user edits the source or the glossary.
+  let warnings;
+  try {
+    const r = await api.chapterPreCheck(novelId, chapter);
+    warnings = (r && r.warnings) || [];
+  } catch (_e) {
+    // Network failure on the pre-check doesn't block translation — the
+    // user can still proceed. Quiet about it.
+    return true;
+  }
+  if (warnings.length === 0) return true;
+  const summary = warnings
+    .map(w => `[${w.severity}] ${w.message}`)
+    .join("\n\n");
+  // Native confirm() is intentionally low-tech here — the dedicated
+  // dialog would be overkill for a one-off "are you sure?" gate.
+  return window.confirm(
+    `${warnings.length} pre-flight check${warnings.length === 1 ? "" : "s"} flagged this chapter:\n\n${summary}\n\nTranslate anyway?`
+  );
+}
+
+retranslateBtn.addEventListener("click", async () => {
+  if (!await _confirmPreCheck(novelId, currentCh)) return;
+  await runAction(
+    retranslateBtn,
+    () => api.retranslate(novelId, currentCh),
+    "Re-translation queued. Refreshing when done."
+  );
+});
+
+// Copy the whole chapter (English title + body) to the clipboard. Reads the
+// source markdown string straight from the loaded chapter so the copy matches
+// the .md download shape rather than the rendered DOM.
+copyChapterBtn.addEventListener("click", async () => {
+  const ch = lastChapter;
+  if (!ch) return;
+  const enTitle = ch.title_en || displayTitleZh(ch.title_zh)
+    || `Chapter ${ch.chapter_num}`;
+  const body = _displayedEnglish(ch);
+  const text = `${enTitle}\n\n${body}`.trim();
+  if (!text) return;
+  const ok = await copyText(text);
+  showFloatToast(ok ? "Chapter copied" : "Copy failed", copyChapterBtn.getBoundingClientRect());
+});
+
+const shortcutsDlg = document.getElementById("shortcuts-dialog");
+function openShortcuts() { if (shortcutsDlg && !shortcutsDlg.open) shortcutsDlg.showModal(); }
+document.getElementById("shortcuts-btn")?.addEventListener("click", openShortcuts);
+document.getElementById("shortcuts-close")?.addEventListener("click", () => shortcutsDlg.close());
+
+/* ---- Reading-type settings (font size + line height) ----
+ * Persists to localStorage; theme.js bootstraps the values on every page so
+ * the choice survives navigation. CSS vars (--fs-body / --fs-body-lh) are
+ * set on :root via inline style so they override the stylesheet defaults. */
+const typeDlg = document.getElementById("type-settings-dialog");
+const fsBodySlider = document.getElementById("fs-body-slider");
+const fsLhSlider = document.getElementById("fs-lh-slider");
+const fsBodyReadout = document.getElementById("fs-body-readout");
+const fsLhReadout = document.getElementById("fs-lh-readout");
+const focusModeToggle = document.getElementById("focus-mode-toggle");
+const pageTurnSelect = document.getElementById("page-turn-select");
+const DEFAULT_FS_BODY = 17;
+const DEFAULT_FS_LH = 1.75;
+function _currentFsBody() {
+  const stored = parseFloat(localStorage.getItem("readerFsBody") || "");
+  return Number.isFinite(stored) ? stored : DEFAULT_FS_BODY;
+}
+function _currentFsLh() {
+  const stored = parseFloat(localStorage.getItem("readerFsLh") || "");
+  return Number.isFinite(stored) ? stored : DEFAULT_FS_LH;
+}
+function _syncTypeReadouts() {
+  if (fsBodyReadout) fsBodyReadout.textContent = `${_currentFsBody()}px`;
+  if (fsLhReadout) fsLhReadout.textContent = `${_currentFsLh().toFixed(2)}×`;
+}
+function _isFocusModeOn() {
+  return document.documentElement.getAttribute("data-focus-mode") === "1";
+}
+function openTypeSettings() {
+  if (!typeDlg || typeDlg.open) return;
+  if (fsBodySlider) fsBodySlider.value = String(_currentFsBody());
+  if (fsLhSlider) fsLhSlider.value = String(_currentFsLh());
+  // Sync the focus-mode checkbox in case the attribute was changed elsewhere
+  // (other tab, or initial bootstrap on first paint).
+  if (focusModeToggle) focusModeToggle.checked = _isFocusModeOn();
+  if (pageTurnSelect) pageTurnSelect.value = _pageTurnPref();
+  _syncTypeReadouts();
+  typeDlg.showModal();
+}
+document.getElementById("type-settings-btn")?.addEventListener("click", openTypeSettings);
+document.getElementById("type-settings-close")?.addEventListener("click", () => typeDlg?.close());
+document.getElementById("type-settings-reset")?.addEventListener("click", () => {
+  localStorage.removeItem("readerFsBody");
+  localStorage.removeItem("readerFsLh");
+  localStorage.removeItem("readerFocusMode");
+  localStorage.removeItem(PAGE_TURN_KEY);
+  document.documentElement.style.removeProperty("--fs-body");
+  document.documentElement.style.removeProperty("--fs-body-lh");
+  document.documentElement.removeAttribute("data-focus-mode");
+  if (fsBodySlider) fsBodySlider.value = String(DEFAULT_FS_BODY);
+  if (fsLhSlider) fsLhSlider.value = String(DEFAULT_FS_LH);
+  if (focusModeToggle) focusModeToggle.checked = false;
+  if (pageTurnSelect) pageTurnSelect.value = "shift";
+  _syncTypeReadouts();
+});
+pageTurnSelect?.addEventListener("change", () => {
+  localStorage.setItem(PAGE_TURN_KEY, pageTurnSelect.value);
+});
+fsBodySlider?.addEventListener("input", () => {
+  const v = parseFloat(fsBodySlider.value);
+  if (!Number.isFinite(v)) return;
+  document.documentElement.style.setProperty("--fs-body", `${v}px`);
+  localStorage.setItem("readerFsBody", String(v));
+  _syncTypeReadouts();
+});
+fsLhSlider?.addEventListener("input", () => {
+  const v = parseFloat(fsLhSlider.value);
+  if (!Number.isFinite(v)) return;
+  document.documentElement.style.setProperty("--fs-body-lh", String(v));
+  localStorage.setItem("readerFsLh", String(v));
+  _syncTypeReadouts();
+});
+
+/* Focus mode — checkbox in the type-settings dialog. The html[data-focus-mode]
+ * attribute is the canonical state; the inline bootstrap in reader.html sets
+ * it on page load (before stylesheet loads, to avoid a flash). This handler
+ * flips the attribute when the user toggles the checkbox, and mirrors the
+ * value to localStorage for the bootstrap to pick up on the next load. */
+if (focusModeToggle) {
+  focusModeToggle.checked = _isFocusModeOn();
+  focusModeToggle.addEventListener("change", () => {
+    const on = focusModeToggle.checked;
+    if (on) document.documentElement.setAttribute("data-focus-mode", "1");
+    else document.documentElement.removeAttribute("data-focus-mode");
+    localStorage.setItem("readerFocusMode", on ? "1" : "0");
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  // Guard inputs so shortcuts don't fire while the user is typing in the TOC
+  // search. Modifiers are reserved for browser shortcuts.
+  if (e.target.matches("input, textarea, select")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  if (e.key === "ArrowLeft" || e.key === "h" || e.key === "k") { e.preventDefault(); prevBtn.click(); }
+  else if (e.key === "ArrowRight" || e.key === "l" || e.key === "j") { e.preventDefault(); nextBtn.click(); }
+  else if (e.key === "b" || e.key === "B") {
+    e.preventDefault();
+    toggleDual.querySelector(`button[data-mode="${dualMode ? "english" : "bilingual"}"]`)?.click();
+  }
+  else if (e.key === "g" || e.key === "G") {
+    e.preventDefault();
+    location.href = glossaryLink.href;
+  }
+  else if (e.key === "/") {
+    e.preventDefault();
+    tocSearch.focus();
+  }
+  else if (e.key === "?") {
+    e.preventDefault();
+    openShortcuts();
+  }
+});
+
+/* ---- Floating reading-rail (% through chapter) ---- */
+function activeEnglishText(ch) {
+  if (!ch) return "";
+  return _displayedEnglish(ch);
+}
+
+function updateScrollPct() {
+  const total = document.documentElement.scrollHeight - window.innerHeight;
+  const pct = total <= 0 ? 0 : Math.min(100, Math.max(0, Math.round((window.scrollY / total) * 100)));
+  readPct.textContent = `${pct}%`;
+  const words = activeEnglishText(lastChapter).split(/\s+/).filter(Boolean).length;
+  if (words > 0) {
+    const min = Math.max(0, Math.round(((100 - pct) / 100) * (words / 230)));
+    readEta.textContent = min > 0 ? `${min} min left` : "almost done";
+  } else readEta.textContent = "";
+}
+// Coalesce scroll/resize bursts into one update per animation frame so the
+// reading-rail recompute never runs more than ~60×/s during a fast scroll.
+let scrollPctRaf = 0;
+function requestScrollPct() {
+  if (scrollPctRaf) return;
+  scrollPctRaf = requestAnimationFrame(() => { scrollPctRaf = 0; updateScrollPct(); });
+}
+window.addEventListener("scroll", requestScrollPct, { passive: true });
+window.addEventListener("resize", requestScrollPct);
+
+/* ---- Sticky toolbar: collapse the duplicated chapter title ---- */
+// While the big <h1> chapter heading is visible, the toolbar title just
+// repeats it, so the toolbar stays minimal ("Ch. N"). Once the heading
+// scrolls up under the sticky bar, .past-title reveals the toolbar title.
+(() => {
+  const bar = document.querySelector(".chapter-bar");
+  if (!bar || !chH1En || !("IntersectionObserver" in window)) return;
+  const obs = new IntersectionObserver((entries) => {
+    for (const e of entries) bar.classList.toggle("past-title", !e.isIntersecting);
+  }, { rootMargin: "-72px 0px 0px 0px", threshold: 0 });
+  obs.observe(chH1En);
+})();
+
+// ===========================================================================
+// Bookmarks (Initiative 2): a READING aid, kept in the reader.
+// ===========================================================================
+//
+// Two dialogs:
+//   * ☆ button → "Add bookmark" dialog (captures paragraph at scroll +
+//     optional note → POST).
+//   * ☰♡ button → "Bookmarks" panel (lists all, grouped by chapter, with
+//     jump-to and delete).
+// The ☆ button picks up a "has-bookmark" highlight when this chapter
+// already has any bookmark, so the user can see at a glance.
+
+const bookmarkAddBtn = document.getElementById("bookmark-add");
+const bookmarksOpenBtn = document.getElementById("bookmarks-open");
+const bookmarksDialog = document.getElementById("bookmarks-dialog");
+const bookmarksList = document.getElementById("bookmarks-list");
+const bookmarksCloseBtn = document.getElementById("bookmarks-close");
+const bookmarkAddDialog = document.getElementById("bookmark-add-dialog");
+const bookmarkAddNote = document.getElementById("bookmark-add-note");
+const bookmarkAddContext = document.getElementById("bookmark-add-context");
+const bookmarkAddCancelBtn = document.getElementById("bookmark-add-cancel");
+const bookmarkAddSaveBtn = document.getElementById("bookmark-add-save");
+
+let _bookmarksCache = []; // last fetched list for the novel
+// Paragraph index captured at "Add bookmark" time. Computed from the
+// topmost paragraph currently in the viewport.
+let _pendingBookmarkParagraph = null;
+
+// Scroll units = #body-en's direct <p> children, the bookmark index space.
+function _activeScrollUnits() {
+  const body = document.getElementById("body-en");
+  return body ? Array.from(body.children).filter(el => el.tagName === "P") : [];
+}
+
+function _currentTopParagraphIndex() {
+  // Find the first scroll unit whose bounding rect's bottom is below the
+  // chapter-bar (so partially-visible top paragraphs don't get skipped).
+  const paras = _activeScrollUnits();
+  if (!paras.length) return null;
+  const bar = document.querySelector(".chapter-bar");
+  const fold = bar ? bar.getBoundingClientRect().bottom + 8 : 0;
+  for (let i = 0; i < paras.length; i++) {
+    const r = paras[i].getBoundingClientRect();
+    if (r.bottom > fold) return i;
+  }
+  return paras.length - 1;
+}
+
+function _updateBookmarkButtonState() {
+  if (!bookmarkAddBtn) return;
+  const hasAny = _bookmarksCache.some(b => b.chapter_num === currentCh);
+  bookmarkAddBtn.classList.toggle("has-bookmark", hasAny);
+}
+
+async function loadBookmarksForNovel() {
+  try {
+    _bookmarksCache = (await api.bookmarks(novelId)) || [];
+  } catch (e) {
+    _bookmarksCache = [];
+    console.warn("bookmarks fetch failed", e);
+  }
+  _updateBookmarkButtonState();
+}
+
+function _renderBookmarksDialog() {
+  if (!bookmarksList) return;
+  if (!_bookmarksCache.length) {
+    bookmarksList.innerHTML =
+      '<p class="bookmarks-empty">No bookmarks yet. Press ☆ on any chapter to add one.</p>';
+    return;
+  }
+  // Group by chapter_num. Server already orders by (chapter_num,
+  // paragraph_index, id), so a plain reduce preserves the order.
+  const byChapter = new Map();
+  for (const b of _bookmarksCache) {
+    if (!byChapter.has(b.chapter_num)) byChapter.set(b.chapter_num, []);
+    byChapter.get(b.chapter_num).push(b);
+  }
+  const parts = [];
+  for (const [chNum, rows] of byChapter) {
+    parts.push(`<div class="bookmark-group-head">Chapter ${chNum}</div>`);
+    for (const b of rows) {
+      const para = b.paragraph_index != null ? `¶${b.paragraph_index + 1}` : "…";
+      const noteHtml = b.note
+        ? `<div class="bookmark-note">${escapeHtml(b.note)}</div>`
+        : `<div class="bookmark-note empty">(no note)</div>`;
+      parts.push(`
+        <div class="bookmark-row" data-bookmark-id="${b.id}" data-ch="${b.chapter_num}" data-para="${b.paragraph_index != null ? b.paragraph_index : ""}">
+          ${noteHtml}
+          <span class="bookmark-paragraph">${para}</span>
+          <div style="display:flex;gap:4px;">
+            <button type="button" class="bookmark-jump" data-jump="${b.id}">Jump</button>
+            <button type="button" class="bookmark-delete" data-delete="${b.id}" title="Remove">×</button>
+          </div>
+        </div>`);
+    }
+  }
+  bookmarksList.innerHTML = parts.join("");
+}
+
+async function openBookmarksDialog() {
+  if (!bookmarksDialog) return;
+  await loadBookmarksForNovel();
+  _renderBookmarksDialog();
+  if (!bookmarksDialog.open) bookmarksDialog.showModal();
+}
+
+function _scrollToParagraph(paraIndex) {
+  if (paraIndex == null) return;
+  const paras = _activeScrollUnits();
+  const target = paras[paraIndex];
+  if (!target) return;
+  // Suppress the synthetic scroll save so the user's existing saved scroll
+  // doesn't get overwritten by the jump's mid-restore state.
+  _ignoreScrollFor(800);
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+if (bookmarksOpenBtn) {
+  bookmarksOpenBtn.addEventListener("click", openBookmarksDialog);
+}
+if (bookmarksCloseBtn) {
+  bookmarksCloseBtn.addEventListener("click", () => bookmarksDialog?.close());
+}
+// Delegated handlers for jump + delete inside the bookmarks list.
+if (bookmarksList) {
+  bookmarksList.addEventListener("click", async (e) => {
+    const jumpEl = e.target.closest("[data-jump]");
+    const delEl = e.target.closest("[data-delete]");
+    if (jumpEl) {
+      const row = jumpEl.closest(".bookmark-row");
+      const targetCh = parseInt(row.dataset.ch, 10);
+      const paraRaw = row.dataset.para;
+      const para = paraRaw === "" ? null : parseInt(paraRaw, 10);
+      bookmarksDialog?.close();
+      if (targetCh === currentCh) {
+        _scrollToParagraph(para);
+      } else {
+        // Navigate then jump after the body renders. Two rAFs match the
+        // existing scroll-restore choreography for paint timing.
+        await loadChapter(targetCh);
+        requestAnimationFrame(() => requestAnimationFrame(() => _scrollToParagraph(para)));
+      }
+      return;
+    }
+    if (delEl) {
+      const id = parseInt(delEl.dataset.delete, 10);
+      if (!Number.isFinite(id)) return;
+      delEl.disabled = true;
+      try {
+        await api.deleteBookmark(id);
+        await loadBookmarksForNovel();
+        _renderBookmarksDialog();
+      } catch (err) {
+        delEl.disabled = false;
+        console.warn("bookmark delete failed", err);
+      }
+    }
+  });
+}
+
+// "Add bookmark" flow.
+if (bookmarkAddBtn) {
+  bookmarkAddBtn.addEventListener("click", () => {
+    _pendingBookmarkParagraph = _currentTopParagraphIndex();
+    if (bookmarkAddContext) {
+      const paraTxt = _pendingBookmarkParagraph != null
+        ? `paragraph ${_pendingBookmarkParagraph + 1}`
+        : "chapter-level (no paragraph)";
+      bookmarkAddContext.textContent =
+        `Saving to Chapter ${currentCh} · ${paraTxt}.`;
+    }
+    if (bookmarkAddNote) bookmarkAddNote.value = "";
+    if (!bookmarkAddDialog.open) bookmarkAddDialog.showModal();
+  });
+}
+if (bookmarkAddCancelBtn) {
+  bookmarkAddCancelBtn.addEventListener("click", () => bookmarkAddDialog?.close());
+}
+if (bookmarkAddSaveBtn) {
+  bookmarkAddSaveBtn.addEventListener("click", async () => {
+    bookmarkAddSaveBtn.disabled = true;
+    try {
+      await api.createBookmark(novelId, currentCh, {
+        paragraph_index: _pendingBookmarkParagraph,
+        note: (bookmarkAddNote?.value || "").trim() || null,
+      });
+      bookmarkAddDialog.close();
+      await loadBookmarksForNovel();
+    } catch (err) {
+      console.warn("bookmark create failed", err);
+      bookmarkAddContext.textContent = `Save failed: ${err.message}`;
+    } finally {
+      bookmarkAddSaveBtn.disabled = false;
+    }
+  });
+}
+
+// Initial load on page open.
+loadBookmarksForNovel();
+
+/* ---- Boot ----
+ * Wrapped in try/catch so a stale `ink:lastNovel` (the spine.js source of
+ * truth for the Reader glyph's href) or a missing novel/chapter doesn't
+ * silently halt the page mid-init and leave the user staring at the
+ * "Loading…" placeholder. Three recovery paths:
+ *   - NaN novelId (someone hit /reader with no ?novel=): redirect to /library.
+ *   - 404/422 from loadNovel (the row was purged): clear ink:lastNovel,
+ *     redirect to /library so the user lands somewhere usable.
+ *   - Any other failure: surface the message in statusEl so it isn't lost.
+ * loadChapter catches its own 404s internally; loadGlossary / loadProviders
+ * already degrade gracefully. */
+(async () => {
+  if (Number.isNaN(novelId)) {
+    location.replace("/library");
+    return;
+  }
+  try {
+    await loadNovel();
+    await Promise.all([loadChapters(), loadGlossary(), loadProviders()]);
+    // If the novel has zero chapters, loadChapter would have nothing to render
+    // and the TOC skeletons would stay forever. Render an empty-state and
+    // skip the chapter load — bouncing to /library would be more disruptive
+    // than showing the novel that does exist but happens to be empty.
+    if (chaptersCache.length === 0) {
+      tocList.setAttribute("aria-busy", "false");
+      tocList.innerHTML = `
+        <div class="empty-state" style="padding: 24px 16px; text-align: center; color: var(--muted);">
+          <div style="font-family: var(--font-family-display); font-size: 18px; margin-bottom: 6px;">No chapters yet</div>
+          <div style="font-size: 12.5px;">Import some text from <a href="/?novel=${novelId}">the Import page</a> or <a href="/library">return to the library</a>.</div>
+        </div>`;
+      bodyEn.innerHTML = `<p class="muted">This novel has no chapters yet. <a href="/?novel=${novelId}">Import chapters</a> to begin.</p>`;
+      bodyZh.innerHTML = "";
+      return;
+    }
+    // Resume position: when the URL didn't pin a chapter, land on the last
+    // chapter the reader finished rendering instead of always defaulting to
+    // chapter 1. Prefer the durable DB position (survives a WebView2 storage
+    // wipe); fall back to the localStorage breadcrumb for users whose DB
+    // column hasn't been backfilled yet (it backfills on the next open).
+    if (!hadExplicitCh) {
+      // Use a positive-integer test, NOT Number.isFinite: the API serializes an
+      // unset DB column as JSON null, and Number(null) === 0 (finite), which
+      // would wrongly skip the localStorage fallback and then fail the cache
+      // lookup, dropping the reader on chapter 1. `null → 0` and `undefined →
+      // NaN` must both fall through to the breadcrumb.
+      let savedCh = Number(novelMeta?.last_read_chapter_num);
+      if (!Number.isInteger(savedCh) || savedCh <= 0) {
+        try {
+          const raw = localStorage.getItem(`lastRead:${novelId}`);
+          if (raw) savedCh = Number(JSON.parse(raw)?.ch);
+        } catch (_) { /* corrupt breadcrumb — fall through to the default */ }
+      }
+      if (Number.isInteger(savedCh) && savedCh > 0
+          && chaptersCache.some(c => c.chapter_num === savedCh)) {
+        currentCh = savedCh;
+      }
+    }
+    // Guard against a non-existent target: default `1` on a partial import
+    // that starts at 296, or a deletion gap. chaptersCache is ordered, so
+    // [0] is the first chapter.
+    if (!chaptersCache.some(c => c.chapter_num === currentCh)) {
+      currentCh = chaptersCache[0].chapter_num;
+    }
+    await loadChapter(currentCh);
+  } catch (err) {
+    const status = err && err.status;
+    // Stale spine cache → /reader?novel=<dead_id> 404s the meta. Clear the
+    // cache and bounce; the library is always a safe landing page.
+    if (status === 404 || status === 422) {
+      try { localStorage.removeItem("ink:lastNovel"); } catch (_) {}
+      location.replace("/library");
+      return;
+    }
+    // Any other error leaves the page stuck on skeleton placeholders + an
+    // unhelpful statusEl message. Render a recoverable error in the main
+    // pane and replace the TOC skeletons so the user isn't staring at
+    // animated emptiness while they decide what to do.
+    tocList.setAttribute("aria-busy", "false");
+    tocList.innerHTML = `
+      <div class="empty-state" style="padding: 24px 16px; text-align: center; color: var(--muted);">
+        <div style="font-family: var(--font-family-display); font-size: 16px; margin-bottom: 6px;">Couldn't load this novel</div>
+        <div style="font-size: 12px;">${escapeHtml(err.message || "Unknown error")}</div>
+      </div>`;
+    bodyEn.innerHTML = `<p class="muted">Couldn't load this novel: ${escapeHtml(err.message || "unknown error")}. <a href="/library">Back to library</a>.</p>`;
+    bodyZh.innerHTML = "";
+    if (statusEl) {
+      statusEl.className = "status err";
+      statusEl.textContent = `Couldn't load this novel: ${err.message}`;
+    }
+    return;
+  }
+  updateScrollPct();
+  setInterval(() => {
+    // Skip the background poll when the tab is hidden (no point hitting the DB
+    // for a view nobody is looking at) OR when nothing on the server can move
+    // the TOC without a user action (_hasLiveWork). The visibilitychange and
+    // BroadcastChannel handlers below still refresh on demand, so any
+    // staleness self-heals the moment the user returns or another tab appends.
+    if (document.visibilityState === "visible" && _hasLiveWork()) {
+      loadChapters();
+      refreshNovelMeta();
+    }
+  }, 6000);
+  // When the tab becomes visible again, pick up any state that drifted.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      loadChapters();
+      refreshNovelMeta();
+    }
+  });
+  // Cross-tab refresh: when another tab appends chapters to this novel, pick
+  // up the new total_chapters / queue counts without waiting for the 6s tick.
+  // Safe to fail silently if the browser doesn't support BroadcastChannel.
+  try {
+    const bc = new BroadcastChannel("novel-changes");
+    bc.onmessage = (e) => {
+      if (e.data && e.data.novel_id === novelId) {
+        loadChapters();
+        refreshNovelMeta();
+      }
+    };
+  } catch (_) { /* ignore */ }
+})();
+
+// Lightweight novel-meta refresh: only updates fields that can change without
+// a full reload (total_chapters in the TOC header).
+async function refreshNovelMeta() {
+  try {
+    const fresh = await api.novel(novelId);
+    if (!fresh) return;
+    const prevTotal = novelMeta?.total_chapters;
+    novelMeta = { ...novelMeta, ...fresh };
+    if (fresh.total_chapters !== prevTotal) {
+      tocNovelMeta.textContent =
+        `${fresh.total_chapters} chapters · ${fresh.source_type || ""}`;
+    }
+  } catch (_) { /* visible-tab poll: silent failure is fine */ }
+}
+
+// True when something on the server could still change the chapter list or a
+// TOC glyph without user action: a chapter translating or queued, a refinement
+// or free-draft in flight, or an import in progress. When false, the periodic
+// background poll skips its tick — the TOC cannot change on its own, and the
+// viewed chapter keeps its own per-chapter poll regardless.
+function _hasLiveWork() {
+  if (novelMeta && novelMeta.import_status === "in_progress") return true;
+  return chaptersCache.some(c =>
+    c.status === "translating" ||
+    c.translate_queued ||
+    c.refinement_status === "pending" || c.refinement_status === "in_progress" ||
+    c.free_draft_status === "pending" || c.free_draft_status === "in_progress"
+  );
+}

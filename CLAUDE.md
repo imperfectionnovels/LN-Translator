@@ -4,9 +4,9 @@ Guidance for Claude (and other coding agents) when working on this project.
 
 ## Project overview
 
-Local single-user app — runs as a Uvicorn web server or as a packaged Windows desktop EXE — that translates Chinese light novels into English. Users paste text, upload `.txt` / `.docx` / `.epub` / `.html` files (single or bulk), or paste a public URL; the backend parses chapters, translates them one at a time using a user-selected AI provider, auto-builds a per-novel glossary so terminology stays consistent, and serves a browser reader with bilingual side-by-side mode. Per-novel settings pick the translator provider, an optional refinement provider, and a genre (xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl). First-run launches a welcome wizard that walks the user through adding a provider before the rest of the UI unlocks.
+Local single-user app — runs as a Uvicorn web server or as a packaged Windows desktop EXE — that translates Chinese light novels into English. Users paste text, upload `.txt` / `.docx` / `.epub` / `.html` files (single or bulk), or paste a public URL; the backend parses chapters, translates them one at a time using a user-selected AI provider, auto-builds a per-novel glossary so terminology stays consistent, and serves two surfaces: a PURE READING reader (`/reader`: bilingual side-by-side, TOC, bookmarks, quality badge, free-draft source toggle — no editing chrome) and the CAT editor (`/editor`: the SINGLE editing surface — segment grid over the durable `chapter_segments` ledger, confirm tracking, TM/glossary assist rail, and the chapter tools util menu). Per-novel settings pick the translator provider, an optional refinement provider, and a genre (xianxia, wuxia, modern-romance, isekai, slice-of-life, mystery, litrpg, sci-fi, fantasy, yuri-bl). First-run launches a welcome wizard that walks the user through adding a provider before the rest of the UI unlocks.
 
-**One LLM call per chapter from the selected provider.** No humanizer in the default flow; an opt-in per-novel refinement pass runs a second provider over the draft when configured. Each prompt carries the glossary, the previous-chapter tail, captured per-paragraph style edits, and the genre-aware system instruction composed from `backend/prompts/`. The translator owns every correctness axis AND the English prose itself.
+**One LLM call per chapter from the selected provider.** No humanizer in the default flow; an opt-in per-novel refinement pass runs a second provider over the draft when configured. Each prompt carries the glossary, the previous-chapter tail, the user's editing history (historical `style_edits` rows plus the CAT ledger's approved/confirmed segment pairs — segment edits are the live producer since Phase 6), and the genre-aware system instruction composed from `backend/prompts/`. The translator owns every correctness axis AND the English prose itself.
 
 ## Tech stack
 
@@ -43,7 +43,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── routes/                # 16 routers, mounted under /api
 │   │   ├── translate.py           # /paste, /upload, /bulk + /append/* + /insert (mid-novel) + /scrape
 │   │   ├── novels.py              # /novels list/get/patch/delete + downloads
-│   │   ├── chapters.py            # /chapters, /retranslate, /edit-paragraph, /retry-refinement
+│   │   ├── chapters.py            # /chapters, /retranslate, /retry-refinement, /learn-edits (+/commit), attempts + last-prompt + pre-check diagnostics
 │   │   ├── glossary.py            # per-novel CRUD + /affected-chapters + /retranslate-affected
 │   │   ├── global_glossary.py     # cross-novel glossary
 │   │   ├── providers.py           # CRUD + /test + /set-default + /set-secret + DELETE /secret
@@ -76,8 +76,8 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── import_runner.py, scrape_jobs.py        # resumable recipe/bulk import (skeleton + fill)
 │   │   ├── translation_attempts.py, fr_snapshots.py, soft_delete.py, genres_novel.py, lang_detect.py
 │   │   ├── quality_dashboard.py   # cockpit read service: wraps quality_report/consistency_eval cores with a run_in_threadpool offload + pull-based version-token cache
-│   │   ├── learn_from_edits.py    # build_proposal/commit_proposal: route a chapter's captured style_edits -> glossary casing fixes + brief notes + ground-truth (stage-then-commit)
-│   │   ├── consistency.py         # edit-mode consistency rail: deterministic fuzzy-TM + locked-term-missing detectors (read-only, on-demand; corpus prefers chapter_segments with status ranking, tm_segments legacy fallback)
+│   │   ├── learn_from_edits.py    # build_proposal/commit_proposal: route a chapter's edited segments (machine_text vs target_text via segments.edited_pairs_for_chapter) -> glossary casing fixes + brief notes + ground-truth (stage-then-commit)
+│   │   ├── consistency.py         # deterministic fuzzy-TM + locked-term-missing detectors (read-only, on-demand; corpus prefers chapter_segments with status ranking, tm_segments legacy fallback)
 │   │   ├── _task_registry.py      # strong-reference registry for fire-and-forget asyncio tasks (prevents GC-dropped work)
 │   │   ├── epub_export.py, covers.py, stats.py
 │   │   ├── scrapers/              # per-site recipe registry: base.py + cloudflare/piaotian/sixnineshu/syosetu/uukanshu/...
@@ -128,10 +128,10 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   ├── fonts/                 # self-hosted subsetted woff2: fraunces/, spectral/, noto-serif-sc/ (+ OFL.txt each; regenerate via scripts/fetch_fonts.py)
 │   └── js/
 │       ├── api.js, theme.js, utils.js, spine.js, queue-panel.js, boot.js, command-palette.js  # shared
-│       ├── reader-core.js, reader-toc.js, reader-glossary.js, reader-consistency.js, reader-chapter.js, reader-edit.js, reader-quality.js  # reader.js split into ordered modules (plain <script> tags, source-order = concat-identical; core first owns shared state, quality last = cockpit badge + learn-from-edits panel)
+│       ├── reader-core.js, reader-toc.js, reader-chapter.js, reader-quality.js  # reader split into ordered modules (plain <script> tags, shared scope; core first owns state + DOM handles and redirects ?mode=edit to /editor, chapter owns rendering/nav/bookmarks/boot, quality last = the badge). Pure reading surface since Phase 6: no edit mode, no glossary popovers, no rails.
 │       ├── home.js, library.js, glossary.js, glossary-global.js, novel-overview.js
 │       ├── settings.js, queue.js, stats.js, quality.js, find-replace.js, onboarding.js
-│       ├── editor-core.js, editor-assist.js  # /editor split into ordered modules (same convention as reader-*.js; core first owns state + editing loop and dispatches editor:* CustomEvents, assist adds the TM/glossary rail + AI-suggests dialog)
+│       ├── editor-core.js, editor-assist.js, editor-tools.js  # /editor split into ordered modules (same convention as reader-*.js; core first owns state + editing loop and dispatches editor:* CustomEvents, assist adds the TM/glossary rail + AI-suggests dialog, tools last adds the util-menu dialogs relocated from the reader — QA observations, attempts, last prompt, pre-check, concordance, learn-from-edits, style note, insert chapter, refresh free draft — plus the select-to-add-glossary popover and the chapter-level terms + missing-locked-terms rail tiers)
 │       └── vendor/            # marked + DOMPurify (reader Markdown rendering only)
 ├── scripts/                   # dev/CI scripts (not packaged)
 │   ├── lint.ps1, smoke-exe.ps1, smoke_initiative7.py   # lint + EXE/smoke harnesses
@@ -190,7 +190,7 @@ One process-global `asyncio.Lock` makes the translator strictly serial — every
 The worker (`_translate_chapter_in_db` in `services/queue.py`):
 
 1. Claims the row (`status='translating'` only if currently `'pending'`).
-2. Gathers prompt inputs: glossary, previous-chapter tail (within `PREVIOUS_CONTEXT_MAX_GAP` chapters back), captured style edits, per-novel style note, the confirmed-exemplar pairs (CAT Phase 5: recent confirmed segments from OTHER chapters, rendered as the APPROVED TRANSLATION EXAMPLES block next to the style-edits block), plus the resolved Provider and the novel's `genre` + `custom_style_brief` for the genre-aware system instruction. Author update-count / vote-begging markers (（第四更！）, 求月票) are stripped from the prompt's title line and the body's heading line (`parser.strip_title_update_marker`; prompt-time only, stored source stays verbatim).
+2. Gathers prompt inputs: glossary, previous-chapter tail (within `PREVIOUS_CONTEXT_MAX_GAP` chapters back), captured style edits (historical `style_edits` rows — the table lost its in-app producer with Phase 6's edit-paragraph removal; the CAT ledger's segment pairs are the live editing signal), per-novel style note, the confirmed-exemplar pairs (CAT Phase 5: recent confirmed segments from OTHER chapters, rendered as the APPROVED TRANSLATION EXAMPLES block next to the style-edits block), plus the resolved Provider and the novel's `genre` + `custom_style_brief` for the genre-aware system instruction. Author update-count / vote-begging markers (（第四更！）, 求月票) are stripped from the prompt's title line and the body's heading line (`parser.strip_title_update_marker`; prompt-time only, stored source stays verbatim).
 3. Single LLM call via `translate_chapter` → backend's `_complete(prompt)` → `parse_delimited_response`. On parse failure: one retry, then plain-text fallback (sets `translation_degraded=1`, the only remaining degraded signal).
 4. Pure text fixups (`services/text_fixups.py`): `strip_leading_title_line`, `enforce_locked_term_casing`, `enforce_lowercase_locked_terms`, `enforce_stem_branch_casing`, `strip_chapter_end_marker`, `enforce_em_dash`, `enforce_spaced_hyphen_dash`, `enforce_brackets`, `enforce_balanced_emphasis`, `enforce_sentence_initial_capitalization`, `enforce_mid_sentence_comma_break`. Each rule's change count is captured and persisted as `chapters.fixup_audit` JSON (`{"rules": {name: count}, "total": N}`) on the success commit, so this deterministic post-LLM override layer is queryable per chapter (a fixup can no longer silently rewrite correct output without a record). `quality_report.py` surfaces fixup churn + glossary force-case collisions from it; behavior is unchanged (visibility, not suppression).
 5. **CAT worker merge (Phase 4)**: inside the claim-guarded success transaction (the claim UPDATE opens it, so human rows are re-read after the claim and editor writes cannot interleave), `segments.apply_machine_translation(kind='llm')` reconciles the fixed-up machine paragraphs with the `chapter_segments` store: human rows (edited|confirmed) keep `target_text` VERBATIM and only refresh `machine_text` with the new AI rendering; machine rows regenerate (origin `llm`); cross-chapter exact confirmed matches pre-fill as `origin='tm_exact'` (`prefill_confirmed_exact`: indexed hash lookup, full source-text equality against 16-hex collisions, most-recently-confirmed wins). The COMMITTED body is the merged join, so a retranslate can never clobber confirmed work. A storeless chapter gets a fresh build; on paragraph-count drift the machine side aligns via `tm.full_alignment_path` (uncertain rows `aligned=0`); an unalignable merge RETAINS every row (I3) and stamps `unaligned`. A failed translation rolls the transaction back and never touches the store.
@@ -281,7 +281,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1778 tests across 148 modules.
+- `pytest backend/tests`. Currently 1771 tests across 148 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 

@@ -601,3 +601,68 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   re-pointed on every chapter change. The reader edit-mode hint now
   pitches the CAT editor as the deep-editing surface (transition copy;
   full edit-mode retirement is Phase 6).
+
+## 2026-08-03: CAT-pivot Phase 6, reader edit-mode retirement (redundancy directive)
+
+- **The reader is a pure reading surface; the CAT editor is the single
+  editing surface.** Deleted from the reader: the Read/Edit toggle,
+  localStorage readerMode, body[data-reader-mode] CSS + the whole
+  .edit-only scope, contenteditable paragraph editing (+ retry chips +
+  style_edits capture UI), the select-to-add-glossary popover, the
+  term-edit popover, the terms rail, the consistency rail, the aligned
+  paragraph grid, and the QA/attempts/last-prompt/insert-chapter/
+  style-note/learn-from-edits/concordance dialogs. reader-edit.js,
+  reader-glossary.js and reader-consistency.js are gone; the survivors
+  (nav, retranslate + pre-check confirm gate, copy chapter, shortcuts,
+  type settings, keyboard, reading rail, boot, bookmarks) live in
+  reader-chapter.js. Legacy `?mode=edit` URLs redirect client-side to
+  /editor?novel=N&ch=M (reader-core.js top).
+- **What moved where.** QA observations, attempts, last prompt,
+  pre-check report, refresh-free-draft, insert-chapter, concordance
+  (now search-box driven, selection prefills), learn-from-edits and the
+  style-note dialog all live in the editor's new util menu
+  (editor-tools.js; same <details> util-menu pattern, styles hoisted to
+  base.css). The terms rail became a "Terms in this chapter" tier in the
+  editor's assist rail (click a card to revise; + Add term for the blank
+  form) and the consistency rail's locked-term tier became the
+  "Missing locked terms" tier (client-computed over glossary x segments,
+  click jumps to the offending row); the fuzzy-match half of the old rail
+  was already covered by the assist rail's TM tiers. The select-to-add
+  popover was REIMPLEMENTED clean on the segment grid (Add / Revise /
+  Concordance) rather than porting the reader's selection machinery,
+  and the add/revise forms are one term-form dialog (revise with an EN
+  change keeps the reader's apply-in-place behavior and reloads the
+  grid, since the backend reprojects segments in the same transaction).
+- **Kept in the reader**: bilingual/source toggles (incl. free-draft
+  display), TOC, bookmarks (a reading aid; wiring moved into
+  reader-chapter.js), quality badge (now un-gated from edit mode; its
+  popover links to the editor for triage instead of the retired QA
+  panel/rail), retranslate + retry-refinement, downloads, copy chapter,
+  append link, Open-in-CAT-editor link.
+- **The aligned bilingual grid was deleted, not kept as reading chrome.**
+  Bilingual read mode returns to the two independent panes (the grid's
+  own fallback). Judgment call: the grid's row pairing served line-level
+  comparison for EDITING (the editor's server-computed segment grid is
+  that surface now), the 1:1 pipeline makes new translations align by
+  construction anyway, and keeping it meant keeping the duplicate
+  client-side _alignParas aligner the plan explicitly retired.
+- **style_edits producer sunset.** POST /edit-paragraph (+ its segment
+  reroute and observations-refresh helpers, EditParagraphRequest, the
+  api.js wrapper, segments.seg_index_for_display_paragraph) is deleted;
+  the editor's segment PATCH is the only paragraph write.
+  learn_from_edits now derives proposals from the ledger
+  (segments.edited_pairs_for_chapter: machine_text vs target_text on
+  edited|confirmed rows, same proposal shape). style_edits KEEPS its
+  historical rows: fetch_style_edits still feeds the USER STYLE
+  PREFERENCES prompt block: but gains no new rows in-app (the CLI
+  ingest_edited_chapter path can still stage rows for out-of-app edits);
+  dropping the table is future work via the dead-column path.
+  quality_dashboard's cache token swapped its style_edits aggregate for
+  segments.novel_segment_edit_stamp (chapter_segments.updated_at bumps
+  on every editor write). Observation rows now refresh only at translate
+  commits; a hand-fixed observation is dismissed from the editor's QA
+  panel (the per-edit observer re-run died with the endpoint).
+- **Free-draft lane deliberately kept as-is** (generation on chapter
+  open, reader source toggle, refresh action in the editor util menu).
+  Its long-term fate: reference column in the editor vs removal: is
+  explicitly the user's call; do not remove it as "dead" cleanup.

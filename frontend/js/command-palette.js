@@ -1,8 +1,6 @@
 /* Command palette + global nav chords (F19, 2026-05-25).
  *
  * Cmd/Ctrl+K opens a centered modal with fuzzy-search action list.
- * Mode-aware: when on the reader, filters out edit-only actions if
- * body[data-reader-mode] === "read".
  *
  * Global nav chord: `g` followed within 1.5s by one of l/r/e/g/i/q/s/n/y/b
  * jumps to library/reader/editor/glossary/import/queue/settings/novel-page/
@@ -67,10 +65,6 @@
   }
 
   // ---- Action registry ----
-  function _readerMode() {
-    return document.body.dataset.readerMode || "read";
-  }
-
   function _lastNovelId() {
     try { return localStorage.getItem("ink:lastNovel") || ""; }
     catch { return ""; }
@@ -80,9 +74,7 @@
     return location.pathname === "/reader";
   }
 
-  // Each action: {id, label, hint, run, modes?: ["read","edit"]}.
-  // modes omitted = available everywhere. On non-reader pages the
-  // modes filter is bypassed.
+  // Each action: {id, label, hint, run}.
   function _buildActions() {
     const novelQs = _lastNovelId() ? `?novel=${_lastNovelId()}` : "";
     const novelIdQs = _lastNovelId() ? `?id=${_lastNovelId()}` : "";
@@ -110,28 +102,15 @@
 
     if (_isReaderPage()) {
       out.push(
-        { id: "reader-toggle-bilingual", label: "Toggle bilingual view", modes: ["read"], run: () => {
+        { id: "reader-toggle-bilingual", label: "Toggle bilingual view", run: () => {
           const btn = document.querySelector(`#toggle-dual button[data-mode="bilingual"]`);
           btn?.click();
         }},
-        { id: "reader-toggle-read-edit", label: "Toggle Read / Edit mode", run: () => {
-          const next = _readerMode() === "edit" ? "read" : "edit";
-          document.querySelector(`#reader-mode-toggle button[data-reader-mode="${next}"]`)?.click();
-        }},
-        { id: "reader-retranslate", label: "Retranslate this chapter", modes: ["edit"], run: () => {
+        { id: "reader-retranslate", label: "Retranslate this chapter", run: () => {
           document.getElementById("retranslate")?.click();
         }},
         { id: "reader-bookmark", label: "Bookmark this paragraph", run: () => {
           document.getElementById("bookmark-add")?.click();
-        }},
-        { id: "reader-style-note", label: "Edit style note", modes: ["edit"], run: () => {
-          document.getElementById("style-note-btn")?.click();
-        }},
-        { id: "reader-view-last-prompt", label: "View last prompt sent to LLM", modes: ["edit"], run: () => {
-          document.getElementById("view-last-prompt")?.click();
-        }},
-        { id: "reader-view-attempts", label: "View translation attempts", modes: ["edit"], run: () => {
-          document.getElementById("view-attempts")?.click();
         }},
       );
     }
@@ -140,10 +119,7 @@
   }
 
   function _availableActions() {
-    const all = _buildActions();
-    if (!_isReaderPage()) return all;
-    const mode = _readerMode();
-    return all.filter(a => !a.modes || a.modes.includes(mode));
+    return _buildActions();
   }
 
   // ---- Fuzzy filter ----

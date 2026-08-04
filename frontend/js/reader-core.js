@@ -5,6 +5,16 @@ const novelId = parseInt(params.get("novel"), 10);
 const hadExplicitCh = params.has("ch");
 let currentCh = parseInt(params.get("ch") || "1", 10);
 
+// Phase 6 (reader edit-mode retirement): legacy `?mode=edit` deep links (old
+// bookmarks, pre-retirement worklists) redirect to the CAT editor, the single
+// editing surface. location.replace does not halt script execution; the rest
+// of the boot runs harmlessly while the navigation lands.
+if (params.get("mode") === "edit" && !Number.isNaN(novelId)) {
+  location.replace(
+    `/editor?novel=${novelId}&ch=${Number.isFinite(currentCh) ? currentCh : 1}`
+  );
+}
+
 // --- DOM HANDLES ---
 // All `const X = document.getElementById(...)` lookups live in THIS block.
 // Module-top-level wiring later in the file (addEventListener calls,
@@ -25,33 +35,6 @@ const tocFootStats = document.getElementById("toc-foot-stats");
 const tocToggle = document.getElementById("toc-toggle");
 const mobileTocToggle = document.getElementById("mobile-toc-toggle");
 const tocBackdrop = document.getElementById("toc-backdrop");
-// Per-chapter glossary terms rail (edit-mode only). Visibility is the AND of
-// edit mode and the user's persisted open/closed pick, expressed as a single
-// #reader-stage[data-terms="on"|"off"] attribute (see applyTermsRail).
-const termsList = document.getElementById("terms-list");
-const termsCount = document.getElementById("terms-count");
-const termsRailToggle = document.getElementById("terms-rail-toggle");
-const termsRailClose = document.getElementById("terms-rail-close");
-const termsBackdrop = document.getElementById("terms-backdrop");
-const TERMS_RAIL_OPEN_KEY = "termsRailOpen";
-let termsRailOpen = localStorage.getItem(TERMS_RAIL_OPEN_KEY) !== "0"; // default open
-// Per-chapter consistency rail (edit-mode only, on-demand). Shares the right
-// column with the terms rail; the two are kept mutually exclusive. Visibility
-// is #reader-stage[data-consistency="on"|"off"] (see applyConsistencyRail).
-const consistencyList = document.getElementById("consistency-list");
-const consistencyCount = document.getElementById("consistency-count");
-const consistencyRailToggle = document.getElementById("consistency-rail-toggle");
-const consistencyRailClose = document.getElementById("consistency-rail-close");
-const consistencyBackdrop = document.getElementById("consistency-backdrop");
-const CONSISTENCY_RAIL_OPEN_KEY = "consistencyRailOpen";
-let consistencyRailOpen = localStorage.getItem(CONSISTENCY_RAIL_OPEN_KEY) === "1"; // default closed
-let consistencyChapter = null;
-// Boot-time reconciliation: the two rails share the right grid column and are
-// mutually exclusive. The terms rail defaults OPEN, so if the user previously
-// left the consistency rail open, both would claim the column at startup.
-// Consistency was explicitly persisted-open, so it wins; yield the terms rail
-// (in-memory only, so the user's terms preference is restored next session).
-if (consistencyRailOpen) termsRailOpen = false;
 const chIdEl = document.getElementById("ch-id");
 const chTitleEl = document.getElementById("ch-title");
 const chTitleZhEl = document.getElementById("ch-title-zh");
@@ -236,12 +219,6 @@ let _errorBannerDismissedCount = -1;
 // Providers cache for the bilingual pane label + refinement badge. Lazily
 // populated by loadProviders(); falls back to null IDs if the call fails.
 let _providersCache = null;
-// Failed paragraph-edit saves, keyed by `${chapterNum}:${paragraphIndex}`.
-// Cleared on success or on confirmed chapter navigation away from the chapter.
-const _failedEdits = new Map();
-// Draft stash for the insert-chapter dialog. Preserved across Esc/cancel so
-// the user can reopen and continue without losing their pasted text.
-let _insertDraft = null;
 // Single re-poll handle for loadChapter. Replaces the prior two separate
 // pollTimer / loaderPollTimer variables — those carried two bugs:
 //   1. Neither was cleared on chapter navigation. The setTimeout closure
@@ -373,10 +350,6 @@ function highlightSnippet(raw) {
 }
 
 // confirmDialog lives in frontend/js/utils.js (C7).
-function firstCJK(s) {
-  const m = String(s || "").match(/[㐀-鿿]/);
-  return m ? m[0] : "";
-}
 
 // Segmented controls show the *current* state, not the next-action label.
 // The .on class on the active segment, plus aria-pressed, drive the visual
@@ -392,13 +365,6 @@ function applyDual() {
   // In bilingual the ZH pane shows; Classic collapses to single-column.
   paneZh.classList.toggle("hidden", !dualMode);
   paneEnLabel.classList.toggle("hidden", !dualMode);
-  // Classic (single column) can't host the edit-mode aligned grid; clear it so
-  // a stale aligned layout can't survive the switch before the re-render paints.
-  if (!dualMode) {
-    stage.dataset.aligned = "off";
-    const alignedEl = document.getElementById("aligned-body");
-    if (alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
-  }
   toggleDual.querySelectorAll("button").forEach(b => {
     const active = b.dataset.mode === viewMode;
     b.classList.toggle("on", active);
@@ -439,7 +405,6 @@ function applyTranslationSource(ch) {
 toggleSource?.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-source]");
   if (!btn) return;
-  if (btn.disabled) return;  // edit mode locks the picker to Polished.
   const next = btn.dataset.source;
   if (!VALID_SOURCES.includes(next)) return;
   if (next === translationSource) return;
@@ -449,209 +414,12 @@ toggleSource?.addEventListener("click", (e) => {
   if (lastChapter) renderChapterBody(lastChapter);
 });
 
-/* ---- Read/Edit mode toggle (2026-05-25) ----
- *
- * The reader has two modes: 'read' (clean reading experience) and 'edit'
- * (translator's workbench with all editing/observability tooling visible).
- * Single source of truth: body[data-reader-mode]. Edit-only chrome is
- * scoped via .edit-only CSS class — read mode hides it via display:none.
- *
- * Edit mode forces viewMode='bilingual' so the source is visible while
- * editing. The view-mode picker is disabled in edit mode. Flipping back
- * to read restores the user's previously-selected viewMode.
- *
- * Persisted globally to localStorage.readerMode. Default = 'read'.
- */
-const READER_MODE_KEY = "readerMode";
-const READER_MODE_VIEW_KEY = "readerMode_savedViewMode";  // stash on flip-to-edit
-const READER_MODE_SOURCE_KEY = "readerMode_savedTranslationSource";  // 2026-05-27
-// Legacy `?mode=edit` deep-links (old bookmarks; Phase 6 redirects these to
-// /editor) land directly in edit mode; otherwise the sticky localStorage
-// choice wins.
-let readerMode = (params.get("mode") === "edit"
-  || localStorage.getItem(READER_MODE_KEY) === "edit") ? "edit" : "read";
-const readerModeToggle = document.getElementById("reader-mode-toggle");
-const viewModePicker = document.getElementById("toggle-dual");
-
-// Rail-state toggles live here (not with the rail-render code in
-// reader-glossary.js / reader-consistency.js) because _applyReaderMode below
-// calls them at module-top-level boot. Across separate <script> modules,
-// function declarations only bind when their own script runs, so a forward
-// call into a later module throws at boot. Keeping these two in reader-core
-// (which also owns termsRailOpen / consistencyRailOpen / stage / the toggle
-// handles) restores the single-file hoisting the boot relied on.
-function applyTermsRail() {
-  const show = (readerMode === "edit") && termsRailOpen;
-  if (stage) stage.dataset.terms = show ? "on" : "off";
-  if (termsRailToggle) termsRailToggle.setAttribute("aria-pressed", show ? "true" : "false");
-}
-function applyConsistencyRail() {
-  const show = (readerMode === "edit") && consistencyRailOpen;
-  if (stage) stage.dataset.consistency = show ? "on" : "off";
-  if (consistencyRailToggle) consistencyRailToggle.setAttribute("aria-pressed", show ? "true" : "false");
-}
-
-function _applyReaderMode() {
-  document.body.dataset.readerMode = readerMode;
-  // Sync the toggle buttons' pressed state.
-  if (readerModeToggle) {
-    readerModeToggle.querySelectorAll("button[data-reader-mode]").forEach(b => {
-      b.setAttribute("aria-pressed", b.dataset.readerMode === readerMode ? "true" : "false");
-    });
-  }
-  // Edit mode: disable view-mode picker (forced bilingual for source visibility).
-  if (viewModePicker) {
-    viewModePicker.querySelectorAll("button").forEach(b => {
-      b.disabled = (readerMode === "edit");
-      if (readerMode === "edit") {
-        b.title = "Edit mode requires the source visible. Switch to Read to choose a view mode.";
-      } else {
-        b.removeAttribute("title");
-      }
-    });
-  }
-  // 2026-05-27: edit mode also locks translationSource to "polished" — the
-  // paragraph-edit machinery (_captureParagraphMeta) computes indices against
-  // translated_text / refined_text, so editing while the free draft is on
-  // screen would splice user edits against the wrong chunks. Disable the
-  // source picker to make the constraint visible.
-  if (toggleSource) {
-    toggleSource.querySelectorAll("button").forEach(b => {
-      b.disabled = (readerMode === "edit");
-      if (readerMode === "edit") {
-        b.title = "Edit mode operates on the polished translation. Switch to Read to view the free draft.";
-      } else {
-        b.removeAttribute("title");
-      }
-    });
-  }
-  // Keep the per-chapter terms rail in sync with the mode: it's edit-mode
-  // only, so flipping to read forces it closed (the toggle/close buttons are
-  // .edit-only and vanish anyway). applyTermsRail is hoisted (declaration).
-  applyTermsRail();
-  // Same edit-mode gating for the consistency rail (also hoisted).
-  applyConsistencyRail();
-}
-
-function setReaderMode(next) {
-  if (next !== "read" && next !== "edit") return;
-  if (next === readerMode) return;
-  let viewModeChanged = false;
-  let sourceChanged = false;
-  if (next === "edit") {
-    // Stash the current viewMode so we can restore on flip back to read.
-    localStorage.setItem(READER_MODE_VIEW_KEY, viewMode);
-    if (viewMode !== "bilingual") {
-      viewMode = "bilingual";
-      localStorage.setItem(VIEW_MODE_KEY, viewMode);
-      applyDual();
-      viewModeChanged = true;
-    }
-    // 2026-05-27: same stash-and-force pattern for translationSource. The
-    // paragraph-edit machinery only knows about translated_text /
-    // refined_text columns; force to "polished" so edits land on the
-    // visible body. Stash the prior choice so flipping back to Read
-    // restores it.
-    localStorage.setItem(READER_MODE_SOURCE_KEY, translationSource);
-    if (translationSource !== "polished") {
-      translationSource = "polished";
-      localStorage.setItem(TRANSLATION_SOURCE_KEY, translationSource);
-      sourceChanged = true;
-    }
-  } else {
-    // Restore the prior viewMode if we stashed one; otherwise leave as-is.
-    const saved = localStorage.getItem(READER_MODE_VIEW_KEY);
-    if (saved && VALID_MODES.includes(saved) && saved !== viewMode) {
-      viewMode = saved;
-      localStorage.setItem(VIEW_MODE_KEY, viewMode);
-      applyDual();
-      viewModeChanged = true;
-    }
-    // 2026-05-27: restore stashed translationSource on exit-edit, symmetric
-    // with the viewMode restore above.
-    const savedSource = localStorage.getItem(READER_MODE_SOURCE_KEY);
-    if (savedSource && VALID_SOURCES.includes(savedSource) && savedSource !== translationSource) {
-      translationSource = savedSource;
-      localStorage.setItem(TRANSLATION_SOURCE_KEY, translationSource);
-      sourceChanged = true;
-    }
-  }
-  readerMode = next;
-  localStorage.setItem(READER_MODE_KEY, readerMode);
-  _applyReaderMode();
-  // Re-render the chapter body unconditionally on a reader-mode change. The
-  // rendered DOM differs between read and edit (term-highlight gate, and the
-  // edit-mode paragraph-aligned grid), and applyDual only flips CSS (never body
-  // innerHTML), so even a forced viewMode flip still needs this render to
-  // rebuild the body / aligned grid for the new mode.
-  if (lastChapter) {
-    renderChapterBody(lastChapter);
-  }
-}
-
-readerModeToggle?.addEventListener("click", (ev) => {
-  const btn = ev.target.closest("button[data-reader-mode]");
-  if (!btn) return;
-  setReaderMode(btn.dataset.readerMode);
-  // Reveal the discoverability hint the first time the user flips into
-  // Edit mode (and only the first time — sticky dismissal lives in
-  // localStorage). The hint is managed purely via [hidden] so we don't
-  // have to fight .edit-only's `display: revert` cascade.
-  if (btn.dataset.readerMode === "edit") {
-    _maybeShowEditModeHint();
-  } else {
-    _hideEditModeHint();
-  }
-});
-
-// Apply on load before any chapter renders.
-_applyReaderMode();
-if (readerMode === "edit" && viewMode !== "bilingual") {
-  viewMode = "bilingual";
-  applyDual();
-}
-// 2026-05-27: same boot-time constraint for translationSource — edit mode
-// requires the polished body to be the one on screen so paragraph edits
-// land on the right column.
-if (readerMode === "edit" && translationSource !== "polished") {
-  localStorage.setItem(READER_MODE_SOURCE_KEY, translationSource);
-  translationSource = "polished";
-  localStorage.setItem(TRANSLATION_SOURCE_KEY, translationSource);
-}
-
-/* ---- Edit-mode discoverability ----
- * The select-to-add-glossary popover is Edit-mode only (gated in
- * showPopoverForSelection — read mode keeps selection as plain native
- * copy). It works without entering Edit-paragraphs (which only flips
- * paragraphs to contenteditable for style learning). But that's invisible
- * until you happen to drag-select something. The hint banner + the
- * always-visible "+ Term" button make the action discoverable. */
-const EDIT_HINT_SEEN_KEY = "editModeHintSeen";
-const editModeHint = document.getElementById("edit-mode-hint");
-const editModeHintDismiss = document.getElementById("edit-mode-hint-dismiss");
-const addTermBtn = document.getElementById("add-term-btn");
-
-function _maybeShowEditModeHint() {
-  if (!editModeHint) return;
-  if (localStorage.getItem(EDIT_HINT_SEEN_KEY) === "1") return;
-  editModeHint.hidden = false;
-}
-function _hideEditModeHint() {
-  if (editModeHint) editModeHint.hidden = true;
-}
-editModeHintDismiss?.addEventListener("click", () => {
-  localStorage.setItem(EDIT_HINT_SEEN_KEY, "1");
-  if (editModeHint) editModeHint.hidden = true;
-});
-// Standalone "+ Term" button: opens the Add form blank (no preselected
-// text, no source-paragraph context). Useful when the user wants to add
-// a term they remember without having to find and select it in the body.
-addTermBtn?.addEventListener("click", () => {
-  showAddForm("", false, null, null);
-});
-// Boot-time: if the user already lives in Edit mode and hasn't seen the
-// hint yet, show it on this load too.
-if (readerMode === "edit") _maybeShowEditModeHint();
+/* Phase 6 (2026-08): the Read/Edit mode split retired. The reader is a pure
+ * reading surface; every editing affordance (paragraph editing, glossary
+ * popovers, terms/consistency rails, QA diagnostics, learn-from-edits) lives
+ * in the CAT editor (/editor). localStorage `readerMode` and the
+ * body[data-reader-mode] CSS scope are gone; `?mode=edit` URLs redirect at
+ * the top of this file. */
 
 tocToggle.addEventListener("click", () => {
   const on = stage.dataset.toc === "on";
