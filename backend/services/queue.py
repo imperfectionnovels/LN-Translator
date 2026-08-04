@@ -958,6 +958,12 @@ async def _translate_chapter_in_db(
         else:
             # Degenerate chapter (e.g. heading-only body): keep the legacy
             # verbatim prompt (marker-stripped) and skip the count validation.
+            # Because validation is OFF here, the branch also bypasses the
+            # LLM cache in both directions (cacheable=False below, F9): the
+            # raw-text prompt could key-collide with an armed 1:1 prompt of
+            # identical bytes, and a cache LOAD skips check_paragraph_count,
+            # so an unvalidated envelope must never cross into (or out of)
+            # the validated path. Rare path; the lost caching is noise.
             prompt_source = strip_heading_update_marker(r["original_text"])
             expected_paragraph_count = None
         # CAT Phase 4: APPROVED TRANSLATIONS block feed. Human rows of this
@@ -1033,6 +1039,7 @@ async def _translate_chapter_in_db(
             expected_paragraph_count=expected_paragraph_count,
             approved_pairs=approved_pairs,
             confirmed_exemplars=confirmed_exemplars,
+            cacheable=bool(source_paragraphs),
         )
         logger.info(
             "queue: chapter %d translate stage %.1fs",

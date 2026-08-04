@@ -162,6 +162,7 @@ class GoogleTranslateFreeTranslator(BaseTranslator):
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
         confirmed_exemplars: list[tuple[str, str]] | None = None,
+        cacheable: bool = True,
     ) -> TranslationResult:
         """Translate ``chapter_zh`` via Google Translate and return the result.
 
@@ -173,7 +174,8 @@ class GoogleTranslateFreeTranslator(BaseTranslator):
         downstream. ``expected_paragraph_count`` is likewise accepted but
         ignored: mechanical NMT is chunked on paragraph bounds and cannot
         follow a corrective retry, so the 1:1 ladder is an LLM-backend
-        concern.
+        concern. ``cacheable`` is accepted but ignored too: this backend
+        never touches llm_cache.
         """
         src = _lang_for_google(source_language)
 

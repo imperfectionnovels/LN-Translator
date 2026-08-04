@@ -987,6 +987,7 @@ class BaseTranslator(ABC):
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
         confirmed_exemplars: list[tuple[str, str]] | None = None,
+        cacheable: bool = True,
     ) -> TranslationResult:
         # ``source_language`` is accepted by the BaseTranslator surface so
         # downstream MT-only backends can route it to their underlying
@@ -996,6 +997,15 @@ class BaseTranslator(ABC):
         # ``expected_paragraph_count`` arms the 1:1 paragraph-count check:
         # when set, the parsed body must split into exactly that many
         # blank-line paragraphs (one corrective retry, then accept-and-flag).
+        # ``cacheable=False`` (F9, bug hunt 2026-08-04) bypasses the LLM
+        # cache in BOTH directions (no load, no store). The queue passes it
+        # on the degenerate heading-only branch, whose raw-text prompt runs
+        # with count validation OFF: its key could collide with an armed
+        # 1:1 prompt of identical bytes, and a cache LOAD skips
+        # check_paragraph_count entirely, so a stored unvalidated envelope
+        # must never be replayable into (or from) the validated path.
+        # ``use_cache=False`` (force retranslate) still stores the fresh
+        # result; ``cacheable=False`` does not.
         # ``approved_pairs`` is the APPROVED TRANSLATIONS block feed (CAT
         # Phase 4): human-approved paragraph renderings the prompt asks the
         # model to reuse verbatim (the worker merge enforces regardless).
@@ -1018,7 +1028,12 @@ class BaseTranslator(ABC):
             free_draft=free_draft, approved_pairs=approved_pairs,
             confirmed_exemplars=confirmed_exemplars,
         )
-        if use_cache:
+        if not cacheable:
+            logger.info(
+                "%s translator cache BYPASS (uncacheable prompt shape, key %s…)",
+                self.name, cache_key[:12],
+            )
+        elif use_cache:
             cached = llm_cache.load_translation(cache_key)
             if cached is not None:
                 logger.info(
@@ -1065,7 +1080,11 @@ class BaseTranslator(ABC):
                 # call (the cache hit itself burns no tokens). Usage
                 # rides back to the caller via _attach_usage so the queue
                 # worker can persist it on this specific commit.
-                llm_cache.store_translation(cache_key, result)
+                # cacheable=False skips the store too (F9): this prompt
+                # shape ran unvalidated, so its envelope must not become
+                # loadable under a colliding validated key.
+                if cacheable:
+                    llm_cache.store_translation(cache_key, result)
                 # Stamp the exact prompt AFTER caching (mirrors _attach_usage):
                 # the attempts log gets a real snapshot for the "Show prompt"
                 # diagnostic and prompt audits, while cache entries stay lean
@@ -1116,10 +1135,13 @@ class BaseTranslator(ABC):
                     continue
                 # Plain-text fallback intentionally not cached: it drops
                 # `new_terms` and would poison the next proper call.
+                # parse_error records the failure that forced the fallback
+                # (F7) so the attempts log can show WHY this row degraded.
                 fallback = await self._plain_text_fallback(chapter_zh, title_zh)
-                fallback = fallback.model_copy(
-                    update={"prompt_snapshot": current_prompt}
-                )
+                fallback = fallback.model_copy(update={
+                    "prompt_snapshot": current_prompt,
+                    "parse_error": str(e)[:4000],
+                })
                 return self._attach_usage(fallback)
 
     def _attach_usage(self, result: TranslationResult) -> TranslationResult:

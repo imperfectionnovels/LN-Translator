@@ -182,11 +182,15 @@ class DeepSeekTranslator(BaseTranslator):
         expected_paragraph_count: int | None = None,
         approved_pairs: list[tuple[int, str, str]] | None = None,
         confirmed_exemplars: list[tuple[str, str]] | None = None,
+        cacheable: bool = True,
     ) -> TranslationResult:
         """DeepSeek-specific flow: a single free-form delimited translation
         pass, with a parse-retry and a plain-text fallback. Carries the same
         1:1 paragraph-count ladder as the base loop: one corrective retry on
-        a count mismatch, then accept-and-flag (never cached)."""
+        a count mismatch, then accept-and-flag (never cached).
+        ``cacheable=False`` bypasses the cache in both directions (F9, same
+        contract as the base loop: the degenerate heading-only prompt runs
+        unvalidated and must not be replayable under a colliding key)."""
         # DeepSeek overrides translate_chapter entirely (single-pass envelope),
         # so it can't reuse the base loop — but the prologue is identical, so
         # it shares BaseTranslator._begin_chapter: counter/usage reset, genre-
@@ -202,7 +206,13 @@ class DeepSeekTranslator(BaseTranslator):
         )
         # use_cache=False (an explicit Retranslate) skips the read but still
         # stores the fresh result below, so the cache stays warm afterward.
-        if use_cache:
+        # cacheable=False skips both directions (F9).
+        if not cacheable:
+            logger.info(
+                "deepseek translator cache BYPASS (uncacheable prompt shape, "
+                "key %s…)", cache_key[:12],
+            )
+        elif use_cache:
             cached = llm_cache.load_translation(cache_key)
             if cached is not None:
                 logger.info("deepseek translator cache HIT (key %s…)", cache_key[:12])
@@ -214,7 +224,7 @@ class DeepSeekTranslator(BaseTranslator):
                 cache_key[:12],
             )
 
-        result, used_fallback = await self._translate_once(
+        result, used_fallback, final_prompt = await self._translate_once(
             prompt, chapter_zh, title_zh, expected_paragraph_count
         )
 
@@ -230,13 +240,20 @@ class DeepSeekTranslator(BaseTranslator):
                 # A fallback draft — flag it so the reader can surface a
                 # degraded-translation banner.
                 result = result.model_copy(update={"degraded": True})
-        elif result.paragraph_count_status != COUNT_MISMATCH_ACCEPTED:
+        elif cacheable and result.paragraph_count_status != COUNT_MISMATCH_ACCEPTED:
             to_cache = result
             if to_cache.paragraph_count_status is not None:
                 to_cache = to_cache.model_copy(
                     update={"paragraph_count_status": None}
                 )
             llm_cache.store_translation(cache_key, to_cache)
+        # Stamp the exact prompt AFTER the cache store, mirroring base.py
+        # (F7): the attempts log gets a real per-call snapshot (including a
+        # corrective-retry suffix when one fired) while cache entries stay
+        # lean and cache hits never replay a stale snapshot. Without this,
+        # a DeepSeek attempt row carried prompt_snapshot NULL and the
+        # attempts dialog fell back to showing an OLDER attempt's prompt.
+        result = result.model_copy(update={"prompt_snapshot": final_prompt})
         return self._attach_usage(result)
 
     async def _translate_once(
@@ -245,16 +262,20 @@ class DeepSeekTranslator(BaseTranslator):
         chapter_zh: str,
         title_zh: str | None,
         expected_paragraph_count: int | None = None,
-    ) -> tuple[TranslationResult, bool]:
+    ) -> tuple[TranslationResult, bool, str]:
         """Run the translation. Two independent single-retry ladders (mirrors
         base.translate_chapter): a malformed envelope retries once with the
         same prompt then falls back to the plain-text translation; a paragraph
         count mismatch retries once with an appended corrective then ACCEPTS
         the body flagged (never the plain-text fallback). Returns
-        (result, used_fallback)."""
+        (result, used_fallback, final_prompt) where final_prompt is the
+        structured prompt of the LAST attempt (corrective suffix included),
+        for the caller's post-store prompt_snapshot stamp (F7). The fallback
+        result carries parse_error = the failure that forced it."""
         current_prompt = prompt
         parse_retried = False
         mismatch_retried = False
+        last_parse_error = ""
         while True:
             # This loop is DeepSeek's orchestration layer, so it owns the
             # budget tick for its structured calls (one per iteration; the
@@ -271,7 +292,7 @@ class DeepSeekTranslator(BaseTranslator):
                     result = result.model_copy(
                         update={"paragraph_count_status": COUNT_MISMATCH_RETRY}
                     )
-                return result, False
+                return result, False, current_prompt
             except ParagraphCountMismatch as e:
                 # Ordered BEFORE the generic ValueError branch (it subclasses
                 # ValueError): a count miss must never trigger the plain-text
@@ -298,7 +319,7 @@ class DeepSeekTranslator(BaseTranslator):
                     )
                 return result.model_copy(
                     update={"paragraph_count_status": COUNT_MISMATCH_ACCEPTED}
-                ), False
+                ), False, current_prompt
             except ValueError as e:
                 # Covers a malformed envelope AND a non-transient ValueError
                 # from the API call (e.g. "no choices"). A
@@ -306,12 +327,17 @@ class DeepSeekTranslator(BaseTranslator):
                 # response) is not a ValueError, so it propagates and errors the
                 # chapter instead.
                 logger.warning("deepseek call/parse failed: %s", e)
+                last_parse_error = str(e)[:4000]
                 if not parse_retried:
                     parse_retried = True
                     continue
                 break
         logger.warning("deepseek falling back to plain-text translation")
-        return await self._plain_text_fallback(chapter_zh, title_zh), True
+        fallback = await self._plain_text_fallback(chapter_zh, title_zh)
+        # parse_error records the failure that forced the fallback (F7),
+        # matching base.translate_chapter's fallback stamp.
+        fallback = fallback.model_copy(update={"parse_error": last_parse_error})
+        return fallback, True, current_prompt
 
     # `translate_chapter` above drives the real flow. These two hooks satisfy
     # BaseTranslator's ABC; `_complete_plain` also backs the plain-text
