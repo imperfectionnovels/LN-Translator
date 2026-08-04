@@ -60,6 +60,11 @@ machine_text/target_text before-after pairs (style_edits' in-app producer,
 the edit-paragraph endpoint, is gone), and `novel_segment_edit_stamp` gives
 quality_dashboard its editor-write cache-bust signal.
 
+Post-pivot gap audit (2026-08-04): `recent_edited_pairs` restores the USER
+STYLE PREFERENCES prompt arm from the ledger, novel-wide edited|confirmed
+before-after pairs replacing the severed style_edits in-app producer
+(prompt_inputs.fetch_style_edits merges them ahead of the legacy rows).
+
 Async, aiosqlite. No route logic; callers own the commit.
 """
 
@@ -1275,6 +1280,54 @@ async def fetch_confirmed_exemplar_pairs(
         out.append((
             src[:_EXEMPLAR_SIDE_MAX_CHARS],
             tgt[:_EXEMPLAR_SIDE_MAX_CHARS],
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def recent_edited_pairs(
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    exclude_chapter_id: int,
+    limit: int,
+) -> list[tuple[str, str]]:
+    """(machine_text, target_text) before-after pairs of the most recently
+    human-edited segments novel-wide, excluding the chapter being translated,
+    for the USER STYLE PREFERENCES prompt block (post-pivot restoration of
+    the style_edits arm: the ledger's edited|confirmed rows ARE the in-app
+    paragraph edits now).
+
+    Qualifying rows: status edited|confirmed with a non-empty stored AI
+    rendering that differs from the human text and a non-empty target (the
+    same pair shape as `edited_pairs_for_chapter`). Recency-selected by
+    COALESCE(edited_at, confirmed_at) DESC (id DESC tiebreak), deduped by
+    the machine (before) side so a repeated correction teaches once, both
+    sides truncated to the exemplar ~400-char convention. Over-fetches by
+    `_EXEMPLAR_POOL_FACTOR` so the dedupe can still fill `limit`. Read-only."""
+    if limit <= 0:
+        return []
+    cur = await conn.execute(
+        "SELECT machine_text, target_text FROM chapter_segments "
+        "WHERE novel_id = ? AND chapter_id != ? "
+        "  AND status IN ('edited', 'confirmed') "
+        "  AND machine_text IS NOT NULL AND machine_text != '' "
+        "  AND machine_text != target_text AND target_text != '' "
+        "ORDER BY COALESCE(edited_at, confirmed_at) DESC, id DESC LIMIT ?",
+        (novel_id, exclude_chapter_id, limit * _EXEMPLAR_POOL_FACTOR),
+    )
+    rows = await cur.fetchall()
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for r in rows:
+        before = (r["machine_text"] or "").strip()
+        after = (r["target_text"] or "").strip()
+        if not before or not after or before in seen:
+            continue
+        seen.add(before)
+        out.append((
+            before[:_EXEMPLAR_SIDE_MAX_CHARS],
+            after[:_EXEMPLAR_SIDE_MAX_CHARS],
         ))
         if len(out) >= limit:
             break

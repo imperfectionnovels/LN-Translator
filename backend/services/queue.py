@@ -860,7 +860,13 @@ async def _translate_chapter_in_db(
         previous_context = await fetch_previous_chapter_tail(
             conn, novel_id, r["chapter_num"]
         )
-        style_edits = await fetch_style_edits(conn, novel_id)
+        # USER STYLE PREFERENCES feed: EN before-after correction pairs,
+        # CAT-editor segment edits first then legacy style_edits rows (the
+        # merge lives in the fetcher). This chapter's own edits are excluded;
+        # they ride the APPROVED TRANSLATIONS block below instead.
+        style_edits = await fetch_style_edits(
+            conn, novel_id, exclude_chapter_id=chapter_id
+        )
         style_note = await fetch_style_note(conn, novel_id)
         provider = await resolve_translator_provider(conn, novel_id)
         novel_meta = await fetch_novel_genre_brief(conn, novel_id)
@@ -905,12 +911,14 @@ async def _translate_chapter_in_db(
             approved_pairs = await segments_svc.approved_prompt_pairs(
                 conn, novel_id, chapter_id, source_paragraphs
             ) or None
-        # CAT Phase 5: APPROVED TRANSLATION EXAMPLES block feed. Distinct
-        # from the APPROVED TRANSLATIONS block above: that one lists
-        # verbatim-reuse renderings for THIS chapter's own paragraphs;
+        # CAT Phase 5: APPROVED TRANSLATION EXAMPLES block feed. Three
+        # ledger-fed blocks divide the roles: APPROVED TRANSLATIONS above
+        # lists verbatim-reuse renderings for THIS chapter's own paragraphs;
         # exemplars teach voice from OTHER chapters' recently confirmed
-        # pairs. Both blocks can appear in the same prompt. The flag gate
-        # lives inside the fetcher (sibling pattern).
+        # zh->EN pairs; USER STYLE PREFERENCES (style_edits above) teaches
+        # correction patterns as EN before-after pairs from edited segments.
+        # All can appear in the same prompt. The flag gate lives inside the
+        # fetcher (sibling pattern).
         confirmed_exemplars = await fetch_confirmed_exemplars(
             conn, novel_id, chapter_id
         ) or None
@@ -924,6 +932,17 @@ async def _translate_chapter_in_db(
                 (zh, en) for zh, en in confirmed_exemplars
                 if zh not in approved_srcs
             ] or None
+        if style_edits and approved_pairs:
+            # Same dedupe for the style arm: a segment pair whose AFTER text
+            # already rides this chapter's approved block would show the
+            # model the identical rendering twice (correction example +
+            # verbatim-reuse row). Style-pair sides are truncated to 400
+            # chars, so compare on the truncated form.
+            approved_ens = {en[:400] for _i, _zh, en in approved_pairs}
+            style_edits = [
+                (before, after) for before, after in style_edits
+                if after[:400] not in approved_ens
+            ]
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,

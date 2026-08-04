@@ -65,39 +65,70 @@ async def fetch_confirmed_exemplars(
         return []
 
 
+# Dedupe-key truncation for merged style pairs, matching the ~400-char bound
+# format_style_edits renders with (and the segment pairs are stored at), so
+# two pairs that would render identically in the prompt count as one.
+_STYLE_PAIR_KEY_CHARS = 400
+
+
 async def fetch_style_edits(
-    conn: aiosqlite.Connection, novel_id: int
+    conn: aiosqlite.Connection,
+    novel_id: int,
+    exclude_chapter_id: int | None = None,
 ) -> list[tuple[str, str]]:
     """Pull the most-recent user paragraph edits for this novel, capped at
     STYLE_EDIT_LIMIT. Used as "preferred rewrites" examples in the translator
     prompt: the LLM learns the user's phrasing over time without manual
     prompt engineering.
 
-    Returns [] when the style_edits table doesn't exist (older DB), no edits
-    are captured yet, or PROMPT_INCLUDE_STYLE_EDITS is disabled. Edits are
-    against the canonical translation (refined_text when present, else
-    translated_text)."""
+    Two sources merge under the one flag and cap, deduped on the before
+    text (newest wins): CAT-editor segment pairs first (the ledger's
+    edited|confirmed machine->target rows via segments.recent_edited_pairs,
+    the fresher signal since Phase 6 retired the style_edits in-app
+    producer), then legacy style_edits rows to fill the remaining slots
+    (the CLI ingest script is that table's only remaining producer).
+    `exclude_chapter_id` keeps the chapter being translated out of the
+    segment side (its own edits ride the APPROVED TRANSLATIONS block).
+
+    Returns [] when the tables don't exist (older DB), no edits are
+    captured yet, or PROMPT_INCLUDE_STYLE_EDITS is disabled."""
     if not PROMPT_INCLUDE_STYLE_EDITS:
         return []
-    try:
-        cur = await conn.execute(
-            "SELECT before_text, after_text FROM style_edits "
-            "WHERE novel_id = ? "
-            "ORDER BY id DESC LIMIT ?",
-            (novel_id, STYLE_EDIT_LIMIT),
-        )
-        rows = await cur.fetchall()
-    except aiosqlite.OperationalError:
-        return []
-    seen: set[tuple[str, str]] = set()
     result: list[tuple[str, str]] = []
-    for r in rows:
-        pair = (r["before_text"], r["after_text"])
-        if pair in seen:
-            continue
-        seen.add(pair)
-        result.append(pair)
-    return result
+    seen: set[str] = set()
+
+    def _take(before: str, after: str) -> None:
+        key = (before or "").strip()[:_STYLE_PAIR_KEY_CHARS]
+        if not key or key in seen:
+            return
+        seen.add(key)
+        result.append((before, after))
+
+    try:
+        segment_pairs = await segments_svc.recent_edited_pairs(
+            conn, novel_id, exclude_chapter_id or 0, STYLE_EDIT_LIMIT
+        )
+    except aiosqlite.OperationalError:
+        segment_pairs = []
+    for before, after in segment_pairs:
+        _take(before, after)
+
+    if len(result) < STYLE_EDIT_LIMIT:
+        try:
+            cur = await conn.execute(
+                "SELECT before_text, after_text FROM style_edits "
+                "WHERE novel_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (novel_id, STYLE_EDIT_LIMIT),
+            )
+            rows = await cur.fetchall()
+        except aiosqlite.OperationalError:
+            rows = []
+        for r in rows:
+            if len(result) >= STYLE_EDIT_LIMIT:
+                break
+            _take(r["before_text"], r["after_text"])
+    return result[:STYLE_EDIT_LIMIT]
 
 
 class NovelGenreBrief(TypedDict):
