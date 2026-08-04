@@ -753,3 +753,92 @@ candidates, two restorations.
   editor rechecks on panel open, Re-check click, and debounced segment
   saves while the panel is open; no background sweeps, and a
   translating chapter 409s (the queue owns the rows mid-commit).
+
+## 2026-08-04 — Bug-hunt Batch 1: backend lifecycle fixes (B-series)
+
+- **Archived novels are out of scope for every bulk writer (B1) and
+  invisible to the queue (B2).** soft_delete.py's stated contract
+  ("chapters preserved untouched") was violated by two seams:
+  find_replace._select_chapters_for_scope joined novels without a
+  deleted_at filter (scope 'novels'/'all' find-replace AND the
+  global-glossary apply-in-place rewrote archived bodies and reprojected
+  their ledgers), and the queue never noticed archives at all
+  (archive_novel left translate_queued/refinement pending; drain, the
+  claim SELECT, and prioritize's MAX were novel-unfiltered, so archived
+  novels kept burning paid LLM calls across restarts). Decisions:
+  archived is excluded for ALL scope kinds including explicit
+  single-novel/chapter (consistent with the contract; the only UI path
+  is a stale tab), and the find-replace COMMIT re-fetch joins the same
+  predicate so an archive between preview and commit registers as
+  drift (re-preview), not a silent rewrite. archive_novel now stops the
+  novel's queue in the same transaction as the stamp (cancel-queue
+  shape: in-flight 'translating' rows are left for the worker to
+  finish, and the chained refine of that one chapter finishes with it
+  -- accepted, matching cancel semantics); refinement 'pending' demotes
+  to 'none'. drain_on_startup additionally SWEEPS stale flags on
+  archived novels (pre-fix DBs, mid-flight-archive crashes) instead of
+  merely skipping them, so restore never resurrects forgotten work:
+  restore does NOT re-queue anything, the user re-queues explicitly.
+- **Retranslate now revokes an in-flight refinement's claim (B5).**
+  reset_chapters_for_retranslate never touched refinement_status, so a
+  refine commit (gated on refinement_status='in_progress') could land
+  refined_text + a full ledger merge + observations on a chapter
+  already reset to 'pending'. The reset now also sets
+  refinement_status='none' and clears refinement_error for the rows it
+  resets; the refine worker's claim-gated commit UPDATE then writes 0
+  rows and the existing rowcount-0 path discards everything (verified:
+  the segment merge and drift-observation writes all sit AFTER the
+  claim check, so the rollback covers them). refined_text/refined_at
+  deliberately stay untouched at reset time: they stay PAIRED (the
+  reader keeps displaying the old refined body while pending; the
+  retranslate success commit nulls both), so "clear refined_at at
+  reset" was rejected as it would unpair the metadata from the text.
+- **Purge dialog counts the CAT ledger (B4).** DeleteCounts omitted
+  chapter_segments entirely -- the purge dialog quantified chapters/
+  glossary/bookmarks but not the highest-value user data. Added
+  chapter_segments (total) AND chapter_segments_human (status !=
+  'machine'): the human subset is what the user actually cares about
+  losing, so both ride the API and the dialogs render "N CAT segments
+  (edited/confirmed: M)". Counting SQL lives in
+  segments.novel_segment_counts (single-owner rule).
+- **B12 divergence rule: machine_text follows the body only when it
+  already equaled it.** The reproject fast path refreshed machine rows'
+  machine_text unconditionally, destroying the divergent AI rendering
+  behind tm_exact prefills (revert-to-AI then 400'd forever). Rule: a
+  machine row's machine_text refreshes only when it equaled the OLD
+  target_text (non-divergent: for those the AI rendering IS the target);
+  divergent rows keep machine_text. Mirrored across the rebuild path
+  (build_segments_from_alignment carries divergent machine_text keyed by
+  source paragraph text through the delete+re-mint). SQLite detail the
+  fix leans on: UPDATE SET expressions read pre-update column values,
+  so the CASE compares old machine against old target in one statement.
+- **Unaligned chapters' retained rows are editor-display-only (B7).**
+  The 'unaligned' verdict retains rows so human work stays visible, but
+  those targets correspond to no current chapter text. One shared
+  predicate (segments._EXCLUDE_UNALIGNED_SQL) now keeps them out of
+  prefill_confirmed_exact, approved_prompt_pairs (own-chapter half
+  included: the merge, not the prompt, re-anchors retained rows),
+  confirmed exemplars, recent edited pairs, the consistency corpus, and
+  concordance search; next_chapter_to_edit treats an unaligned chapter
+  as needing work even when every retained row is 'confirmed'.
+- **Smaller seams in the same batch**: observation recheck refuses
+  during refinement pending/in_progress exactly like the get_segments
+  mid-transition guard (B6); update_segment checks every row UPDATE's
+  rowcount and surfaces a re-minted row (concurrent worker merge) as
+  409 stale_segment instead of a false 200 (B13); the two body-writing
+  maintenance scripts (normalize_existing_emphasis, reapply_term_casing)
+  now call reproject_from_body per touched chapter like every other
+  text-authoritative mutator (B10); fetch_previous_chapter_tail follows
+  the displayed-body rule via COALESCE(NULLIF(refined_text,''),
+  translated_text) so the prompt tail shows the polished previous
+  chapter (B11); and the segment API gained an additive chapter_id echo
+  (GET payload + optional on PATCH/confirm-all, 409 stale_chapter on
+  mismatch) closing the mutable-(novel_id, chapter_num) rename window
+  where duplicate-content chapters could pass every content guard on
+  the wrong row (B8).
+- **Test-harness gotcha caught during the batch**: a test fixture that
+  unlinks only the main SQLite file leaves stale -wal/-shm files behind
+  when the module's own connections ran in WAL mode; the NEXT module's
+  recreate then reads "database disk image is malformed". New fixtures
+  that recreate the DB file delete the whole trio (and clean up after
+  themselves on teardown).

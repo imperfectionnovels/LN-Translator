@@ -114,7 +114,7 @@ Local single-user app (runs as a Uvicorn web server or as a packaged Windows des
 │   │   ├── glossary_cleanup_casing.py  # corpus-wide cleanup of stored Title-Case pollution on generic abstracts
 │   │   ├── glossary_register_audit.py  # read-only corpus audit of glossary lifecycle + fixup layer
 │   │   └── normalize_existing_emphasis.py  # strip stray unpaired Markdown emphasis from stored chapters
-│   └── tests/                     # 150 pytest modules
+│   └── tests/                     # 152 pytest modules
 │       └── fixtures/scrapers/     # saved HTML fixture pages for the per-site scraper recipes (piaotian/syosetu/uukanshu)
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
@@ -281,7 +281,7 @@ The frozen build is driven by `backend/app_entry.py` and packaged via `LN-Transl
 
 ## Testing
 
-- `pytest backend/tests`. Currently 1795 tests across 150 modules.
+- `pytest backend/tests`. Currently 1840 tests across 152 modules.
 - `conftest.py` overrides `DB_PATH` to a temp file before any backend import.
 - Translator stubs at the function level (see `test_bulk_upload.py::_fake_translate`). Stubs are fine for routing / state-machine tests; for translation behavior use a real backend against a fixture chapter.
 
