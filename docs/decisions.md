@@ -666,3 +666,11 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   open, reader source toggle, refresh action in the editor util menu).
   Its long-term fate: reference column in the editor vs removal: is
   explicitly the user's call; do not remove it as "dead" cleanup.
+- **CI red since 2026-07-31 was ruff version drift, not code.** The dev
+  extra had unpinned "ruff>=0.6"; CI began installing ruff 0.16.1 whose
+  widened default rule set flags ~386 pre-existing findings (S110,
+  BLE001, ...) in untouched files, while local 0.15.x stayed green
+  (every Phase 2-5 push shows the same failure). Fixed by pinning
+  "ruff>=0.6,<0.16" so CI matches the local toolchain; a deliberate
+  ruff-upgrade sweep (fix or ignore the new rules, then lift the pin) is
+  follow-up work, not a lint-churn side effect of Phase 6.

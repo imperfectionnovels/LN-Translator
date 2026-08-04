@@ -74,7 +74,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "ruff>=0.6",
+    # Pinned below 0.16: unpinned CI picked up ruff 0.16.1 (2026-07-31) whose
+    # widened default rule set flags ~386 pre-existing findings (S110, BLE001,
+    # ...) across untouched files, turning every CI run red while local 0.15.x
+    # stayed green. Lift the pin together with a dedicated ruff-upgrade sweep.
+    "ruff>=0.6,<0.16",
 ]
 build = [
     "pyinstaller>=6.10",
