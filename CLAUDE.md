@@ -114,7 +114,7 @@ Local single-user app — runs as a Uvicorn web server or as a packaged Windows 
 │   │   ├── glossary_cleanup_casing.py  # corpus-wide cleanup of stored Title-Case pollution on generic abstracts
 │   │   ├── glossary_register_audit.py  # read-only corpus audit of glossary lifecycle + fixup layer
 │   │   └── normalize_existing_emphasis.py  # strip stray unpaired Markdown emphasis from stored chapters
-│   └── tests/                     # 138 pytest modules
+│   └── tests/                     # 148 pytest modules
 │       └── fixtures/scrapers/     # saved HTML fixture pages for the per-site scraper recipes (piaotian/syosetu/uukanshu)
 ├── frontend/
 │   ├── index.html, library.html, reader.html, glossary.html, glossary-global.html
