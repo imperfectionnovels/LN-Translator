@@ -272,16 +272,6 @@ const api = {
     }),
   searchChapters: (novelId, q) =>
     apiFetch(`/api/novels/${novelId}/search?q=${encodeURIComponent(q)}`),
-  editParagraph: (novelId, chapterNum, paragraphIndex, beforeMd, afterText, source = "draft") =>
-    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/edit-paragraph`, {
-      method: "POST",
-      body: JSON.stringify({
-        paragraph_index: paragraphIndex,
-        before_md: beforeMd,
-        after_text: afterText,
-        source,
-      }),
-    }),
   affectedChapters: (entryId) => apiFetch(`/api/glossary/${entryId}/affected-chapters`),
   retranslateAffected: (entryId) => apiFetch(`/api/glossary/${entryId}/retranslate-affected`, {
     method: "POST",

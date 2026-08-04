@@ -209,10 +209,11 @@ def test_consistency_scores_refined_body_not_draft(client):
     assert rep["tcr"]["worst_terms"], "refined-body drift must surface in worst_terms"
 
 
-def test_version_token_busts_on_inline_edit(client):
-    # An inline paragraph edit inserts a style_edits row without bumping
+def test_version_token_busts_on_editor_segment_write(client):
+    # A CAT-editor segment write rematerializes the body without bumping
     # translated_at; the version token must still change so the cached
-    # scorecard/consistency do not serve pre-edit data.
+    # scorecard/consistency do not serve pre-edit data. (Phase 6: the
+    # style_edits aggregate was replaced by the chapter_segments stamp.)
     import asyncio
 
     from backend.services import quality_dashboard as qd
@@ -225,15 +226,18 @@ def test_version_token_busts_on_inline_edit(client):
             "SELECT id FROM chapters WHERE novel_id=? AND chapter_num=1", (nid,)
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO style_edits (novel_id, chapter_id, before_text, after_text) "
-            "VALUES (?, ?, 'a', 'b')",
+            "INSERT INTO chapter_segments (novel_id, chapter_id, seg_index, "
+            "source_text, source_hash, target_text, machine_text, status, "
+            "origin, updated_at) "
+            "VALUES (?, ?, 0, '源', 'h000', 'edited text', 'machine text', "
+            "'edited', 'human', datetime('now'))",
             (nid, ch1),
         )
         conn.commit()
     finally:
         conn.close()
     after = asyncio.run(qd._version_token(nid))
-    assert before != after, "inline edit (style_edits insert) must bust the cache token"
+    assert before != after, "editor segment write must bust the cache token"
 
 
 def test_scorecard_reuses_consistency_scan(client, monkeypatch):

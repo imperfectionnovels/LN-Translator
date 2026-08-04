@@ -16,7 +16,6 @@ from backend.models import (
     ConsistencyFindings,
     ConsistencyGlossaryFlag,
     ConsistencyMatch,
-    EditParagraphRequest,
     LearnEditsCommit,
     OcrIssues,
     OtherRendering,
@@ -24,7 +23,6 @@ from backend.models import (
 from backend.services import consistency as consistency_svc
 from backend.services import learn_from_edits as learn_from_edits_svc
 from backend.services import queue as queue_svc
-from backend.services import segments as segments_svc
 from backend.services.pre_check import chapter_pre_check
 
 logger = logging.getLogger(__name__)
@@ -459,260 +457,18 @@ async def learn_edits_commit(
     return result
 
 
-@router.post("/novels/{novel_id}/chapters/{chapter_num}/edit-paragraph")
-async def edit_paragraph(
-    novel_id: int,
-    chapter_num: int,
-    payload: EditParagraphRequest,
-    conn: aiosqlite.Connection = Depends(get_conn),
-) -> dict:
-    """Capture a user paragraph edit. Updates the chapter's body at the
-    given paragraph index and records a style_edits row so future translator
-    prompts learn from the phrasing.
-
-    `payload.source` selects which body to edit:
-      - 'draft' (default) → chapters.translated_text
-      - 'refined'         → chapters.refined_text
-
-    The reader picks the source matching which body it currently displays
-    (the refined body whenever refined_text is non-empty, the draft
-    otherwise; the segments.displayed_body presence rule).
-    style_edits rows look the same regardless of source — they're (before,
-    after) pairs of user-preferred phrasing that the translator's prompt
-    folds in as future "preferred rewrites" examples.
-
-    Strict equality on `before_md` against the chosen body detects
-    concurrent retranslates / refinements (409).
-
-    CAT Phase 3: when the chapter has a clean segment store
-    (segments_state='ok' for the displayed body), the write routes THROUGH
-    `segments.update_segment` (action='save') so there is a single write
-    path and the segment row picks up status='edited'; the response shape,
-    the before/409 semantics, the style_edits write, and the observations
-    refresh are unchanged. Segment-less or non-'ok' chapters keep the
-    legacy direct-text splice (the segment store self-heals on the next
-    editor open)."""
-    after_text = payload.after_text.strip()
-    if not after_text:
-        raise HTTPException(status_code=400, detail="after_text must not be whitespace-only")
-    if payload.before_md.strip() == after_text:
-        return {"ok": True, "noop": True}
-
-    cur = await conn.execute(
-        "SELECT id, status, segments_state, segments_rev, translated_text, "
-        "refined_text, refinement_status "
-        "FROM chapters WHERE novel_id = ? AND chapter_num = ?",
-        (novel_id, chapter_num),
-    )
-    r = await cur.fetchone()
-    if r is None:
-        raise HTTPException(status_code=404, detail="chapter not found")
-
-    if payload.source == "refined":
-        body = r["refined_text"] or ""
-        target_column = "refined_text"
-        if not body:
-            # The reader's edit form is only visible when refinement_status
-            # ='done' AND refined_text is non-empty; reaching this branch
-            # means the reader and the DB disagree. 409 (not 400) signals
-            # "page is stale" — same retry semantics as the race guard.
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "chapter has no refined text to edit — refinement may "
-                    "have been cleared or never completed. Refresh and retry."
-                ),
-            )
-    else:
-        body = r["translated_text"] or ""
-        target_column = "translated_text"
-
-    chunks = body.split("\n\n")
-    if payload.paragraph_index >= len(chunks):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"paragraph_index {payload.paragraph_index} out of range "
-                f"(chapter has {len(chunks)} paragraphs) — refresh and retry"
-            ),
-        )
-    if chunks[payload.paragraph_index] != payload.before_md:
-        raise HTTPException(
-            status_code=409,
-            detail="paragraph content has changed since the page loaded — refresh and retry",
-        )
-    chunks[payload.paragraph_index] = after_text
-    new_body = "\n\n".join(chunks)
-    if not await _edit_paragraph_via_segments(
-        conn, novel_id, chapter_num, r, payload, after_text, len(chunks)
-    ):
-        # Legacy direct-text path (no clean segment store for this body).
-        # f-string interpolating target_column is safe because it's
-        # hard-coded to one of two literal column names above, never input.
-        await conn.execute(
-            f"UPDATE chapters SET {target_column} = ? WHERE id = ?",
-            (new_body, r["id"]),
-        )
-    await conn.execute(
-        "INSERT INTO style_edits (novel_id, chapter_id, before_text, after_text) "
-        "VALUES (?, ?, ?, ?)",
-        (novel_id, r["id"], payload.before_md, after_text),
-    )
-    # F26 (2026-05-25): re-run observers after the paragraph edit so the
-    # QA dashboard stays current. Without this, observations recorded
-    # at the original commit linger and reference paragraphs the user
-    # has already fixed — stale noise. Best-effort: failure to re-run
-    # leaves the old observations in place but does not fail the edit.
-    try:
-        await _refresh_observations_for_chapter(
-            conn, novel_id, r["id"], new_body,
-        )
-    except Exception:
-        logger.exception(
-            "edit_paragraph: failed to refresh observations for chapter %d "
-            "(edit committed, observations may be stale)", chapter_num,
-        )
-    await conn.commit()
-    return {"ok": True}
-
-
-async def _edit_paragraph_via_segments(
-    conn: aiosqlite.Connection,
-    novel_id: int,
-    chapter_num: int,
-    r,
-    payload: EditParagraphRequest,
-    after_text: str,
-    paragraph_count: int,
-) -> bool:
-    """CAT Phase 3 reroute: apply a reader paragraph edit through
-    `segments.update_segment` so the segment row flips to status='edited'
-    and the body rematerializes from the store (single write path).
-
-    Only fires when the mapping display-paragraph -> seg_index is well
-    defined: the chapter is 'done' with segments_state='ok' for the SAME
-    variant the reader edited, the non-empty segment targets match the
-    body's raw paragraph split positionally, and the stored target at that
-    slot equals the `before_md` the client verified against. Anything else
-    returns False and the caller keeps the legacy direct-text splice (the
-    store self-heals on the next editor open). A stale-store race inside
-    the segment write surfaces as the endpoint's usual 409.
-    """
-    if r["status"] != "done" or r["segments_state"] != "ok":
-        return False
-    variant = "refined" if payload.source == "refined" else "draft"
-    disp_variant, body = segments_svc.displayed_body(r)
-    if variant != disp_variant:
-        # The reader edited the non-displayed column (e.g. the draft under a
-        # finished refinement); segments mirror the displayed body only.
-        return False
-    if r["segments_rev"] != segments_svc.chapter_rev(body):
-        # Freshness predicate: the store is only an authority for the body
-        # it was built against. A refinement landing or a retranslate after
-        # the store was built leaves segments_state='ok' with a stale
-        # segments_rev; without this check, a paragraph the new body kept
-        # byte-identical could pass every other precondition and
-        # rematerialize the OLD targets over the new body (silently
-        # reverting a whole refinement). Legacy splice instead; the store
-        # self-heals on the next editor open.
-        return False
-    mapping = await segments_svc.seg_index_for_display_paragraph(
-        conn, r["id"], payload.paragraph_index, paragraph_count
-    )
-    if mapping is None:
-        return False
-    seg_index, stored_target = mapping
-    if stored_target != payload.before_md:
-        # Store and body disagree (whitespace drift, stale store): the body
-        # is canonical here, so splice it directly and let the next editor
-        # open self-heal the store.
-        return False
-    try:
-        await segments_svc.update_segment(
-            conn,
-            novel_id,
-            chapter_num,
-            seg_index,
-            action="save",
-            after_text=after_text,
-            client_rev=segments_svc.chapter_rev(body),
-            before_target_hash=segments_svc.hash16(stored_target),
-        )
-    except segments_svc.SegmentStaleError as e:
-        # Same recovery contract as the endpoint's own guards: the page is
-        # stale, the client refreshes and retries. Plain-string detail keeps
-        # the endpoint's existing response shape.
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except (
-        segments_svc.SegmentNotFoundError,
-        segments_svc.SegmentActionError,
-    ):
-        # Defensive: both are raised before any write, so the legacy path
-        # can still take over cleanly.
-        return False
-    return True
-
-
-async def _refresh_observations_for_chapter(
-    conn: aiosqlite.Connection,
-    novel_id: int,
-    chapter_id: int,
-    new_body: str,
-) -> None:
-    """F26 helper: re-run the deterministic observer set against the
-    updated body and replace the chapter's observation rows. Mirrors the
-    DELETE-then-INSERT pattern in queue.py so the panel sees one
-    atomic update, not a phantom empty state between deletes and inserts.
-
-    Reads `novels.disabled_observers` so user-muted kinds aren't
-    re-emitted by an edit either."""
-    from backend.services import global_glossary as global_glossary_svc  # noqa: PLC0415
-    from backend.services.observations import (  # noqa: PLC0415
-        normalize_observer_outputs,
-        parse_disabled_observers,
-    )
-    from backend.services.text_observers import (  # noqa: PLC0415
-        body_correctness_observations,
-    )
-
-    # Get the chapter's original source text + novel's muted observers.
-    cur = await conn.execute(
-        "SELECT c.original_text, n.disabled_observers "
-        "FROM chapters c JOIN novels n ON n.id = c.novel_id "
-        "WHERE c.id = ?", (chapter_id,),
-    )
-    row = await cur.fetchone()
-    if row is None:
-        return
-    glossary = await global_glossary_svc.list_for_novel_with_globals(
-        conn, novel_id,
-    )
-    raw_msgs = list(body_correctness_observations(
-        row["original_text"], new_body, glossary,
-    ))
-    normalized = list(normalize_observer_outputs(raw_msgs))
-    muted = parse_disabled_observers(row["disabled_observers"])
-    if muted:
-        normalized = [o for o in normalized if o.kind not in muted]
-    await conn.execute(
-        "DELETE FROM chapter_observations WHERE chapter_id = ?",
-        (chapter_id,),
-    )
-    if normalized:
-        await conn.executemany(
-            "INSERT INTO chapter_observations "
-            "(chapter_id, kind, severity, paragraph_index, excerpt) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [
-                (chapter_id, o.kind, o.severity, o.paragraph_index, o.excerpt)
-                for o in normalized
-            ],
-        )
+# Phase 6 (reader edit-mode retirement, 2026-08): POST /edit-paragraph and its
+# segment-reroute + observations-refresh helpers were deleted. The CAT editor's
+# PATCH /segments/{index} (routes/segments.py -> services/segments.py) is the
+# single paragraph write path; style_edits gains no new rows in-app (the table
+# stays for its historical prompt-block data). Observation rows now refresh
+# only at translate commits; a fixed-by-hand observation is dismissed from the
+# editor's QA panel instead.
 
 
 # F22 (2026-05-25): per-chapter translation attempts log + "show prompt"
-# diagnostic. Powers the edit-mode-only "View translation attempts" and
-# "View last prompt" panels on the reader.
+# diagnostic. Powers the "View translation attempts" and "View last prompt"
+# dialogs in the CAT editor's util menu.
 
 @router.get("/novels/{novel_id}/chapters/{chapter_num}/attempts")
 async def list_chapter_translation_attempts(

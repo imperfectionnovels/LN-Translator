@@ -51,15 +51,18 @@ _locks: dict[tuple, asyncio.Lock] = {}
 
 async def _version_token(novel_id: int) -> str:
     """Cheap content stamp: changes on any (re)translate, refine, glossary
-    edit, or inline paragraph edit for this novel. Guards the expensive scans
-    below.
+    edit, or CAT-editor segment write for this novel. Guards the expensive
+    scans below.
 
-    An inline edit (routes/chapters.py::edit_paragraph) rewrites
+    An editor edit (routes/segments.py PATCH) rematerializes
     translated_text/refined_text WITHOUT bumping translated_at/refined_at, so a
     chapter-timestamp stamp alone would serve a stale scorecard right after the
-    user fixed a chapter. Every such edit inserts exactly one style_edits row,
-    so MAX(style_edits.id) + COUNT advance on each one and bust the cache. The
-    aggregate rides the idx_style_edits_novel index, so it stays sub-millisecond."""
+    user fixed a chapter. Every segment write bumps chapter_segments.updated_at,
+    so the segments.novel_segment_edit_stamp aggregate advances on each one and
+    busts the cache. (Phase 6 replaced the style_edits MAX(id) aggregate here:
+    the retired edit-paragraph endpoint was that table's only in-app writer.)"""
+    from backend.services import segments as segments_svc  # noqa: PLC0415
+
     async with open_conn() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) AS done, MAX(translated_at) AS lt, "
@@ -74,13 +77,8 @@ async def _version_token(novel_id: int) -> str:
             (novel_id,),
         )
         g = await cur.fetchone()
-        cur = await conn.execute(
-            "SELECT MAX(id) AS le, COUNT(*) AS ne "
-            "FROM style_edits WHERE novel_id = ?",
-            (novel_id,),
-        )
-        e = await cur.fetchone()
-    raw = f"{c['done']}|{c['lt']}|{c['lr']}|{g['lg']}|{g['n']}|{e['le']}|{e['ne']}"
+        seg_stamp = await segments_svc.novel_segment_edit_stamp(conn, novel_id)
+    raw = f"{c['done']}|{c['lt']}|{c['lr']}|{g['lg']}|{g['n']}|{seg_stamp}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 

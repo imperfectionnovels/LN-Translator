@@ -54,6 +54,12 @@ with chapter_segments SQL):
     legacy fallback for chapters that have no segment rows.
   - `next_chapter_to_edit`: the editor's continue card feed.
 
+Phase 6 (reader edit-mode retirement) makes the ledger the learn-from-edits
+source: `edited_pairs_for_chapter` feeds learn_from_edits with
+machine_text/target_text before-after pairs (style_edits' in-app producer,
+the edit-paragraph endpoint, is gone), and `novel_segment_edit_stamp` gives
+quality_dashboard its editor-write cache-bust signal.
+
 Async, aiosqlite. No route logic; callers own the commit.
 """
 
@@ -879,33 +885,40 @@ async def reproject_from_body(
     return await build_segments_from_alignment(conn, row)
 
 
-async def seg_index_for_display_paragraph(
-    conn: aiosqlite.Connection,
-    chapter_id: int,
-    paragraph_index: int,
-    expected_paragraphs: int,
-) -> tuple[int, str] | None:
-    """Map a reader display-paragraph index (position in the body's raw
-    "\\n\\n" split) onto a seg_index for the edit-paragraph reroute.
+async def edited_pairs_for_chapter(
+    conn: aiosqlite.Connection, chapter_id: int
+) -> list[tuple[str, str]]:
+    """(machine_text, target_text) before/after pairs for this chapter's
+    human-touched segments: rows with status edited|confirmed whose stored AI
+    rendering exists and differs from the human text. This is the ledger-backed
+    successor to the style_edits capture (Phase 6): learn_from_edits derives
+    its proposals from these pairs. Ordered by seg_index so proposal ids are
+    stable across stage/commit re-derivations."""
+    cur = await conn.execute(
+        "SELECT machine_text, target_text FROM chapter_segments "
+        "WHERE chapter_id = ? AND status IN ('edited', 'confirmed') "
+        "AND machine_text IS NOT NULL AND machine_text != '' "
+        "AND machine_text != target_text "
+        "ORDER BY seg_index",
+        (chapter_id,),
+    )
+    return [(r["machine_text"], r["target_text"]) for r in await cur.fetchall()]
 
-    Empty-target rows do not render as paragraphs (the I1 join skips them),
-    so the mapping walks the non-empty rows in seg_index order. It is only
-    well defined when the non-empty row count equals the display paragraph
-    count AND no stored target spans multiple paragraphs; otherwise None,
-    and the caller falls back to the legacy direct-text path. Returns
-    (seg_index, stored_target_text) so the caller can verify the stored
-    target matches the paragraph the client saw.
-    """
-    seg_rows = await _fetch_segment_rows(conn, chapter_id)
-    non_empty = [r for r in seg_rows if r["target_text"]]
-    if len(non_empty) != expected_paragraphs:
-        return None
-    if any("\n\n" in r["target_text"] for r in non_empty):
-        return None
-    if not (0 <= paragraph_index < len(non_empty)):
-        return None
-    r = non_empty[paragraph_index]
-    return r["seg_index"], r["target_text"]
+
+async def novel_segment_edit_stamp(conn: aiosqlite.Connection, novel_id: int) -> str:
+    """Cheap change stamp over this novel's segment rows for cache version
+    tokens (quality_dashboard): every editor write (save / confirm /
+    unconfirm / revert / reproject) bumps chapter_segments.updated_at, so
+    MAX(updated_at)|COUNT changes whenever the editor touched the novel.
+    Replaces the style_edits aggregate that tracked the retired
+    edit-paragraph endpoint."""
+    cur = await conn.execute(
+        "SELECT MAX(updated_at) AS mu, COUNT(*) AS n "
+        "FROM chapter_segments WHERE novel_id = ?",
+        (novel_id,),
+    )
+    r = await cur.fetchone()
+    return f"{r['mu']}|{r['n']}"
 
 
 # ---------------------------------------------------------------------------

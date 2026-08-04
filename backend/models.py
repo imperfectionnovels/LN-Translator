@@ -69,32 +69,10 @@ class ScrapeRequest(BaseModel):
     genre: str | None = Field(default=None, max_length=64)
 
 
+# Ceiling for a single edited paragraph (SegmentPatch.after_text). One
+# paragraph of prose never legitimately approaches this; the cap exists so a
+# runaway client cannot post a whole-novel-sized body into one segment.
 _MAX_EDIT_PARAGRAPH_CHARS = 50_000
-
-
-class EditParagraphRequest(BaseModel):
-    """Body for POST /novels/{id}/chapters/{n}/edit-paragraph.
-
-    paragraph_index is the 0-based index into chunks = body.split('\\n\\n').
-    before_md is the current paragraph text at that index — the server
-    checks this is still equal before applying, so a concurrent retranslate
-    is detected (409) rather than silently smashed. after_text is what to
-    write in its place.
-
-    source picks which body the edit applies to:
-      - 'draft'   → chapters.translated_text (the translator's output)
-      - 'refined' → chapters.refined_text (the refiner's polish pass)
-
-    The reader sets this based on which body is currently being displayed
-    (refined_text whenever it is non-empty, draft otherwise; the
-    segments.displayed_body presence rule). Default is 'draft' so older
-    clients (and any caller that doesn't know about the refiner) keep
-    editing the translator's output."""
-
-    paragraph_index: int = Field(ge=0)
-    before_md: str = Field(min_length=1, max_length=_MAX_EDIT_PARAGRAPH_CHARS)
-    after_text: str = Field(min_length=1, max_length=_MAX_EDIT_PARAGRAPH_CHARS)
-    source: Literal["draft", "refined"] = "draft"
 
 
 class LearnEditsCommit(BaseModel):
@@ -446,7 +424,7 @@ class SegmentPatch(BaseModel):
     (per-segment precision guard)."""
 
     action: str
-    # Same ceiling as EditParagraphRequest: a segment is one paragraph.
+    # One-paragraph ceiling: a segment is one paragraph.
     after_text: str | None = Field(
         default=None, max_length=_MAX_EDIT_PARAGRAPH_CHARS
     )
@@ -582,8 +560,8 @@ class Bookmark(BaseModel):
     `chapter_num` is denormalized from the FK chapters row at read time so
     the panel can render a chapter heading without a second fetch.
     `paragraph_index` is the 0-based index into the displayed body's
-    paragraph split — same shape EditParagraphRequest uses, so jump-to
-    is just `bodyEn.children[paragraph_index].scrollIntoView()`."""
+    paragraph split, so jump-to is just
+    `bodyEn.children[paragraph_index].scrollIntoView()`."""
 
     id: int
     novel_id: int

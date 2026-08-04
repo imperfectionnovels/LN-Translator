@@ -1,12 +1,14 @@
 """In-app learn-from-edits loop (the prose lever).
 
-The reader's edit mode already captures each paragraph rewrite as a style_edits
-row (routes/chapters.py::edit_paragraph), and those rows already feed future
-prompts (prompt_inputs.py). What is NOT captured automatically is the
-cross-paragraph LEARNING: voice patterns worth promoting to the per-novel brief,
-and glossary terms the user recased. This service derives those from the
-captured edits as a STAGED proposal (writes nothing), then applies only the
-human-confirmed subset.
+The CAT editor captures every paragraph rewrite in the segment ledger: an
+edited|confirmed chapter_segments row keeps the AI's rendering in machine_text
+next to the human's target_text. Those before/after pairs are the raw signal;
+what is NOT captured automatically is the cross-paragraph LEARNING: voice
+patterns worth promoting to the per-novel brief, and glossary terms the user
+recased. This service derives those from the ledger pairs
+(segments.edited_pairs_for_chapter; Phase 6 replaced the retired style_edits
+capture as the source, same proposal shape) as a STAGED proposal (writes
+nothing), then applies only the human-confirmed subset.
 
 Stage -> confirm -> commit is mandatory; commit re-derives the proposal
 server-side and honors only ids that re-derive, so a client cannot forge a write
@@ -25,6 +27,7 @@ import aiosqlite
 
 from backend.scripts.ingest_edited_chapter import _aggregate_signals
 from backend.services import glossary as glossary_svc
+from backend.services import segments as segments_svc
 
 
 def _detect_casing_changes(pairs: list[tuple[str, str]], glossary) -> list[dict]:
@@ -61,24 +64,13 @@ def _detect_casing_changes(pairs: list[tuple[str, str]], glossary) -> list[dict]
     return list(seen.values())
 
 
-async def _captured_pairs(
-    conn: aiosqlite.Connection, novel_id: int, chapter_id: int
-) -> list[tuple[str, str]]:
-    cur = await conn.execute(
-        "SELECT before_text, after_text FROM style_edits "
-        "WHERE novel_id = ? AND chapter_id = ? ORDER BY id",
-        (novel_id, chapter_id),
-    )
-    return [(r["before_text"], r["after_text"]) for r in await cur.fetchall()]
-
-
 async def build_proposal(
     conn: aiosqlite.Connection, novel_id: int, chapter_num: int
 ) -> dict | None:
-    """Staged proposal from this chapter's captured edits. Writes nothing.
+    """Staged proposal from this chapter's edited segments. Writes nothing.
 
-    Returns None when the chapter does not exist. An empty proposal (no captured
-    edits) is a valid result the UI renders as "nothing to learn yet".
+    Returns None when the chapter does not exist. An empty proposal (no edited
+    segments) is a valid result the UI renders as "nothing to learn yet".
     """
     row = await (await conn.execute(
         "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
@@ -88,7 +80,7 @@ async def build_proposal(
         return None
     chapter_id = row["id"]
 
-    pairs = await _captured_pairs(conn, novel_id, chapter_id)
+    pairs = await segments_svc.edited_pairs_for_chapter(conn, chapter_id)
     glossary = await glossary_svc.list_for_novel(conn, novel_id)
 
     brief = [
