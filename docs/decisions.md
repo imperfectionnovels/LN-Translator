@@ -914,3 +914,15 @@ candidates, two restorations.
   snapshot could record a flag state the gates never applied. All consumers
   read config.<NAME> at call time; tests patch backend.config once and a
   worker-level test pins gate/prompt/snapshot agreement.
+- **Smaller seams in the same batch**: the refiner kill-switch is consulted
+  on every entry path, and held pending rows are never demoted (F6, flag
+  back on = work resumes); the legacy style_edits arm carries the same
+  current-chapter exclusion as the segment arm (F3); the degenerate
+  heading-only branch bypasses the llm_cache in both directions because it
+  runs unvalidated and a cache LOAD skips the count check (F9); DeepSeek
+  stamps prompt_snapshot after the cache store like base does and both
+  populate parse_error on the fallback path (F7: attempts diagnostics were
+  showing an OLDER attempt's prompt for DeepSeek rows); the approved block
+  gains a render-side char bound mirroring its fetch cap and the
+  previous-chapter tail a generous PREVIOUS_CONTEXT_MAX_CHARS bound,
+  leading paragraphs dropping first (F10).
