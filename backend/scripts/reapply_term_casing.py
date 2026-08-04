@@ -45,6 +45,7 @@ from backend.config import USER_DATA_ROOT
 from backend.db import open_conn
 from backend.scripts._db_banner import confirm_db, print_db_banner
 from backend.services import glossary as glossary_svc
+from backend.services import segments as segments_svc
 from backend.services.text_fixups import (
     enforce_locked_term_casing,
     enforce_lowercase_locked_terms,
@@ -232,11 +233,18 @@ async def _run(novel_id: int, apply: bool, assume_yes: bool) -> None:
     print(f"before-image written: {backup_path}")
 
     async with open_conn() as conn:
+        touched: set[int] = set()
         for chapter_id, field_name, new in pending:
             await conn.execute(
                 f"UPDATE chapters SET {field_name} = ? WHERE id = ?",
                 (new, chapter_id),
             )
+            touched.add(chapter_id)
+        # Text-authoritative mutator hook (same pattern as the find-replace
+        # commit): re-sync each touched chapter's CAT segment store to its
+        # rewritten body in the same transaction, status-preserving.
+        for chapter_id in sorted(touched):
+            await segments_svc.reproject_from_body(conn, chapter_id)
         await conn.commit()
     print(f"applied: {len(pending)} field(s) updated.")
 

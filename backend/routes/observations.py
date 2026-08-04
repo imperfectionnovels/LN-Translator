@@ -124,8 +124,9 @@ async def recheck_chapter_observations(
     payload, the same shape as the plain GET. Thin: the semantics live in
     services/observations.recheck_body_observations."""
     cur = await conn.execute(
-        "SELECT id, novel_id, status, original_text, translated_text, "
-        "refined_text FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+        "SELECT id, novel_id, status, refinement_status, original_text, "
+        "translated_text, refined_text "
+        "FROM chapters WHERE novel_id = ? AND chapter_num = ?",
         (novel_id, chapter_num),
     )
     ch = await cur.fetchone()

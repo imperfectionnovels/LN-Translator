@@ -305,15 +305,19 @@ async def recheck_body_observations(
     CAT editor clears without a manual dismiss; translate-time-only kinds
     and title-targeted rows are untouched.
 
-    `chapter_row` must carry id, novel_id, status, original_text,
-    translated_text, refined_text (displayed_body reads the last two).
+    `chapter_row` must carry id, novel_id, status, refinement_status,
+    original_text, translated_text, refined_text (displayed_body reads the
+    last two).
     Honors the novel's disabled_observers mutes. Dismissals carry over: a
     fresh finding identical on (kind, excerpt) to a previously stored
     dismissed row keeps its dismissed_at, so re-checking never resurrects a
     judgment call the user already waved off.
 
-    Raises ObservationRecheckBusyError while the chapter is translating (the
-    queue owns the rows then). Returns False without touching anything when
+    Raises ObservationRecheckBusyError while the chapter is translating OR
+    while a refinement is pending / in progress (the queue owns the rows
+    then, and the refine commit is about to replace the displayed body:
+    the same mid-transition window get_segments refuses to rebuild in; bug
+    hunt 2026-08-04, B6). Returns False without touching anything when
     there is no displayed body to check (never translated, or blanked):
     observers against an empty body would spuriously flag every glossary
     term as missing. Returns True when the recheck ran. The caller owns the
@@ -322,6 +326,13 @@ async def recheck_body_observations(
         raise ObservationRecheckBusyError(
             "this chapter is translating; its findings refresh when the "
             "translation finishes."
+        )
+    if (chapter_row["refinement_status"] or "none") in (
+        "pending", "in_progress",
+    ):
+        raise ObservationRecheckBusyError(
+            "this chapter is refining; its findings refresh when the "
+            "refinement finishes."
         )
     chapter_id = chapter_row["id"]
     _variant, body = segments_svc.displayed_body(chapter_row)

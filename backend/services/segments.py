@@ -352,6 +352,24 @@ async def build_segments_from_alignment(
             conn, chapter_id, rev, "human row's source paragraph vanished"
         )
 
+    # B12 mirror: a DIVERGENT machine row (tm_exact prefill; machine_text
+    # holds the AI's own rendering behind a prefilled target) is about to be
+    # deleted and re-minted from the new body, which would destroy the
+    # revert-to-AI anchor. Carry the divergent machine_text across the
+    # rebuild keyed by source paragraph text (first row wins on duplicate
+    # sources).
+    cur = await conn.execute(
+        "SELECT source_text, machine_text FROM chapter_segments "
+        "WHERE chapter_id = ? AND status = 'machine' "
+        "  AND machine_text IS NOT NULL AND machine_text != '' "
+        "  AND machine_text != target_text "
+        "ORDER BY seg_index",
+        (chapter_id,),
+    )
+    divergent_machine: dict[str, str] = {}
+    for dr in await cur.fetchall():
+        divergent_machine.setdefault(dr["source_text"], dr["machine_text"])
+
     # Rebuild machine rows around the preserved human rows: delete only the
     # machine rows, shift the human rows out of the index space, then move
     # each onto its anchored slot with the new body's text for that slot.
@@ -382,7 +400,7 @@ async def build_segments_from_alignment(
         "VALUES (?, ?, ?, ?, ?, ?, ?, 'machine', 'aligned_backfill', ?)",
         [
             (novel_id, chapter_id, i, src[i], new_hashes[i],
-             text, text, 1 if aligned else 0)
+             text, divergent_machine.get(src[i], text), 1 if aligned else 0)
             for i, (text, aligned) in enumerate(entries)
             if i not in human_indexes
         ],
@@ -423,6 +441,9 @@ def _payload(row, variant: str, body: str, state, seg_rows) -> dict:
         (s["index"] for s in segments if s["status"] != "confirmed"), None
     )
     return {
+        # Stable row id (chapter_num is mutable under a mid-novel insert);
+        # the editor echoes it back on writes as the anti-renumber guard (B8).
+        "chapter_id": row["id"],
         "chapter_num": row["chapter_num"],
         "title_en": row["title_en"],
         "title_zh": row["title_zh"],
@@ -544,19 +565,29 @@ async def _load_editable_chapter(
     novel_id: int,
     chapter_num: int,
     client_rev: str,
+    expected_chapter_id: int | None = None,
 ):
     """Shared write guards. Returns (chapter_row, variant, body).
 
     Raises SegmentNotFoundError (missing chapter), SegmentStaleError
     'chapter_translating' (not status='done' yet: pending, translating, or
     errored), 'stale_chapter' (client rev does not match the displayed body,
-    or the chapter is 'unaligned' so segment writes cannot rematerialize the
-    body; the client recovery for both is the same re-GET).
+    the chapter is 'unaligned' so segment writes cannot rematerialize the
+    body, or `expected_chapter_id` (the chapter row id the page loaded)
+    no longer matches the row (novel_id, chapter_num) resolves to, i.e. a
+    mid-novel insert renumbered the list (B8); the client recovery for all
+    is the same re-GET).
     """
     cur = await conn.execute(_CHAPTER_SELECT, (novel_id, chapter_num))
     row = await cur.fetchone()
     if row is None:
         raise SegmentNotFoundError("chapter not found")
+    if expected_chapter_id is not None and row["id"] != expected_chapter_id:
+        raise SegmentStaleError(
+            "stale_chapter",
+            "the chapter list changed since the page loaded (chapters were "
+            "renumbered). Reload the segments and retry.",
+        )
     if row["status"] != "done":
         raise SegmentStaleError(
             "chapter_translating",
@@ -633,6 +664,7 @@ async def update_segment(
     after_text: str | None,
     client_rev: str,
     before_target_hash: str,
+    chapter_id: int | None = None,
 ) -> dict:
     """The segment state machine. Actions:
 
@@ -651,9 +683,13 @@ async def update_segment(
 
     Guards (409 via SegmentStaleError): chapter must be status='done';
     `client_rev` must match the displayed body's current rev; the row's
-    current target hash must match `before_target_hash`. Empty after_text on
-    a save is a 400 (a paragraph cannot be emptied; revert_machine is the
-    escape hatch).
+    current target hash must match `before_target_hash`; `chapter_id`, when
+    provided, must match the resolved chapter row (anti-renumber guard,
+    B8). Empty after_text on a save is a 400 (a paragraph cannot be
+    emptied; revert_machine is the escape hatch). Every row UPDATE re-checks
+    its rowcount (B13): a row re-minted by a concurrent worker merge between
+    this function's SELECT and its UPDATE surfaces as stale_segment instead
+    of a false-success 200.
 
     After any text-changing action the displayed body column is regenerated
     from the targets in the SAME transaction (invariant I1); the caller owns
@@ -663,7 +699,7 @@ async def update_segment(
     if action not in _ACTIONS:
         raise SegmentActionError(f"unknown action {action!r}")
     row, variant, body = await _load_editable_chapter(
-        conn, novel_id, chapter_num, client_rev
+        conn, novel_id, chapter_num, client_rev, chapter_id
     )
     cur = await conn.execute(
         "SELECT id, seg_index, source_text, source_hash, target_text, "
@@ -681,6 +717,19 @@ async def update_segment(
             "segments and retry.",
         )
 
+    def _require_row_written(cur) -> None:
+        # B13: the row can be deleted + re-minted (new id) by a concurrent
+        # worker merge between this function's SELECT and its UPDATE; an
+        # UPDATE-by-stale-id then writes 0 rows. Surfacing that as
+        # stale_segment makes the client re-GET instead of trusting a 200
+        # built from the regenerated row.
+        if (cur.rowcount or 0) == 0:
+            raise SegmentStaleError(
+                "stale_segment",
+                "this segment changed since the page loaded. Reload the "
+                "segments and retry.",
+            )
+
     status = seg["status"]
     text_changing = False
     if action in ("save", "save_and_confirm"):
@@ -697,7 +746,7 @@ async def update_segment(
             )
         new_status = "edited" if action == "save" else "confirmed"
         text_changing = True
-        await conn.execute(
+        cur = await conn.execute(
             "UPDATE chapter_segments SET target_text = ?, status = ?, "
             "origin = 'human', aligned = 1, edited_at = datetime('now'), "
             "confirmed_at = CASE WHEN ? = 'confirmed' "
@@ -705,6 +754,7 @@ async def update_segment(
             "updated_at = datetime('now') WHERE id = ?",
             (new_target, new_status, new_status, seg["id"]),
         )
+        _require_row_written(cur)
     elif action == "confirm":
         if not seg["target_text"]:
             raise SegmentActionError(
@@ -712,22 +762,24 @@ async def update_segment(
                 "text first."
             )
         if status != "confirmed":
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE chapter_segments SET status = 'confirmed', "
                 "aligned = 1, confirmed_at = datetime('now'), "
                 "updated_at = datetime('now') WHERE id = ?",
                 (seg["id"],),
             )
+            _require_row_written(cur)
     elif action == "unconfirm":
         if status != "confirmed":
             raise SegmentActionError(
                 "only a confirmed segment can be unconfirmed."
             )
-        await conn.execute(
+        cur = await conn.execute(
             "UPDATE chapter_segments SET status = 'edited', "
             "confirmed_at = NULL, updated_at = datetime('now') WHERE id = ?",
             (seg["id"],),
         )
+        _require_row_written(cur)
     else:  # revert_machine
         if not seg["machine_text"]:
             # NULL or "" alike: an empty machine_text means the aligner had
@@ -748,13 +800,14 @@ async def update_segment(
         # becomes 'llm' (the worker merge is machine_text's producer; the
         # next merge re-stamps real provenance anyway).
         text_changing = True
-        await conn.execute(
+        cur = await conn.execute(
             "UPDATE chapter_segments SET target_text = machine_text, "
             "status = 'machine', origin = 'llm', "
             "edited_at = NULL, confirmed_at = NULL, "
             "updated_at = datetime('now') WHERE id = ?",
             (seg["id"],),
         )
+        _require_row_written(cur)
 
     if text_changing:
         new_body = await _materialize_body(conn, row, variant)
@@ -785,9 +838,11 @@ async def confirm_all(
     *,
     client_rev: str,
     statuses: list[str] | None = None,
+    chapter_id: int | None = None,
 ) -> dict:
     """Confirm every segment currently in one of `statuses` (default
-    ['machine', 'edited']). Rev-guarded like update_segment; empty-target
+    ['machine', 'edited']). Rev-guarded like update_segment (including the
+    optional `chapter_id` anti-renumber guard, B8); empty-target
     rows are skipped (an unwritten paragraph cannot be confirmed). No text
     changes, so no rematerialization. Returns {confirmed, chapter_rev,
     segments_state, progress, next_unconfirmed_index}."""
@@ -797,7 +852,7 @@ async def confirm_all(
             "statuses must be a non-empty subset of ['machine', 'edited']."
         )
     row, _variant, body = await _load_editable_chapter(
-        conn, novel_id, chapter_num, client_rev
+        conn, novel_id, chapter_num, client_rev, chapter_id
     )
     placeholders = ",".join("?" * len(wanted))
     cur = await conn.execute(
@@ -841,8 +896,14 @@ async def reproject_from_body(
     row count positionally (and no stored target spans multiple paragraphs),
     target_text updates in place PRESERVING status: a novel-wide
     find-replace across confirmed segments must not un-confirm them.
-    machine_text refreshes only for machine rows. On count drift the
-    preservation-aware `build_segments_from_alignment` takes over.
+    machine_text refreshes only for machine rows whose machine_text equaled
+    the OLD target (non-divergent: for those the stored AI rendering IS
+    the target, so it follows the text-authoritative rewrite); a DIVERGENT
+    machine row (a tm_exact prefill: target = confirmed cross-chapter
+    rendering, machine_text = the AI's own suggestion) keeps machine_text
+    so revert-to-AI stays reachable (bug hunt 2026-08-04, B12). On count
+    drift the preservation-aware `build_segments_from_alignment` takes over
+    (which carries divergent machine_text across the rebuild the same way).
 
     No-ops (returns None) when the chapter has no segment rows yet: the lazy
     build on the next editor open sees the new body anyway. Returns the
@@ -875,9 +936,12 @@ async def reproject_from_body(
         for r, new_text in zip(non_empty, paras):
             if r["target_text"] == new_text:
                 continue
+            # SET expressions read the PRE-update row, so the CASE compares
+            # the OLD machine_text against the OLD target_text (B12).
             await conn.execute(
                 "UPDATE chapter_segments SET target_text = ?, "
-                "machine_text = CASE WHEN status = 'machine' THEN ? "
+                "machine_text = CASE WHEN status = 'machine' "
+                "AND machine_text = target_text THEN ? "
                 "ELSE machine_text END, "
                 "updated_at = datetime('now') "
                 "WHERE chapter_id = ? AND seg_index = ?",
@@ -1144,6 +1208,19 @@ async def apply_machine_translation(
 # IN-clause chunk size (SQLite parameter cap safety; matches queue.py).
 _PREFILL_CHUNK = 500
 
+# B7 (bug hunt 2026-08-04): chapters stamped segments_state='unaligned'
+# RETAIN their rows so human work stays visible in the editor, but those
+# targets correspond to no current chapter text (zero positional
+# confidence). Every cross-surface read feed (prefill, prompt pairs,
+# exemplars, style pairs, consistency corpus, concordance) excludes rows
+# from such chapters via this shared predicate; the editor's own GET keeps
+# returning them for display. Requires the chapter_segments table to be
+# aliased `cs` in the enclosing query.
+_EXCLUDE_UNALIGNED_SQL = (
+    "NOT EXISTS (SELECT 1 FROM chapters uc "
+    "WHERE uc.id = cs.chapter_id AND uc.segments_state = 'unaligned')"
+)
+
 
 async def prefill_confirmed_exact(
     conn: aiosqlite.Connection,
@@ -1160,6 +1237,8 @@ async def prefill_confirmed_exact(
     NOTE: chapter_segments hashes pre-joined EFFECTIVE paragraphs (see the
     hash16 docstring on the tm_segments divergence), so `src_paras` must be
     the effective_source_paragraphs list, hashed with the same convention.
+    Rows from 'unaligned' chapters are excluded (B7): their confirmed
+    targets are detached from any current chapter text.
     """
     if not src_paras:
         return {}
@@ -1169,10 +1248,13 @@ async def prefill_confirmed_exact(
         chunk = unique_hashes[i : i + _PREFILL_CHUNK]
         placeholders = ",".join("?" * len(chunk))
         cur = await conn.execute(
-            f"SELECT id, source_hash, source_text, target_text, confirmed_at "
-            f"FROM chapter_segments "
-            f"WHERE novel_id = ? AND chapter_id != ? AND status = 'confirmed' "
-            f"  AND target_text != '' AND source_hash IN ({placeholders})",
+            f"SELECT cs.id, cs.source_hash, cs.source_text, cs.target_text, "
+            f"cs.confirmed_at "
+            f"FROM chapter_segments cs "
+            f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
+            f"  AND cs.status = 'confirmed' "
+            f"  AND cs.target_text != '' AND cs.source_hash IN ({placeholders}) "
+            f"  AND {_EXCLUDE_UNALIGNED_SQL}",
             [novel_id, chapter_id, *chunk],
         )
         rows.extend(await cur.fetchall())
@@ -1206,7 +1288,10 @@ async def approved_prompt_pairs(
 
     Coherence aid only: the deterministic `apply_machine_translation` merge
     is the enforcement, so a row this skips (stale, over-cap) still survives
-    the retranslate verbatim.
+    the retranslate verbatim. An 'unaligned' chapter contributes no own
+    rows (B7: retained rows have zero positional confidence; the merge
+    still re-anchors and lands them verbatim when it can), and the
+    cross-chapter half inherits prefill_confirmed_exact's exclusion.
     """
     if not src_paras:
         return []
@@ -1214,9 +1299,12 @@ async def approved_prompt_pairs(
     pairs: dict[int, str] = {}
     used: set[int] = set()
     cur = await conn.execute(
-        "SELECT seg_index, source_hash, target_text FROM chapter_segments "
-        "WHERE chapter_id = ? AND status != 'machine' AND target_text != '' "
-        "ORDER BY seg_index",
+        f"SELECT cs.seg_index, cs.source_hash, cs.target_text "
+        f"FROM chapter_segments cs "
+        f"WHERE cs.chapter_id = ? AND cs.status != 'machine' "
+        f"  AND cs.target_text != '' "
+        f"  AND {_EXCLUDE_UNALIGNED_SQL} "
+        f"ORDER BY cs.seg_index",
         (chapter_id,),
     )
     for r in await cur.fetchall():
@@ -1278,14 +1366,17 @@ async def fetch_confirmed_exemplar_pairs(
     Recency-selected (ORDER BY confirmed_at DESC; teaches the user's voice,
     not chapter-relevant vocabulary; no relevance filter by design), deduped
     by source text (newest confirmation of a repeated source wins), empty
-    targets skipped, both sides truncated to ~400 chars. Read-only."""
+    targets skipped, both sides truncated to ~400 chars. 'Unaligned'
+    chapters' retained rows are excluded (B7). Read-only."""
     if limit <= 0:
         return []
     cur = await conn.execute(
-        "SELECT source_text, target_text FROM chapter_segments "
-        "WHERE novel_id = ? AND chapter_id != ? AND status = 'confirmed' "
-        "  AND target_text != '' "
-        "ORDER BY confirmed_at DESC, id DESC LIMIT ?",
+        f"SELECT cs.source_text, cs.target_text FROM chapter_segments cs "
+        f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
+        f"  AND cs.status = 'confirmed' "
+        f"  AND cs.target_text != '' "
+        f"  AND {_EXCLUDE_UNALIGNED_SQL} "
+        f"ORDER BY cs.confirmed_at DESC, cs.id DESC LIMIT ?",
         (novel_id, exclude_chapter_id, limit * _EXEMPLAR_POOL_FACTOR),
     )
     rows = await cur.fetchall()
@@ -1324,16 +1415,19 @@ async def recent_edited_pairs(
     COALESCE(edited_at, confirmed_at) DESC (id DESC tiebreak), deduped by
     the machine (before) side so a repeated correction teaches once, both
     sides truncated to the exemplar ~400-char convention. Over-fetches by
-    `_EXEMPLAR_POOL_FACTOR` so the dedupe can still fill `limit`. Read-only."""
+    `_EXEMPLAR_POOL_FACTOR` so the dedupe can still fill `limit`.
+    'Unaligned' chapters' retained rows are excluded (B7). Read-only."""
     if limit <= 0:
         return []
     cur = await conn.execute(
-        "SELECT machine_text, target_text FROM chapter_segments "
-        "WHERE novel_id = ? AND chapter_id != ? "
-        "  AND status IN ('edited', 'confirmed') "
-        "  AND machine_text IS NOT NULL AND machine_text != '' "
-        "  AND machine_text != target_text AND target_text != '' "
-        "ORDER BY COALESCE(edited_at, confirmed_at) DESC, id DESC LIMIT ?",
+        f"SELECT cs.machine_text, cs.target_text FROM chapter_segments cs "
+        f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
+        f"  AND cs.status IN ('edited', 'confirmed') "
+        f"  AND cs.machine_text IS NOT NULL AND cs.machine_text != '' "
+        f"  AND cs.machine_text != cs.target_text AND cs.target_text != '' "
+        f"  AND {_EXCLUDE_UNALIGNED_SQL} "
+        f"ORDER BY COALESCE(cs.edited_at, cs.confirmed_at) DESC, cs.id DESC "
+        f"LIMIT ?",
         (novel_id, exclude_chapter_id, limit * _EXEMPLAR_POOL_FACTOR),
     )
     rows = await cur.fetchall()
@@ -1379,13 +1473,15 @@ async def corpus_for_consistency(
     """Rows for the consistency rail's fuzzy corpus: same-novel OTHER-chapter
     segments with a non-empty target, carrying status so the payload can
     rank confirmed > edited > machine and the UI can badge provenance.
-    Columns: source_text, target_text, status, chapter_num. Read-only;
+    Columns: source_text, target_text, status, chapter_num. 'Unaligned'
+    chapters' retained rows are excluded (B7). Read-only;
     consistency.py owns the folding/scoring on top."""
     cur = await conn.execute(
-        "SELECT cs.source_text, cs.target_text, cs.status, c.chapter_num "
-        "FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
-        "WHERE cs.novel_id = ? AND cs.chapter_id != ? "
-        "  AND cs.target_text != ''",
+        f"SELECT cs.source_text, cs.target_text, cs.status, c.chapter_num "
+        f"FROM chapter_segments cs JOIN chapters c ON c.id = cs.chapter_id "
+        f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
+        f"  AND cs.target_text != '' "
+        f"  AND {_EXCLUDE_UNALIGNED_SQL}",
         (novel_id, exclude_chapter_id),
     )
     return list(await cur.fetchall())
@@ -1430,6 +1526,7 @@ async def search_segments(
         "JOIN chapters c ON c.id = cs.chapter_id "
         f"WHERE cs.novel_id = ? AND cs.target_text != '' "
         f"  AND ({' OR '.join(conditions)}) "
+        f"  AND {_EXCLUDE_UNALIGNED_SQL} "
         "ORDER BY c.chapter_num, cs.seg_index "
         "LIMIT ?"
     )
@@ -1495,13 +1592,16 @@ async def next_chapter_to_edit(
 ) -> int | None:
     """The editor's continue card: the next chapter that still needs work,
     meaning it is not yet translated (status != 'done') OR its segment store
-    is missing or carries any non-confirmed row. Searches forward from
+    is missing, is stamped 'unaligned' (B7: retained rows are detached from
+    the chapter text, so even an all-confirmed retained set needs attention)
+    or carries any non-confirmed row. Searches forward from
     `after_chapter_num`, then wraps to the beginning; a fully confirmed
-    chapter (done + every segment confirmed) is skipped. None when every
-    chapter of the novel is fully confirmed."""
+    chapter (done + aligned store + every segment confirmed) is skipped.
+    None when every chapter of the novel is fully confirmed."""
     needs_work = (
         "NOT ("
         "  ch.status = 'done'"
+        "  AND COALESCE(ch.segments_state, '') != 'unaligned'"
         "  AND EXISTS (SELECT 1 FROM chapter_segments s "
         "              WHERE s.chapter_id = ch.id)"
         "  AND NOT EXISTS (SELECT 1 FROM chapter_segments s "

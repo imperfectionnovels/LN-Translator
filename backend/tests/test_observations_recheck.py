@@ -109,8 +109,8 @@ async def _seed_chapter(
 async def _chapter_row(chapter_id: int):
     async with open_conn() as conn:
         cur = await conn.execute(
-            "SELECT id, novel_id, status, original_text, translated_text, "
-            "refined_text FROM chapters WHERE id = ?",
+            "SELECT id, novel_id, status, refinement_status, original_text, "
+            "translated_text, refined_text FROM chapters WHERE id = ?",
             (chapter_id,),
         )
         return await cur.fetchone()
@@ -423,3 +423,45 @@ def test_recheck_route_404_unknown_chapter(client: TestClient) -> None:
     novel_id, _chapter_id = _seed_http()
     r = client.post(f"/api/novels/{novel_id}/chapters/99/observations/recheck")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B6): refinement busy guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref_status", ["pending", "in_progress"])
+async def test_refining_chapter_raises_busy(ref_status: str):
+    """The refine worker's merge commit is about to replace the displayed
+    body (the same mid-transition window get_segments refuses to rebuild
+    in), so the recheck refuses instead of scanning a body with seconds to
+    live."""
+    novel_id, chapter_id = await _seed_chapter()
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = ? WHERE id = ?",
+            (ref_status, chapter_id),
+        )
+        await conn.commit()
+    row = await _chapter_row(chapter_id)
+    async with open_conn() as conn:
+        with pytest.raises(ObservationRecheckBusyError) as exc_info:
+            await recheck_body_observations(conn, row, _glossary(novel_id))
+    assert "refining" in str(exc_info.value)
+
+
+def test_recheck_route_409_while_refining(client: TestClient) -> None:
+    novel_id, chapter_id = _seed_http()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET refinement_status = 'in_progress' WHERE id = ?",
+        (chapter_id,),
+    )
+    conn.commit()
+    conn.close()
+    r = client.post(f"/api/novels/{novel_id}/chapters/1/observations/recheck")
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["error_kind"] == "chapter_translating"
+    assert "refining" in detail["message"]

@@ -242,7 +242,7 @@ const api = {
   chapterSegments: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments`),
   // CAT editor (Phase 3): one segment write. `body` = {action, after_text?,
-  // chapter_rev, before_target_hash}; stale writes reject with 409 and
+  // chapter_rev, before_target_hash, chapter_id?}; stale writes reject with 409 and
   // err.error_kind in stale_segment | stale_chapter | chapter_translating.
   updateSegment: (novelId, chapterNum, segIndex, body) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments/${segIndex}`, {

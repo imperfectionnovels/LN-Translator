@@ -958,3 +958,207 @@ async def test_vanished_source_with_human_rows_retains_rows():
     assert len(payload["segments"]) == 3
     assert payload["segments"][1]["status"] == "edited"
     assert [r[0] for r in _db_segments(chapter_id)] == ids_before
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B13): UPDATE-0-rows window surfaces as stale_segment
+# ---------------------------------------------------------------------------
+
+
+class _RemintBeforeWriteConn:
+    """Connection proxy that simulates a concurrent worker merge: right
+    before update_segment's row UPDATE executes, the target row is deleted
+    and re-inserted with a NEW id (same seg_index/content), so the
+    UPDATE-by-stale-id writes 0 rows."""
+
+    def __init__(self, conn, chapter_id: int, seg_index: int) -> None:
+        self._conn = conn
+        self._chapter_id = chapter_id
+        self._seg_index = seg_index
+        self._fired = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    async def execute(self, sql, params=()):
+        stripped = sql.lstrip()
+        if (
+            not self._fired
+            and stripped.startswith("UPDATE chapter_segments")
+            and "WHERE id = ?" in sql
+        ):
+            self._fired = True
+            cur = await self._conn.execute(
+                "SELECT novel_id, chapter_id, seg_index, source_text, "
+                "source_hash, target_text, machine_text, status, origin, "
+                "aligned FROM chapter_segments "
+                "WHERE chapter_id = ? AND seg_index = ?",
+                (self._chapter_id, self._seg_index),
+            )
+            row = await cur.fetchone()
+            await self._conn.execute(
+                "DELETE FROM chapter_segments "
+                "WHERE chapter_id = ? AND seg_index = ?",
+                (self._chapter_id, self._seg_index),
+            )
+            await self._conn.execute(
+                "INSERT INTO chapter_segments (novel_id, chapter_id, "
+                "seg_index, source_text, source_hash, target_text, "
+                "machine_text, status, origin, aligned) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["novel_id"], row["chapter_id"], row["seg_index"],
+                    row["source_text"], row["source_hash"],
+                    row["target_text"], row["machine_text"], row["status"],
+                    row["origin"], row["aligned"],
+                ),
+            )
+        return await self._conn.execute(sql, params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,after", [
+    ("save", "New text."),
+    ("confirm", None),
+    ("revert_machine", None),
+])
+async def test_reminted_row_write_raises_stale_segment(action, after):
+    original = "\n\n".join([_zh_para("甲"), _zh_para("乙")])
+    translated = "First paragraph here.\n\nSecond paragraph here."
+    novel_id, chapter_id = await _seed_chapter(original, translated)
+    payload = await _get(novel_id)
+    seg = payload["segments"][0]
+    if action == "revert_machine":
+        # A machine row whose target diverged from machine_text (the only
+        # revertable machine shape). The body is updated in lockstep so the
+        # self-heal check (join(targets) == body) does not rebuild the store.
+        conn_sync = sqlite3.connect(DB_PATH)
+        conn_sync.execute(
+            "UPDATE chapter_segments SET target_text = 'Prefilled text.' "
+            "WHERE chapter_id = ? AND seg_index = 0",
+            (chapter_id,),
+        )
+        conn_sync.execute(
+            "UPDATE chapters SET translated_text = ? WHERE id = ?",
+            ("Prefilled text.\n\nSecond paragraph here.", chapter_id),
+        )
+        conn_sync.commit()
+        conn_sync.close()
+        payload = await _get(novel_id)
+        seg = payload["segments"][0]
+        assert seg["machine_differs"] is True
+
+    async with open_conn() as conn:
+        proxied = _RemintBeforeWriteConn(conn, chapter_id, 0)
+        with pytest.raises(segments_svc.SegmentStaleError) as exc_info:
+            await segments_svc.update_segment(
+                proxied, novel_id, 1, 0,
+                action=action,
+                after_text=after,
+                client_rev=payload["chapter_rev"],
+                before_target_hash=seg["target_hash"],
+            )
+    assert exc_info.value.kind == "stale_segment"
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B8): chapter_id anti-renumber guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payload_carries_chapter_id():
+    original = "\n\n".join([_zh_para("甲"), _zh_para("乙")])
+    translated = "First paragraph here.\n\nSecond paragraph here."
+    novel_id, chapter_id = await _seed_chapter(original, translated)
+    payload = await _get(novel_id)
+    assert payload["chapter_id"] == chapter_id
+
+
+@pytest.mark.asyncio
+async def test_chapter_id_mismatch_raises_stale_chapter_on_duplicate_content():
+    """The duplicate-content shape: a mid-novel insert renumbers, and the
+    chapter now at the loaded chapter_num has IDENTICAL content, so the
+    rev + target-hash guards both pass on the WRONG row. The chapter_id
+    echo is the guard that still catches it."""
+    original = "\n\n".join([_zh_para("甲"), _zh_para("乙")])
+    translated = "First paragraph here.\n\nSecond paragraph here."
+    novel_id, chapter_id = await _seed_chapter(original, translated)
+    payload = await _get(novel_id)  # loaded as chapter_num 1, id chapter_id
+    seg = payload["segments"][0]
+
+    # Renumber: the loaded chapter moves to num 2; a NEW chapter with the
+    # same content takes num 1 (id differs).
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET chapter_num = 2 WHERE id = ?", (chapter_id,)
+        )
+        cur = await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, title_zh, "
+            "title_en, original_text, translated_text, status) "
+            "VALUES (?, 1, '第一章', 'Chapter 1', ?, ?, 'done')",
+            (novel_id, original, translated),
+        )
+        imposter_id = cur.lastrowid
+        await conn.commit()
+    # Build the imposter's store; identical content means identical rev and
+    # target hashes.
+    imposter_payload = await _get(novel_id, 1)
+    assert imposter_payload["chapter_id"] == imposter_id
+    assert imposter_payload["chapter_rev"] == payload["chapter_rev"]
+
+    # With the chapter_id echo: 409 stale_chapter, imposter untouched.
+    async with open_conn() as conn:
+        with pytest.raises(segments_svc.SegmentStaleError) as exc_info:
+            await segments_svc.update_segment(
+                conn, novel_id, 1, 0,
+                action="save", after_text="Edited text.",
+                client_rev=payload["chapter_rev"],
+                before_target_hash=seg["target_hash"],
+                chapter_id=chapter_id,
+            )
+    assert exc_info.value.kind == "stale_chapter"
+    conn_sync = sqlite3.connect(DB_PATH)
+    n_edited = conn_sync.execute(
+        "SELECT COUNT(*) FROM chapter_segments WHERE chapter_id = ? "
+        "AND status != 'machine'",
+        (imposter_id,),
+    ).fetchone()[0]
+    conn_sync.close()
+    assert n_edited == 0
+
+    # Matching chapter_id (a fresh load of the renumbered list) succeeds.
+    async with open_conn() as conn:
+        result = await segments_svc.update_segment(
+            conn, novel_id, 1, 0,
+            action="save", after_text="Edited text.",
+            client_rev=imposter_payload["chapter_rev"],
+            before_target_hash=imposter_payload["segments"][0]["target_hash"],
+            chapter_id=imposter_id,
+        )
+        await conn.commit()
+    assert result["segment"]["status"] == "edited"
+
+
+@pytest.mark.asyncio
+async def test_confirm_all_chapter_id_mismatch_raises_stale_chapter():
+    original = "\n\n".join([_zh_para("甲"), _zh_para("乙")])
+    translated = "First paragraph here.\n\nSecond paragraph here."
+    novel_id, chapter_id = await _seed_chapter(original, translated)
+    payload = await _get(novel_id)
+    async with open_conn() as conn:
+        with pytest.raises(segments_svc.SegmentStaleError) as exc_info:
+            await segments_svc.confirm_all(
+                conn, novel_id, 1,
+                client_rev=payload["chapter_rev"],
+                chapter_id=chapter_id + 999,
+            )
+    assert exc_info.value.kind == "stale_chapter"
+
+    # Omitting chapter_id keeps the pre-B8 behavior (additive contract).
+    async with open_conn() as conn:
+        result = await segments_svc.confirm_all(
+            conn, novel_id, 1, client_rev=payload["chapter_rev"],
+        )
+        await conn.commit()
+    assert result["confirmed"] == 2

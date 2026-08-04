@@ -229,14 +229,19 @@ async def fetch_previous_chapter_tail(
     for the translator.
 
     Search rule: nearest earlier chapter with status='done', within
-    PREVIOUS_CONTEXT_MAX_GAP chapters back. Returns None on the first chapter,
+    PREVIOUS_CONTEXT_MAX_GAP chapters back. The tail comes from the
+    DISPLAYED body (refined when refined_text is non-empty, else the draft;
+    the same presence-keyed rule as segments.displayed_body; bug hunt
+    2026-08-04, B11) so the model reads the polished previous chapter,
+    not a draft the reader never sees. Returns None on the first chapter,
     when no done chapter exists within the gap window, or when the feature
     is disabled."""
     if not PREVIOUS_CONTEXT_ENABLED or chapter_num <= 1:
         return None
     floor = chapter_num - PREVIOUS_CONTEXT_MAX_GAP
     cur = await conn.execute(
-        "SELECT translated_text FROM chapters "
+        "SELECT COALESCE(NULLIF(refined_text, ''), translated_text) AS body "
+        "FROM chapters "
         "WHERE novel_id = ? AND chapter_num < ? AND chapter_num >= ? "
         "  AND status = 'done' "
         "ORDER BY chapter_num DESC LIMIT 1",
@@ -245,7 +250,7 @@ async def fetch_previous_chapter_tail(
     prev = await cur.fetchone()
     if prev is None:
         return None
-    body = prev["translated_text"]
+    body = prev["body"]
     if not body:
         return None
     paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]

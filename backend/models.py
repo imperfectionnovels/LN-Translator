@@ -403,8 +403,12 @@ class SegmentListResponse(BaseModel):
     1:1 chapter ('ok') from a flagged full-path alignment ('partial') and an
     unalignable one ('unaligned', segments empty, retranslate CTA).
     `chapter_rev` is the displayed body's revision token (Phase 3 stale-tab
-    guard); None until the chapter has a body."""
+    guard); None until the chapter has a body. `chapter_id` is the stable
+    row id (chapter_num is mutable: a mid-novel insert renumbers); the
+    editor echoes it back on writes as the anti-renumber guard (bug hunt
+    2026-08-04, B8)."""
 
+    chapter_id: int
     chapter_num: int
     title_en: str | None
     title_zh: str | None
@@ -423,7 +427,10 @@ class SegmentPatch(BaseModel):
     service (unknown -> 400, not 422, matching the documented contract).
     `chapter_rev` is the displayed body's rev the page loaded with (stale-tab
     guard); `before_target_hash` is the row's target hash at load time
-    (per-segment precision guard)."""
+    (per-segment precision guard). `chapter_id` (optional, additive) is the
+    chapter row id the page loaded: when provided and it mismatches the row
+    (novel_id, chapter_num) resolves to NOW, the write 409s stale_chapter
+    (a mid-novel insert renumbered the chapter list, B8)."""
 
     action: str
     # One-paragraph ceiling: a segment is one paragraph.
@@ -432,6 +439,7 @@ class SegmentPatch(BaseModel):
     )
     chapter_rev: str
     before_target_hash: str
+    chapter_id: int | None = None
 
 
 class SegmentPatchResult(BaseModel):
@@ -448,10 +456,12 @@ class SegmentPatchResult(BaseModel):
 
 class SegmentConfirmAll(BaseModel):
     """Body for POST .../segments/confirm-all. `statuses` defaults to
-    ['machine', 'edited'] server-side."""
+    ['machine', 'edited'] server-side. `chapter_id` is the same optional
+    anti-renumber guard as SegmentPatch.chapter_id (B8)."""
 
     chapter_rev: str
     statuses: list[str] | None = None
+    chapter_id: int | None = None
 
 
 class SegmentConfirmAllResult(BaseModel):

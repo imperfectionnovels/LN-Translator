@@ -102,3 +102,122 @@ def test_balancing_is_paragraph_scoped_and_idempotent():
     second, count2 = nee.enforce_balanced_emphasis(cleaned)
     assert second == cleaned
     assert count2 == 0
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B10): the back-fill reprojects the CAT segment store
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+import sqlite3  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+DB_PATH = Path(os.environ["DB_PATH"])
+
+
+def _unlink_db_trio() -> None:
+    # Remove -wal/-shm alongside the main file: a stale WAL next to a
+    # recreated DB reads as "database disk image is malformed" in whichever
+    # module opens it next.
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(str(DB_PATH) + suffix)
+        if p.exists():
+            p.unlink()
+
+
+@pytest.fixture
+def _fresh_db():
+    from backend.db import SCHEMA
+    _unlink_db_trio()
+    conn = sqlite3.connect(DB_PATH)
+    conn.executescript(SCHEMA)
+    conn.commit()
+    conn.close()
+    yield
+    _unlink_db_trio()
+
+
+@pytest.mark.asyncio
+async def test_run_reprojects_segment_store(_fresh_db):
+    """A body rewrite without reproject leaves the ledger stale (the editor
+    would self-heal-rebuild and lose statuses); the script now calls
+    reproject_from_body per touched chapter, so targets follow the body and
+    statuses survive in the same transaction."""
+    from backend.db import open_conn
+    from backend.services import segments as segments_svc
+
+    src = "甲" * 29 + "。\n\n" + "乙" * 29 + "。"
+    body = "Sword Heart Illumination.**\n\nThe elder nodded slowly."
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type) VALUES ('N', 'paste')"
+        )
+        novel_id = cur.lastrowid
+        cur = await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "translated_text, status) VALUES (?, 1, ?, ?, 'done')",
+            (novel_id, src, body),
+        )
+        chapter_id = cur.lastrowid
+        await conn.commit()
+
+    # Build the store, then confirm row 1 so status preservation is visible.
+    async with open_conn() as conn:
+        payload = await segments_svc.get_segments(conn, novel_id, 1)
+        await conn.commit()
+    seg1 = next(s for s in payload["segments"] if s["index"] == 1)
+    async with open_conn() as conn:
+        await segments_svc.update_segment(
+            conn, novel_id, 1, 1, action="confirm", after_text=None,
+            client_rev=payload["chapter_rev"],
+            before_target_hash=seg1["target_hash"],
+        )
+        await conn.commit()
+
+    await nee._run(novel_id, dry_run=False)
+
+    conn_sync = sqlite3.connect(DB_PATH)
+    conn_sync.row_factory = sqlite3.Row
+    ch = conn_sync.execute(
+        "SELECT translated_text FROM chapters WHERE id = ?", (chapter_id,)
+    ).fetchone()
+    rows = conn_sync.execute(
+        "SELECT target_text, status FROM chapter_segments "
+        "WHERE chapter_id = ? ORDER BY seg_index",
+        (chapter_id,),
+    ).fetchall()
+    conn_sync.close()
+    assert ch["translated_text"].startswith("Sword Heart Illumination.\n\n")
+    # Segment target followed the body (reproject ran), status preserved.
+    assert rows[0]["target_text"] == "Sword Heart Illumination."
+    assert rows[1]["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_writes_nothing(_fresh_db):
+    from backend.db import open_conn
+
+    src = "甲" * 29 + "。"
+    body = "Sword Heart Illumination.**"
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type) VALUES ('N', 'paste')"
+        )
+        novel_id = cur.lastrowid
+        await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "translated_text, status) VALUES (?, 1, ?, ?, 'done')",
+            (novel_id, src, body),
+        )
+        await conn.commit()
+
+    await nee._run(novel_id, dry_run=True)
+
+    conn_sync = sqlite3.connect(DB_PATH)
+    kept = conn_sync.execute(
+        "SELECT translated_text FROM chapters WHERE novel_id = ?", (novel_id,)
+    ).fetchone()[0]
+    conn_sync.close()
+    assert kept == body

@@ -82,7 +82,8 @@ let readOnly = true; // true until a loaded chapter proves editable
 
 // Active in-cell edit, or null. Captured AT EDIT START so a late blur
 // saves against the right chapter/segment even after navigation:
-// {chapterNum, segIndex, beforeText, chapterRev, beforeHash, cell, row}.
+// {chapterNum, segIndex, beforeText, chapterRev, beforeHash, chapterId,
+//  cell, row}.
 let editing = null;
 let escCancel = false; // set by Esc so the blur handler skips the save
 // Failed saves awaiting a retry: "ch:idx" -> {chapterNum, segIndex,
@@ -290,8 +291,13 @@ function sendPatch(chapterNum, segIndex, action, after, fallback) {
   const run = () => {
     let rev = fallback ? fallback.chapterRev : null;
     let hash = fallback ? fallback.beforeHash : null;
+    // Anti-renumber guard (B8): echo the chapter row id the payload loaded
+    // with; the server 409s stale_chapter when a mid-novel insert
+    // renumbered the list under this tab.
+    let chapterId = fallback ? fallback.chapterId : null;
     if (chapterNum === currentCh && currentData) {
       rev = currentData.chapter_rev || rev;
+      chapterId = currentData.chapter_id || chapterId;
       const seg = segByIndex(segIndex);
       if (seg) hash = seg.target_hash;
     }
@@ -299,6 +305,7 @@ function sendPatch(chapterNum, segIndex, action, after, fallback) {
       return Promise.reject(new Error("segment state unavailable; reload the page"));
     }
     const body = { action, chapter_rev: rev, before_target_hash: hash };
+    if (chapterId != null) body.chapter_id = chapterId;
     if (after != null) body.after_text = after;
     return api.updateSegment(novelId, chapterNum, segIndex, body);
   };
@@ -377,6 +384,7 @@ function startEdit(row) {
     beforeText: seg.target_text,
     chapterRev: currentData.chapter_rev,
     beforeHash: seg.target_hash,
+    chapterId: currentData.chapter_id,
     cell,
     row,
   };
@@ -660,6 +668,7 @@ confirmRestBtn.addEventListener("click", () => {
     confirmRestBtn.disabled = true;
     api.confirmAllSegments(novelId, currentCh, {
       chapter_rev: currentData.chapter_rev,
+      chapter_id: currentData.chapter_id,
     }).then(() => loadSegments())
       .catch(err => {
         if (isConflict(err)) reloadAfterConflict();

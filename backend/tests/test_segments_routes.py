@@ -433,3 +433,59 @@ def test_lazy_backfill_is_persisted(client):
     ).fetchall()]
     conn.close()
     assert ids_after == ids
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B8): chapter_id in the payload + anti-renumber 409
+# ---------------------------------------------------------------------------
+
+
+def test_get_payload_carries_chapter_id(client):
+    novel_id, chapter_id = _seed_chapter()
+    data = client.get(f"/api/novels/{novel_id}/chapters/1/segments").json()
+    assert data["chapter_id"] == chapter_id
+
+
+def test_patch_409_stale_chapter_on_chapter_id_mismatch(client):
+    novel_id, chapter_id = _seed_chapter()
+    data = client.get(f"/api/novels/{novel_id}/chapters/1/segments").json()
+    seg = data["segments"][0]
+    r = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/0",
+        json={
+            "action": "save", "after_text": "New text.",
+            "chapter_rev": data["chapter_rev"],
+            "before_target_hash": seg["target_hash"],
+            "chapter_id": chapter_id + 999,
+        },
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["error_kind"] == "stale_chapter"
+
+
+def test_patch_with_matching_chapter_id_succeeds(client):
+    novel_id, chapter_id = _seed_chapter()
+    data = client.get(f"/api/novels/{novel_id}/chapters/1/segments").json()
+    seg = data["segments"][0]
+    r = client.patch(
+        f"/api/novels/{novel_id}/chapters/1/segments/0",
+        json={
+            "action": "save", "after_text": "New text.",
+            "chapter_rev": data["chapter_rev"],
+            "before_target_hash": seg["target_hash"],
+            "chapter_id": chapter_id,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["segment"]["status"] == "edited"
+
+
+def test_confirm_all_409_stale_chapter_on_chapter_id_mismatch(client):
+    novel_id, chapter_id = _seed_chapter()
+    data = client.get(f"/api/novels/{novel_id}/chapters/1/segments").json()
+    r = client.post(
+        f"/api/novels/{novel_id}/chapters/1/segments/confirm-all",
+        json={"chapter_rev": data["chapter_rev"], "chapter_id": chapter_id + 999},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["error_kind"] == "stale_chapter"

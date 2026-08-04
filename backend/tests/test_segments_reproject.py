@@ -331,3 +331,105 @@ async def test_chapter_without_segments_is_untouched():
     ).fetchone()
     conn.close()
     assert state is None
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04 (B12): divergent (tm_exact) machine rows keep their
+# machine_text through text-authoritative mutations
+# ---------------------------------------------------------------------------
+
+_AI_RENDERING = "Bai Xiaochun walked forward through the gate."
+_PREFILLED = "Lord Bai strode politely through the gate."
+
+
+async def _make_seg0_divergent(novel_id: int, chapter_id: int) -> None:
+    """Give seg 0 the tm_exact prefill shape: target = a confirmed
+    cross-chapter rendering, machine_text = the AI's own suggestion. The
+    chapter body is updated in lockstep so the self-heal join==body check
+    holds (this mirrors what apply_machine_translation's prefill commit
+    produces)."""
+    await _build_store(novel_id)
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapter_segments SET target_text = ?, origin = 'tm_exact' "
+            "WHERE chapter_id = ? AND seg_index = 0",
+            (_PREFILLED, chapter_id),
+        )
+        cur = await conn.execute(
+            "SELECT target_text FROM chapter_segments "
+            "WHERE chapter_id = ? ORDER BY seg_index",
+            (chapter_id,),
+        )
+        body = "\n\n".join(r["target_text"] for r in await cur.fetchall())
+        await conn.execute(
+            "UPDATE chapters SET translated_text = ?, segments_rev = ? "
+            "WHERE id = ?",
+            (body, segments_svc.chapter_rev(body), chapter_id),
+        )
+        await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_fast_path_preserves_divergent_machine_text():
+    """A find-replace over a tm_exact row rewrites the TARGET only; the
+    stored AI rendering behind it survives, so revert-to-AI stays
+    reachable."""
+    novel_id, chapter_id = await _seed_chapter()
+    await _make_seg0_divergent(novel_id, chapter_id)
+
+    await _commit_replace(novel_id, "politely", "stiffly")
+
+    rows = _db_rows(chapter_id)
+    assert rows[0]["target_text"] == "Lord Bai strode stiffly through the gate."
+    assert rows[0]["machine_text"] == _AI_RENDERING  # preserved
+    assert rows[0]["status"] == "machine"
+    _assert_i1(chapter_id)
+
+    # revert_machine still reachable: the swap lands the AI rendering.
+    payload = await _build_store(novel_id)
+    seg0 = next(s for s in payload["segments"] if s["index"] == 0)
+    assert seg0["machine_differs"] is True
+    async with open_conn() as conn:
+        result = await segments_svc.update_segment(
+            conn, novel_id, 1, 0, action="revert_machine", after_text=None,
+            client_rev=payload["chapter_rev"],
+            before_target_hash=seg0["target_hash"],
+        )
+        await conn.commit()
+    assert result["segment"]["target_text"] == _AI_RENDERING
+
+
+@pytest.mark.asyncio
+async def test_fast_path_still_refreshes_non_divergent_machine_rows():
+    """Non-divergent machine rows (machine_text == target) keep following
+    the body, exactly as before."""
+    novel_id, chapter_id = await _seed_chapter()
+    await _make_seg0_divergent(novel_id, chapter_id)
+    await _commit_replace(novel_id, "sect elders", "sect ancients")
+    rows = _db_rows(chapter_id)
+    assert "sect ancients" in rows[1]["target_text"]
+    assert rows[1]["machine_text"] == rows[1]["target_text"]
+    # The divergent row was not hit and is untouched.
+    assert rows[0]["machine_text"] == _AI_RENDERING
+    _assert_i1(chapter_id)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_path_carries_divergent_machine_text():
+    """The count-drift fallback (a replacement containing a paragraph
+    break) re-mints machine rows from the new body; the divergent AI
+    rendering rides across keyed by source paragraph."""
+    novel_id, chapter_id = await _seed_chapter()
+    await _make_seg0_divergent(novel_id, chapter_id)
+
+    # Split the LAST paragraph in two: the reproject fast path sees a count
+    # mismatch and falls back to build_segments_from_alignment.
+    await _commit_replace(
+        novel_id, "as night arrived", "as night arrived.\n\nAll was still",
+    )
+
+    rows = _db_rows(chapter_id)
+    row0 = next(r for r in rows if r["seg_index"] == 0)
+    assert row0["target_text"].startswith("Lord Bai strode")
+    assert row0["machine_text"] == _AI_RENDERING  # carried across the rebuild
+    _assert_i1(chapter_id)

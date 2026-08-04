@@ -28,6 +28,7 @@ import argparse
 import asyncio
 
 from backend.db import open_conn
+from backend.services import segments as segments_svc
 from backend.services.text_fixups import enforce_balanced_emphasis
 
 _COLUMNS = ("translated_text", "refined_text")
@@ -91,6 +92,10 @@ async def _run(novel_id: int | None, dry_run: bool) -> None:
                     f"UPDATE chapters SET {set_clause} WHERE id = ?",
                     (*updates.values(), row["id"]),
                 )
+                # Text-authoritative mutator hook (same pattern as the
+                # find-replace commit): re-sync the CAT segment store to the
+                # rewritten body in the same transaction, status-preserving.
+                await segments_svc.reproject_from_body(conn, row["id"])
 
         if not dry_run:
             await conn.commit()

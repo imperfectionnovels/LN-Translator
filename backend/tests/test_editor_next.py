@@ -134,3 +134,27 @@ def test_none_when_everything_confirmed(client):
 def test_missing_novel_404s(client):
     resp = client.get("/api/novels/999/editor-next", params={"after": 1})
     assert resp.status_code == 404
+
+
+def test_unaligned_chapter_counts_as_needing_work(client):
+    """Bug hunt 2026-08-04 (B7): an 'unaligned' chapter retains rows that
+    can all be 'confirmed', but the verdict means they are detached from
+    the chapter text, so the continue card must still stop there."""
+    novel_id = _seed_novel([
+        {"chapter_num": 1, "status": "done",
+         "segments": ["confirmed", "confirmed"]},
+        {"chapter_num": 2, "status": "done", "segments": ["confirmed"]},
+    ])
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET segments_state = 'unaligned' "
+        "WHERE novel_id = ? AND chapter_num = 1",
+        (novel_id,),
+    )
+    conn.commit()
+    conn.close()
+    # Fully confirmed but unaligned: chapter 1 still needs work (wraps from
+    # after chapter 2). Searching from 1 itself finds nothing (the search
+    # never returns `after` itself, per contract).
+    assert _next(client, novel_id, after=2) == 1
+    assert _next(client, novel_id, after=1) is None

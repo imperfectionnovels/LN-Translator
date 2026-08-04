@@ -314,3 +314,42 @@ async def test_style_edits_dedups_repeated_pairs(monkeypatch):
         result = await prompt_inputs.fetch_style_edits(conn, novel_id)
     # Newest first: id3 (aaa/AAA) then id2 (bbb/BBB); id1 dedups against id3.
     assert result == [("aaa", "AAA"), ("bbb", "BBB")]
+
+
+async def test_prev_tail_uses_refined_body_when_present():
+    """Bug hunt 2026-08-04 (B11): the tail follows the DISPLAYED rule
+    (refined when refined_text is non-empty), so the model reads the
+    polished previous chapter, not the superseded draft."""
+    novel_id = await _new_novel()
+    async with open_conn() as conn:
+        await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "status, translated_text, refined_text) "
+            "VALUES (?, 1, '...', 'done', ?, ?)",
+            (novel_id, "draft p1\n\ndraft p2", "refined p1\n\nrefined p2"),
+        )
+        await conn.commit()
+    async with open_conn() as conn:
+        tail = await prompt_inputs.fetch_previous_chapter_tail(
+            conn, novel_id, 2,
+        )
+    assert tail == "refined p1\n\nrefined p2"
+
+
+async def test_prev_tail_empty_refined_falls_back_to_draft():
+    """Empty-string refined_text is 'no refinement' under the presence rule
+    (NULLIF), so the draft still feeds the tail."""
+    novel_id = await _new_novel()
+    async with open_conn() as conn:
+        await conn.execute(
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "status, translated_text, refined_text) "
+            "VALUES (?, 1, '...', 'done', ?, '')",
+            (novel_id, "draft p1\n\ndraft p2"),
+        )
+        await conn.commit()
+    async with open_conn() as conn:
+        tail = await prompt_inputs.fetch_previous_chapter_tail(
+            conn, novel_id, 2,
+        )
+    assert tail == "draft p1\n\ndraft p2"

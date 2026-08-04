@@ -113,6 +113,7 @@ async def patch_chapter_segment(
             after_text=payload.after_text,
             client_rev=payload.chapter_rev,
             before_target_hash=payload.before_target_hash,
+            chapter_id=payload.chapter_id,
         )
     except segments_svc.SegmentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -143,6 +144,7 @@ async def confirm_all_segments(
             chapter_num,
             client_rev=payload.chapter_rev,
             statuses=payload.statuses,
+            chapter_id=payload.chapter_id,
         )
     except segments_svc.SegmentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
