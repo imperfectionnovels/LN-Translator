@@ -4,9 +4,9 @@
  * Mode-aware: when on the reader, filters out edit-only actions if
  * body[data-reader-mode] === "read".
  *
- * Global nav chord: `g` followed within 1.5s by one of l/r/g/i/q/s/n/y/b
- * jumps to library/reader/glossary/import/queue/settings/novel-page/
- * quality/global-glossary. Reader/Glossary/Quality use the lastNovel
+ * Global nav chord: `g` followed within 1.5s by one of l/r/e/g/i/q/s/n/y/b
+ * jumps to library/reader/editor/glossary/import/queue/settings/novel-page/
+ * quality/global-glossary. Reader/Editor/Glossary/Quality use the lastNovel
  * localStorage (same as spine.js) so a "no novel context" tap still
  * goes somewhere sensible.
  *
@@ -89,6 +89,7 @@
     const out = [
       { id: "nav-library", label: "Go to library", hint: "g l", run: () => location.href = "/library" },
       { id: "nav-reader", label: "Open reader", hint: "g r", run: () => location.href = `/reader${novelQs}` },
+      { id: "nav-editor", label: "Open CAT editor", hint: "g e", run: () => location.href = `/editor${novelQs}` },
       { id: "nav-glossary", label: "Open glossary", hint: "g g", run: () => location.href = `/glossary${novelQs}` },
       { id: "nav-glossary-global", label: "Global glossary", hint: "g b", run: () => location.href = "/glossary/global" },
       { id: "nav-quality", label: "Quality cockpit", hint: "g y", run: () => location.href = `/quality${novelQs}` },
@@ -237,6 +238,7 @@
   const _CHORD_MAP = {
     l: () => location.href = "/library",
     r: () => location.href = `/reader${_lastNovelId() ? `?novel=${_lastNovelId()}` : ""}`,
+    e: () => location.href = `/editor${_lastNovelId() ? `?novel=${_lastNovelId()}` : ""}`,
     g: () => location.href = `/glossary${_lastNovelId() ? `?novel=${_lastNovelId()}` : ""}`,
     i: () => location.href = "/",
     q: () => location.href = "/queue",

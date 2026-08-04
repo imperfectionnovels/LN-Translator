@@ -22,6 +22,7 @@
   <nav class="spine-nav" aria-label="Primary">
     <a data-nav="library" href="/library" title="Library" aria-label="Library"><span class="han">籍</span><span class="lbl">Library</span></a>
     <a data-nav="reader" id="reader-link" href="/library" title="Reader" aria-label="Reader"><span class="han">讀</span><span class="lbl">Reader</span></a>
+    <a data-nav="editor" id="spine-editor-link" href="/library" title="Editor" aria-label="Editor"><span class="han">校</span><span class="lbl">Editor</span></a>
     <a data-nav="glossary" id="glossary-link" href="/library" title="Glossary" aria-label="Glossary"><span class="han">詞</span><span class="lbl">Glossary</span></a>
     <a data-nav="quality" id="quality-link" href="/library" title="Quality" aria-label="Quality"><span class="han">質</span><span class="lbl">Quality</span></a>
     <a data-nav="import" href="/" title="Import" aria-label="Import"><span class="han">入</span><span class="lbl">Import</span></a>
@@ -58,6 +59,7 @@
   const path = location.pathname;
   const page =
     path.indexOf("/reader") === 0          ? "reader"          :
+    path.indexOf("/editor") === 0          ? "editor"          :
     path.indexOf("/glossary/global") === 0 ? "glossary-global" :
     path.indexOf("/glossary") === 0        ? "glossary"        :
     path.indexOf("/quality") === 0         ? "quality"         :
@@ -79,12 +81,14 @@
     el.classList.toggle("on", active);
     if (active) el.setAttribute("aria-current", "page");
 
-    if (el.tagName === "A" && (nav === "reader" || nav === "glossary" || nav === "quality")) {
+    if (el.tagName === "A" && (nav === "reader" || nav === "editor" || nav === "glossary" || nav === "quality")) {
       if (novelId) {
         // Omit &ch so the reader resumes on its persisted last-read chapter
         // (lastRead:<novelId>) instead of always forcing chapter 1; the
-        // reader treats a missing ch param as "no explicit chapter".
+        // reader treats a missing ch param as "no explicit chapter". The
+        // editor likewise resumes via its editorLast:<novelId> breadcrumb.
         el.href = nav === "reader"   ? "/reader?novel=" + novelId
+                : nav === "editor"   ? "/editor?novel=" + novelId
                 : nav === "glossary" ? "/glossary?novel=" + novelId
                 :                      "/quality?novel=" + novelId;
         el.classList.remove("disabled");

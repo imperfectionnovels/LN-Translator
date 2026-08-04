@@ -399,6 +399,24 @@
   margin-bottom: 12px;
 }
 
+/* ---- Continue card (Phase 5): bottom of the grid at 100% confirmed ---- */
+.continue-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 18px 0 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-tint);
+}
+.continue-card .continue-msg {
+  font-size: 14px;
+  color: var(--fg);
+}
+
 /* ---- Narrow screens: stack source above target; rail drops below ---- */
 @media (max-width: 1100px) {
   .editor-body { flex-direction: column; }

@@ -212,6 +212,10 @@
 .cons-badge.exact { background: #b91c1c; color: #fff; }
 .cons-badge.fuzzy { background: var(--border); color: var(--muted); }
 .cons-badge.warn  { background: #b45309; color: #fff; }
+/* Segment provenance (CAT Phase 5): renderings the user vetted in the
+   CAT editor. Absent on legacy tm-only matches. */
+.cons-badge.prov-confirmed { background: #15803d; color: #fff; }
+.cons-badge.prov-edited    { background: #1d4ed8; color: #fff; }
 .cons-flag {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
   border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
@@ -948,6 +952,15 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   border-radius: 3px;
   margin-left: 4px;
 }
+/* Segment provenance chip (CAT Phase 5): confirmed/edited hits come from
+   the CAT segment store; legacy tm hits carry no chip. */
+.concordance-dialog .concordance-prov {
+  font-size: 10px; font-weight: 600;
+  padding: 1px 5px; border-radius: 3px; margin-left: 4px;
+  color: #fff;
+}
+.concordance-dialog .concordance-prov-confirmed { background: #15803d; }
+.concordance-dialog .concordance-prov-edited    { background: #1d4ed8; }
 .concordance-dialog .concordance-empty {
   color: var(--muted); font-style: italic;
   padding: 1.5em 0; text-align: center;

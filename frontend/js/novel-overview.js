@@ -31,6 +31,7 @@ const els = {
   progress: document.getElementById("no-progress"),
 
   readBtn: document.getElementById("no-read-btn"),
+  editorBtn: document.getElementById("no-editor-btn"),
   glossaryBtn: document.getElementById("no-glossary-btn"),
   qualityBtn: document.getElementById("no-quality-btn"),
   statsBtn: document.getElementById("no-stats-btn"),
@@ -321,6 +322,8 @@ function renderHeader(novel) {
   // CTAs.
   const firstCh = novel.first_chapter_num || 1;
   els.readBtn.href = `/reader?novel=${novelId}&ch=${firstCh}`;
+  // No &ch: the editor resumes via its editorLast:<novelId> breadcrumb.
+  els.editorBtn.href = `/editor?novel=${novelId}`;
   els.glossaryBtn.href = `/glossary?novel=${novelId}`;
   els.glossaryLink.href = `/glossary?novel=${novelId}`;
   els.qualityBtn.href = `/quality?novel=${novelId}`;

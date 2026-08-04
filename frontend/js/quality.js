@@ -137,10 +137,10 @@ function cardWorstChapters(card, novelId) {
   return `
     <div class="q-card">
       <h3>Lowest-scoring chapters · triage</h3>
-      <div class="q-card-sub">Most rule violations first. Click to open in the reader's edit mode.</div>
+      <div class="q-card-sub">Most rule violations first. Click to open in the CAT editor.</div>
       <div class="q-worklist">
         ${worst.slice(0, 20).map(c => `
-          <a class="q-work-row" href="/reader?novel=${novelId}&ch=${c.chapter_num}&mode=edit">
+          <a class="q-work-row" href="/editor?novel=${novelId}&ch=${c.chapter_num}">
             <span class="q-work-tag bad">${c.violations}</span>
             <span class="q-work-main">
               <span class="q-work-zh">Ch.${c.chapter_num}</span>

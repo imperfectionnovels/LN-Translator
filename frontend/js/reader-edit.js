@@ -1284,10 +1284,15 @@ async function _openConcordanceDialog(query) {
   concordanceList.innerHTML = hits.map(h => {
     const chTitle = h.chapter_title_en || `Chapter ${h.chapter_num}`;
     const sideTag = `<span class="concordance-matched-side">matched on ${h.matched_side === "source" ? "中文" : "EN"}</span>`;
+    // Segment provenance chip (CAT Phase 5): confirmed/edited hits came
+    // from the CAT segment store; legacy tm hits carry no status.
+    const provTag = (h.status === "confirmed" || h.status === "edited")
+      ? `<span class="concordance-prov concordance-prov-${h.status}" title="You ${h.status} this rendering in the CAT editor">${h.status}</span>`
+      : "";
     return `
       <div class="concordance-hit" data-ch="${h.chapter_num}" data-para="${h.paragraph_index}">
         <div>
-          <div class="concordance-chapter">Ch. ${h.chapter_num} · ${escapeHtml(chTitle)}${sideTag}</div>
+          <div class="concordance-chapter">Ch. ${h.chapter_num} · ${escapeHtml(chTitle)}${provTag}${sideTag}</div>
           <div class="concordance-source">${escapeHtml(h.source_text)}</div>
           <div class="concordance-target">${escapeHtml(h.target_text)}</div>
         </div>

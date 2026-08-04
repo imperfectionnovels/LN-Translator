@@ -882,6 +882,10 @@ async function loadChapter(num) {
   currentCh = num;
   persistReadingPosition(num);
   history.replaceState(null, "", `/reader?novel=${novelId}&ch=${num}`);
+  // Keep the util-menu's CAT-editor deep link on the chapter being read.
+  // Null-guarded for cached old HTML without the menu item.
+  const openInEditor = document.getElementById("open-in-editor");
+  if (openInEditor) openInEditor.href = `/editor?novel=${novelId}&ch=${num}`;
   updateMasthead(num);
   statusEl.className = "status";
   statusEl.textContent = "";

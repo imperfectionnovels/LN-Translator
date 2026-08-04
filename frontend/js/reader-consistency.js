@@ -86,6 +86,7 @@ function paintConsistencyRail(res) {
         ${(m.others || []).map((o) => `
           <div class="cons-other" data-ch="${o.chapter_num}" role="button" tabindex="0" title="Open chapter ${o.chapter_num}">
             <span class="cons-badge ${o.exact ? "exact" : "fuzzy"}">${o.exact ? "exact" : Math.round(o.similarity * 100) + "%"}</span>
+            ${o.status === "confirmed" || o.status === "edited" ? `<span class="cons-badge prov-${o.status}" title="You ${o.status} this rendering in the CAT editor">${o.status}</span>` : ""}
             <span class="cons-other-ch">Ch.${o.chapter_num}</span>
             <span class="cons-other-text">${escapeHtml(o.target_text)}</span>
           </div>`).join("")}

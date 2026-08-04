@@ -257,6 +257,11 @@ const api = {
   // AI-suggests dialog: {tm_exact, tm_fuzzy, machine_text}.
   segmentAssist: (novelId, chapterNum, segIndex) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/segments/${segIndex}/assist`),
+  // CAT editor (Phase 5): the continue card feed. {next_chapter_num} is the
+  // next chapter still needing work (forward from `after`, wrapping), or
+  // null when every chapter is fully confirmed.
+  editorNext: (novelId, after) =>
+    apiFetch(`/api/novels/${novelId}/editor-next?after=${after}`),
   // Learn-from-edits: stage derives a proposal from captured edits (no writes);
   // commit applies the confirmed subset (selection = {brief, glossary_casing, save_ground_truth}).
   learnEditsStage: (novelId, chapterNum) =>

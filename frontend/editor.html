@@ -6,7 +6,7 @@
 <title>Editor · LN Translator</title>
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=4">
-<link rel="stylesheet" href="/static/css/editor.css?v=2">
+<link rel="stylesheet" href="/static/css/editor.css?v=3">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -62,6 +62,9 @@
         <span class="seg-h seg-h-status">Status</span>
       </div>
       <div class="seg-grid" id="seg-grid" aria-busy="true" aria-label="Chapter segments"></div>
+      <!-- Continue card (Phase 5): rendered by editor-core.js when every
+           segment of the current chapter is confirmed. -->
+      <div class="continue-card" id="editor-continue" hidden></div>
     </div>
 
     <!-- Assist rail (Phase 4): TM matches + glossary chips for the active

@@ -578,6 +578,7 @@ function _coverCardActionsHtml(n) {
   }
   return `
         <a class="row-btn primary" href="/reader?novel=${n.id}&ch=${(_lastReadFor(n)) || n.first_chapter_num || 1}">Open</a>
+        <a class="row-btn" href="/editor?novel=${n.id}" title="Open the CAT editor (resumes your last-edited chapter)">Edit</a>
         <a class="row-btn" href="/novel?id=${n.id}">Novel page</a>
         <a class="row-btn" href="/?novel=${n.id}" title="Append more chapters to this novel">＋ Add chapters</a>
         <a class="row-btn" href="/glossary?novel=${n.id}">Glossary</a>
@@ -729,6 +730,7 @@ function renderLedgerView(list) {
         <div class="l-status">${st.badge}${st.queueBadge}${observationsBadgeHtml(n.id)}</div>
         <div class="l-actions">
           <a class="row-btn primary" href="/reader?novel=${n.id}&ch=${(st.last && st.last.ch) || n.first_chapter_num || 1}">Open</a>
+          <a class="row-btn" href="/editor?novel=${n.id}" title="Open the CAT editor (resumes your last-edited chapter)">Edit</a>
           <a class="row-btn" href="/novel?id=${n.id}">Novel page</a>
           <a class="row-btn" href="/?novel=${n.id}" title="Append more chapters to this novel">＋ Add chapters</a>
           <a class="row-btn" href="/glossary?novel=${n.id}">Glossary</a>

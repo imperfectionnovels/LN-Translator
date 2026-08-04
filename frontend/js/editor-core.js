@@ -67,6 +67,7 @@ const gridHead = document.getElementById("seg-grid-head");
 const grid = document.getElementById("seg-grid");
 const filterToggle = document.getElementById("filter-toggle");
 const confirmRestBtn = document.getElementById("confirm-rest");
+const continueEl = document.getElementById("editor-continue");
 const shortcutsBtn = document.getElementById("shortcuts-btn");
 const shortcutsDlg = document.getElementById("shortcuts-dialog");
 const shortcutsClose = document.getElementById("shortcuts-close");
@@ -131,7 +132,48 @@ function updateActions() {
   const p = currentData ? currentData.progress : null;
   confirmRestBtn.disabled =
     readOnly || !p || p.total === 0 || p.confirmed >= p.total;
+  updateContinueCard();
 }
+
+// --- Continue card (Phase 5): shown when every segment is confirmed ---
+let continueSeq = 0; // stale-response guard
+let continueForCh = null; // chapter the visible card was fetched for
+function updateContinueCard() {
+  const p = currentData ? currentData.progress : null;
+  const fullyConfirmed = !!p && p.total > 0 && p.confirmed >= p.total
+    && currentData.chapter_status === "done";
+  if (!fullyConfirmed) {
+    continueSeq++;
+    continueForCh = null;
+    continueEl.hidden = true;
+    continueEl.innerHTML = "";
+    return;
+  }
+  if (continueForCh === currentCh && !continueEl.hidden) return; // already up
+  const seq = ++continueSeq;
+  const forCh = currentCh;
+  api.editorNext(novelId, forCh).then(r => {
+    if (seq !== continueSeq || forCh !== currentCh) return;
+    const next = r.next_chapter_num;
+    continueForCh = forCh;
+    continueEl.innerHTML = next != null
+      ? `<span class="continue-msg">Chapter fully confirmed</span>
+         <button type="button" class="btn-primary" id="continue-next-btn" data-next="${next}">Continue to Ch. ${next}</button>`
+      : `<span class="continue-msg">Chapter fully confirmed. Every chapter of this novel is fully confirmed.</span>`;
+    continueEl.hidden = false;
+  }).catch(() => {
+    if (seq !== continueSeq || forCh !== currentCh) return;
+    continueForCh = forCh;
+    continueEl.innerHTML =
+      `<span class="continue-msg">Chapter fully confirmed</span>`;
+    continueEl.hidden = false;
+  });
+}
+continueEl.addEventListener("click", (e) => {
+  const btn = e.target.closest("#continue-next-btn");
+  if (!btn) return;
+  gotoChapter(Number.parseInt(btn.dataset.next, 10));
+});
 
 // --- Status banner cards ---
 function showStatus(kind, html) {

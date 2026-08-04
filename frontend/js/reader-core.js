@@ -135,6 +135,10 @@ if (dlRawMd) dlRawMd.remove();
 // Null-guarded so a cached-old-HTML + fresh-JS combo doesn't crash boot.
 const appendChaptersLink = document.getElementById("append-chapters");
 if (appendChaptersLink) appendChaptersLink.href = `/?novel=${novelId}`;
+// CAT-editor deep link: seeded with the boot chapter here; loadChapter
+// re-points it on every chapter change. Null-guarded like its siblings.
+const openInEditorLink = document.getElementById("open-in-editor");
+if (openInEditorLink) openInEditorLink.href = `/editor?novel=${novelId}&ch=${currentCh}`;
 
 // Two-way view mode: "english" (Classic, default) and "bilingual" (ZH + EN
 // side-by-side). Persisted to localStorage scoped per-novel. Storage values
