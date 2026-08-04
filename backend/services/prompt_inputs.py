@@ -12,6 +12,14 @@ Each fetcher honors its A/B env flag (PROMPT_INCLUDE_STYLE_EDITS /
 PROMPT_INCLUDE_STYLE_NOTE / PROMPT_INCLUDE_CONFIRMED_EXEMPLARS /
 PREVIOUS_CONTEXT_ENABLED) at the fetch site, so a single flag flip
 suppresses one block for an A/B arm without DB mutation.
+
+Flag single-sourcing (bug hunt 2026-08-04, F8): the A/B flags are read as
+`config.<NAME>` attributes at call time, never imported as module-level
+copies. Three modules used to hold `from backend.config import ...` copies
+(here, queue.py, ab_style_edits.py) that drifted independently under
+monkeypatch: a test flipping one copy left the others live, so the snapshot
+could record a flag state the gates never applied. Tests patch
+`backend.config.<NAME>` once and every consumer sees it.
 """
 
 from __future__ import annotations
@@ -21,13 +29,10 @@ from typing import TypedDict
 
 import aiosqlite
 
+from backend import config
 from backend.config import (
-    PREVIOUS_CONTEXT_ENABLED,
     PREVIOUS_CONTEXT_MAX_GAP,
     PREVIOUS_CONTEXT_PARAGRAPHS,
-    PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
-    PROMPT_INCLUDE_STYLE_EDITS,
-    PROMPT_INCLUDE_STYLE_NOTE,
 )
 from backend.services import segments as segments_svc
 from backend.services.providers import (
@@ -56,7 +61,7 @@ async def fetch_confirmed_exemplars(
     the chapter_segments table doesn't exist (older DB). The SQL lives in
     services/segments.py (the single chapter_segments owner); this wrapper
     owns the flag gate + limit, matching its sibling fetchers."""
-    if not PROMPT_INCLUDE_CONFIRMED_EXEMPLARS:
+    if not config.PROMPT_INCLUDE_CONFIRMED_EXEMPLARS:
         return []
     try:
         return await segments_svc.fetch_confirmed_exemplar_pairs(
@@ -94,7 +99,7 @@ async def fetch_style_edits(
 
     Returns [] when the tables don't exist (older DB), no edits are
     captured yet, or PROMPT_INCLUDE_STYLE_EDITS is disabled."""
-    if not PROMPT_INCLUDE_STYLE_EDITS:
+    if not config.PROMPT_INCLUDE_STYLE_EDITS:
         return []
     result: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -207,7 +212,7 @@ async def fetch_style_note(
     None when the novel hasn't had one generated yet, or when
     PROMPT_INCLUDE_STYLE_NOTE is disabled: the prompt drops the block
     entirely in either case."""
-    if not PROMPT_INCLUDE_STYLE_NOTE:
+    if not config.PROMPT_INCLUDE_STYLE_NOTE:
         return None
     try:
         cur = await conn.execute(
@@ -236,7 +241,7 @@ async def fetch_previous_chapter_tail(
     not a draft the reader never sees. Returns None on the first chapter,
     when no done chapter exists within the gap window, or when the feature
     is disabled."""
-    if not PREVIOUS_CONTEXT_ENABLED or chapter_num <= 1:
+    if not config.PREVIOUS_CONTEXT_ENABLED or chapter_num <= 1:
         return None
     floor = chapter_num - PREVIOUS_CONTEXT_MAX_GAP
     cur = await conn.execute(

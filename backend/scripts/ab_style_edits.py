@@ -48,7 +48,8 @@ import asyncio
 import difflib
 from datetime import datetime
 
-from backend.config import PROJECT_ROOT, PROMPT_INCLUDE_FREE_DRAFT
+from backend import config
+from backend.config import PROJECT_ROOT
 from backend.db import open_conn
 from backend.scripts._db_banner import print_db_banner
 from backend.services import global_glossary as global_glossary_svc
@@ -183,7 +184,9 @@ async def run(novel_id: int, chapter_num: int, limit: int, write_report: bool) -
         style_note = await fetch_style_note(conn, novel_id)
         provider = await resolve_translator_provider(conn, novel_id)
         novel_meta = await fetch_novel_genre_brief(conn, novel_id)
-        free_draft = ch["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
+        free_draft = (
+            ch["free_draft_text"] if config.PROMPT_INCLUDE_FREE_DRAFT else None
+        )
 
         # Snapshot every field needed outside the connection scope.
         original_text = ch["original_text"]

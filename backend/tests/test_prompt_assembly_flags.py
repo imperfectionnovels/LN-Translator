@@ -26,6 +26,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
+from backend import config
 from backend.db import _ADDITIVE_MIGRATIONS, init_db
 from backend.services import prompt_inputs
 from backend.services import queue as queue_module
@@ -89,11 +90,12 @@ def test_legacy_db_migration_adds_prompt_config_snapshot(tmp_path):
 def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
     """At default flags, the snapshot reports every block as included when
     its data is non-empty, and every flag as true."""
-    monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_FREE_DRAFT", True)
-    monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_NOTE", True)
-    monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_STYLE_EDITS", True)
-    monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_REFINER", True)
-    monkeypatch.setattr(queue_module, "PREVIOUS_CONTEXT_ENABLED", True)
+    # F8: one patch site (backend.config) controls every consumer.
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_FREE_DRAFT", True)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_NOTE", True)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", True)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", True)
+    monkeypatch.setattr(config, "PREVIOUS_CONTEXT_ENABLED", True)
 
     provider = Provider(
         id=7, name="p", provider_type="deepseek",
@@ -140,7 +142,7 @@ def test_build_prompt_config_snapshot_well_formed_all_flags_true(monkeypatch):
 def test_build_prompt_config_snapshot_records_flag_off_separately(monkeypatch):
     """flags.* records env state regardless of block-emit state, so a
     flag-off translation is distinguishable from a flag-on + data-empty one."""
-    monkeypatch.setattr(queue_module, "PROMPT_INCLUDE_FREE_DRAFT", False)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_FREE_DRAFT", False)
     # All other flags default; *_included flags track actual emission.
     blob = queue_module._build_prompt_config_snapshot(
         provider=None,
@@ -209,10 +211,10 @@ async def test_fetch_style_note_returns_none_when_flag_off(tmp_path, monkeypatch
         # default factory is fine here because aiosqlite.Row supports
         # subscript access by both index and column name.
 
-        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_NOTE", True)
+        monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_NOTE", True)
         assert await prompt_inputs.fetch_style_note(conn, 1) == "voice anchor text"
 
-        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_NOTE", False)
+        monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_NOTE", False)
         assert await prompt_inputs.fetch_style_note(conn, 1) is None
 
 
@@ -235,10 +237,10 @@ async def test_fetch_style_edits_returns_empty_when_flag_off(tmp_path, monkeypat
         )
         await conn.commit()
 
-        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", True)
+        monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", True)
         on_result = await prompt_inputs.fetch_style_edits(conn, 1)
         assert on_result == [("before phrase", "after phrase")]
 
-        monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", False)
+        monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", False)
         off_result = await prompt_inputs.fetch_style_edits(conn, 1)
         assert off_result == []

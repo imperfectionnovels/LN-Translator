@@ -26,6 +26,7 @@ from __future__ import annotations
 import aiosqlite
 import pytest
 
+from backend import config
 from backend.db import init_db, open_conn
 from backend.services import prompt_inputs
 from backend.services import providers as providers_svc
@@ -159,7 +160,7 @@ async def test_prev_tail_disabled_flag_returns_none(monkeypatch):
     done previous chapter present."""
     novel_id = await _new_novel()
     await _add_chapter(novel_id, 1, status="done", translated_text="body")
-    monkeypatch.setattr(prompt_inputs, "PREVIOUS_CONTEXT_ENABLED", False)
+    monkeypatch.setattr(config, "PREVIOUS_CONTEXT_ENABLED", False)
     async with open_conn() as conn:
         tail = await prompt_inputs.fetch_previous_chapter_tail(
             conn, novel_id, 2,
@@ -296,7 +297,7 @@ async def test_genre_brief_missing_novel_returns_defaults():
 async def test_style_edits_dedups_repeated_pairs(monkeypatch):
     """Identical before/after pairs collapse to one entry, preserving the
     newest-first order of the first occurrence."""
-    monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", True)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", True)
     novel_id = await _new_novel()
     async with open_conn() as conn:
         # Insert in chronological order; the fetch returns newest id first.

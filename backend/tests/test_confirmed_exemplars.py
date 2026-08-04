@@ -20,6 +20,7 @@ import json
 
 import pytest
 
+from backend import config
 from backend.db import init_db, open_conn
 from backend.models import TranslationResult
 from backend.services import prompt_inputs
@@ -179,13 +180,13 @@ async def test_fetch_confirmed_exemplars_flag_gate(monkeypatch):
     await _insert_segment(novel_id, ch1, 0, _zh("壬"), "Confirmed pair.")
     async with open_conn() as conn:
         monkeypatch.setattr(
-            prompt_inputs, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", True
+            config, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", True
         )
         on = await prompt_inputs.fetch_confirmed_exemplars(conn, novel_id, ch3)
         assert on == [(_zh("壬"), "Confirmed pair.")]
 
         monkeypatch.setattr(
-            prompt_inputs, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", False
+            config, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", False
         )
         off = await prompt_inputs.fetch_confirmed_exemplars(conn, novel_id, ch3)
         assert off == []
@@ -340,11 +341,9 @@ async def test_worker_flag_off_drops_exemplars(monkeypatch):
 
     calls: list = []
     _stub_translate(monkeypatch, calls)
+    # F8: one patch site controls the fetch gate AND the snapshot.
     monkeypatch.setattr(
-        prompt_inputs, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", False
-    )
-    monkeypatch.setattr(
-        queue_svc, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", False
+        config, "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS", False
     )
     async with open_conn() as conn:
         await queue_svc._translate_chapter_in_db(conn, novel_id, pending_id)

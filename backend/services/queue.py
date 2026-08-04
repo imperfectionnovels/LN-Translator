@@ -23,15 +23,11 @@ import time
 
 import aiosqlite
 
-from backend.config import (
-    PREVIOUS_CONTEXT_ENABLED,
-    PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
-    PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
-    PROMPT_INCLUDE_FREE_DRAFT,
-    PROMPT_INCLUDE_REFINER,
-    PROMPT_INCLUDE_STYLE_EDITS,
-    PROMPT_INCLUDE_STYLE_NOTE,
-)
+# A/B flags are read as config.<NAME> attributes at call time, never held as
+# module-level copies (bug hunt 2026-08-04, F8): one monkeypatch site
+# (backend.config) controls every gate AND the snapshot's flags dict, so the
+# recorded flag state can never diverge from the gate actually applied.
+from backend import config
 from backend.db import open_conn
 from backend.services import global_glossary as global_glossary_svc
 from backend.services import glossary as glossary_svc
@@ -135,15 +131,15 @@ def _build_prompt_config_snapshot(
         "approved_translations_included": approved_translations_included,
         "confirmed_exemplars_included": confirmed_exemplars_included,
         "flags": {
-            "PROMPT_INCLUDE_FREE_DRAFT": PROMPT_INCLUDE_FREE_DRAFT,
-            "PROMPT_INCLUDE_STYLE_NOTE": PROMPT_INCLUDE_STYLE_NOTE,
-            "PROMPT_INCLUDE_STYLE_EDITS": PROMPT_INCLUDE_STYLE_EDITS,
-            "PROMPT_INCLUDE_REFINER": PROMPT_INCLUDE_REFINER,
+            "PROMPT_INCLUDE_FREE_DRAFT": config.PROMPT_INCLUDE_FREE_DRAFT,
+            "PROMPT_INCLUDE_STYLE_NOTE": config.PROMPT_INCLUDE_STYLE_NOTE,
+            "PROMPT_INCLUDE_STYLE_EDITS": config.PROMPT_INCLUDE_STYLE_EDITS,
+            "PROMPT_INCLUDE_REFINER": config.PROMPT_INCLUDE_REFINER,
             "PROMPT_INCLUDE_APPROVED_TRANSLATIONS":
-                PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
+                config.PROMPT_INCLUDE_APPROVED_TRANSLATIONS,
             "PROMPT_INCLUDE_CONFIRMED_EXEMPLARS":
-                PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
-            "PREVIOUS_CONTEXT_ENABLED": PREVIOUS_CONTEXT_ENABLED,
+                config.PROMPT_INCLUDE_CONFIRMED_EXEMPLARS,
+            "PREVIOUS_CONTEXT_ENABLED": config.PREVIOUS_CONTEXT_ENABLED,
         },
     }, sort_keys=True)
 
@@ -922,7 +918,7 @@ async def _translate_chapter_in_db(
         # yet (or failed); the prompt omits the REFERENCE TRANSLATION section
         # in that case. PROMPT_INCLUDE_FREE_DRAFT=false is the A/B kill-switch
         # for the REFERENCE TRANSLATION block.
-        free_draft = r["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
+        free_draft = r["free_draft_text"] if config.PROMPT_INCLUDE_FREE_DRAFT else None
         # Author update markers (（第四更！）, 求月票) are upload metadata, not
         # title content: strip them from the prompt inputs (the CHAPTER TITLE
         # line and the heading echoed at the top of the body) so the model
@@ -954,7 +950,7 @@ async def _translate_chapter_in_db(
         # racing an editor write is harmless (the merge re-reads inside the
         # commit transaction).
         approved_pairs: list[tuple[int, str, str]] | None = None
-        if PROMPT_INCLUDE_APPROVED_TRANSLATIONS and source_paragraphs:
+        if config.PROMPT_INCLUDE_APPROVED_TRANSLATIONS and source_paragraphs:
             approved_pairs = await segments_svc.approved_prompt_pairs(
                 conn, novel_id, chapter_id, source_paragraphs
             ) or None
@@ -1058,7 +1054,7 @@ async def _translate_chapter_in_db(
         # transaction so a crash between translator-commit and pending-flag
         # cannot leave a chapter with status='done' but no refinement signal.
         refinement_pending = (
-            PROMPT_INCLUDE_REFINER
+            config.PROMPT_INCLUDE_REFINER
             and await _novel_has_refinement_provider(conn, novel_id)
         )
         new_refinement_status = "pending" if refinement_pending else "none"

@@ -27,6 +27,7 @@ import json
 
 import pytest
 
+from backend import config
 from backend.db import init_db, open_conn
 from backend.models import TranslationResult
 from backend.services import prompt_inputs
@@ -61,8 +62,9 @@ async def fresh_db():
 
 @pytest.fixture(autouse=True)
 def style_edits_flag_on(monkeypatch):
-    monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", True)
-    monkeypatch.setattr(queue_svc, "PROMPT_INCLUDE_STYLE_EDITS", True)
+    # F8: flags single-source through backend.config; one patch reaches
+    # every consumer (prompt_inputs gate + queue snapshot alike).
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", True)
 
 
 def _zh(ch: str, length: int = 29) -> str:
@@ -275,7 +277,7 @@ async def test_fetch_flag_off_returns_empty(monkeypatch):
     await _insert_segment(novel_id, ch1, 0, _zh("乙"), "Segment fix.",
                           machine_text="Segment draft.")
     await _insert_style_edit(novel_id, "legacy before", "legacy after")
-    monkeypatch.setattr(prompt_inputs, "PROMPT_INCLUDE_STYLE_EDITS", False)
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", False)
     async with open_conn() as conn:
         assert await prompt_inputs.fetch_style_edits(
             conn, novel_id, exclude_chapter_id=ch3
@@ -393,3 +395,38 @@ async def test_worker_drops_pairs_already_in_approved_block(monkeypatch):
         (_zh("癸"), "Shared rendering.")
     ]
     assert call["style_edits"] == [("Another draft.", "Kept correction.")]
+
+
+async def test_single_config_patch_gates_block_and_snapshot_together(monkeypatch):
+    """F8 (bug hunt 2026-08-04): the flags single-source through
+    backend.config, so ONE patch site flips the fetch gate, the prompt
+    content, and the snapshot's flags dict together. Pre-fix, queue.py and
+    prompt_inputs.py held independent module copies: patching one left the
+    other live and the snapshot could record a flag state the gates never
+    applied."""
+    await providers_svc.create_provider(
+        name="translator", provider_type="gemini", model_id="m", is_default=True,
+    )
+    novel_id, (ch1, _ch2, _ch3) = await _seed_novel_with_chapters(3)
+    await _insert_segment(novel_id, ch1, 0, _zh("乙"), "Human corrected.",
+                          machine_text="Machine draft.")
+    pending_id = await _seed_pending_chapter(novel_id, 4)
+
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_STYLE_EDITS", False)
+    calls: list = []
+    _stub_translate(monkeypatch, calls)
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_id)
+
+    # The gate actually applied: no style pairs reached the translator.
+    assert calls[0]["style_edits"] == []
+    # And the snapshot records exactly that state, from the same source.
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT prompt_config_snapshot FROM chapters WHERE id = ?",
+            (pending_id,),
+        )
+        row = await cur.fetchone()
+    snap = json.loads(row["prompt_config_snapshot"])
+    assert snap["flags"]["PROMPT_INCLUDE_STYLE_EDITS"] is False
+    assert snap["style_edits_included"] is False

@@ -26,6 +26,7 @@ import json
 
 import pytest
 
+from backend import config
 from backend.db import init_db, open_conn
 from backend.models import TranslationResult
 from backend.services import providers as providers_svc
@@ -526,7 +527,7 @@ async def test_approved_pairs_absent_when_flag_off(monkeypatch):
     await _requeue(novel_id, chapter_id)
 
     monkeypatch.setattr(
-        queue_svc, "PROMPT_INCLUDE_APPROVED_TRANSLATIONS", False
+        config, "PROMPT_INCLUDE_APPROVED_TRANSLATIONS", False
     )
     calls: list = []
     _stub_translate(monkeypatch, "two", calls=calls)

@@ -51,7 +51,7 @@ from collections import defaultdict
 
 import aiosqlite
 
-from backend.config import PROMPT_INCLUDE_FREE_DRAFT
+from backend import config
 from backend.db import open_conn
 from backend.models import GlossaryEntry
 from backend.services import global_glossary as global_glossary_svc
@@ -290,7 +290,9 @@ async def _fixup_delta_report(
             prev = await fetch_previous_chapter_tail(
                 conn, novel_id, c["chapter_num"]
             )
-            free_draft = c["free_draft_text"] if PROMPT_INCLUDE_FREE_DRAFT else None
+            free_draft = (
+                c["free_draft_text"] if config.PROMPT_INCLUDE_FREE_DRAFT else None
+            )
             prompt_title = strip_title_update_marker(c["title_zh"]) or None
             prompt_src = strip_heading_update_marker(c["original_text"])
             try:
