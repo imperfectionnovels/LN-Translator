@@ -1016,3 +1016,60 @@ a:focus-visible {
   border-radius: 2px;
 }
 .app-toast button:hover { background: rgba(255,255,255,0.08); }
+
+/* ===== Overflow "..." util menu (shared: reader chapter bar + editor bar) =====
+ * <details>-based pattern (same as the glossary download menu). Close-on-
+ * outside-click + aria-expanded mirroring live in utils.js (C8). Hoisted from
+ * reader.css when the CAT editor gained its own util menu (Phase 6). */
+.util-menu { position: relative; font-family: var(--font-family-sans); font-size: 12.5px; }
+.util-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px; height: 32px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  border: 1px solid transparent;
+  font-size: 16px;
+}
+.util-menu > summary:hover { color: var(--fg); background: var(--bg-tint); border-color: var(--border-soft); }
+.util-menu > summary::-webkit-details-marker { display: none; }
+.util-menu[open] > summary { color: var(--fg); background: var(--bg-tint); border-color: var(--border); }
+.util-menu .menu {
+  position: absolute;
+  right: 0; top: calc(100% + 6px);
+  z-index: 6;
+  min-width: 240px;
+  background: var(--pane-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-popover);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.util-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; box-sizing: border-box;
+  padding: 7px 10px;
+  border: none; background: transparent;
+  text-align: left;
+  font-family: inherit; font-size: 13px;
+  color: var(--fg);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-decoration: none;
+}
+.util-menu-item:hover { background: var(--bg-tint); }
+.util-menu-item .ico {
+  width: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.util-menu-item:hover .ico { color: var(--fg); }
+.util-menu-divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 6px;
+}

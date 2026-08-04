@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Editor · LN Translator</title>
 <script src="/static/js/boot.js"></script>
-<link rel="stylesheet" href="/static/css/base.css?v=4">
-<link rel="stylesheet" href="/static/css/editor.css?v=3">
+<link rel="stylesheet" href="/static/css/base.css?v=5">
+<link rel="stylesheet" href="/static/css/editor.css?v=4">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -44,6 +44,25 @@
       <button type="button" class="icon-btn" id="shortcuts-btn"
               title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
       <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
+      <!-- Phase 6: the reader's edit-mode diagnostics + actions relocated
+           here as an overflow menu (same <details> util-menu pattern the
+           reader's chapter bar uses; wiring lives in editor-tools.js). -->
+      <details class="util-menu" id="editor-util-menu">
+        <summary class="icon-btn" title="More chapter tools" aria-label="More chapter tools">⋯</summary>
+        <div class="menu">
+          <button class="util-menu-item" id="editor-observations" title="Open the QA panel for translation issues the system noticed for this chapter" aria-label="Translation issues"><span class="ico">⚠</span>Translation issues</button>
+          <button class="util-menu-item" id="editor-view-attempts" title="Show this chapter's translation attempts (parse errors, retries, timestamps)" aria-label="View translation attempts"><span class="ico">≡</span>View translation attempts</button>
+          <button class="util-menu-item" id="editor-view-last-prompt" title="Show the resolved prompt that was sent to the LLM for this chapter" aria-label="View last prompt"><span class="ico">¶</span>View last prompt</button>
+          <button class="util-menu-item" id="editor-precheck" title="Run the pre-translation checks (length, glossary saturation, OCR shape) for this chapter" aria-label="Pre-translation check"><span class="ico">✓</span>Pre-translation check</button>
+          <div class="util-menu-divider"></div>
+          <button class="util-menu-item" id="editor-learn-edits" title="Turn your segment edits into glossary fixes and a per-novel voice note, so future chapters improve" aria-label="Learn from my edits"><span class="ico">✦</span>Learn from my edits…</button>
+          <button class="util-menu-item" id="editor-concordance" title="Search the translation memory for a phrase across this novel" aria-label="Concordance search"><span class="ico">尋</span>Concordance search…</button>
+          <button class="util-menu-item" id="editor-style-note" title="Edit the per-novel style note (voice anchor for translations)" aria-label="Style note"><span class="ico">✒</span>Style note…</button>
+          <div class="util-menu-divider"></div>
+          <button class="util-menu-item" id="editor-refresh-free-draft" title="Regenerate the Google Translate rough draft for this chapter (clears the existing one)" aria-label="Refresh free draft"><span class="ico">⟳</span>Refresh free draft</button>
+          <button class="util-menu-item" id="editor-insert-chapter" title="Insert a chapter that was missed during import into the middle of this novel (renumbers later chapters)" aria-label="Insert chapter"><span class="ico">＋</span>Insert chapter…</button>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -83,6 +102,22 @@
         <h3 class="assist-h">Glossary</h3>
         <div id="assist-glossary" class="assist-glossary"></div>
       </div>
+      <!-- Phase 6: chapter-level tiers relocated from the reader's terms +
+           consistency rails. Missing-locked = locked glossary terms whose
+           Chinese appears in a segment's source but whose English is absent
+           from that segment's target (click jumps to the row). Terms = every
+           glossary term firing in this chapter, click to revise; + Add term
+           opens the blank add form. Rendered by editor-tools.js. -->
+      <div class="assist-section">
+        <h3 class="assist-h">Missing locked terms</h3>
+        <div id="assist-missing-locked" class="assist-missing-locked"></div>
+      </div>
+      <div class="assist-section">
+        <h3 class="assist-h assist-h-row">Terms in this chapter <span class="assist-terms-count" id="assist-terms-count"></span>
+          <button type="button" class="btn-ghost assist-add-term" id="assist-add-term" title="Add a glossary term (or select any phrase in the grid)">+ Add term</button>
+        </h3>
+        <div id="assist-chapter-terms" class="assist-chapter-terms"></div>
+      </div>
     </aside>
   </div>
 
@@ -119,6 +154,153 @@
       <button type="button" class="btn-primary" id="ai-suggestion-apply">Apply AI text</button>
     </div>
   </dialog>
+
+  <!-- ==== Phase 6: dialogs relocated from the reader's edit mode. ==== -->
+
+  <!-- QA panel: every observation kind for the current chapter, with soft
+       per-row dismissal. Rows are re-fetched on open. -->
+  <dialog id="observations-dialog" class="dialog observations-dialog" aria-labelledby="observations-dialog-title">
+    <h3 id="observations-dialog-title">Translation issues</h3>
+    <p class="observations-intro muted">Things the post-translation observers noticed. Logged for your review; no automatic re-translation. Dismiss rows you have fixed by hand.</p>
+    <div class="observations-list" id="observations-list" aria-live="polite">
+      <p class="muted">Loading…</p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="observations-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Translation attempts log (F22). -->
+  <dialog id="attempts-dialog" class="dialog" aria-labelledby="attempts-title">
+    <h3 id="attempts-title">Translation attempts</h3>
+    <p class="muted" style="margin: 4px 0 8px; font-size: 12px;">Recent translation runs for this chapter. Parse errors and retry counts surface here.</p>
+    <div id="attempts-body" style="max-height: 60vh; overflow:auto;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Last prompt sent to the LLM (F22). -->
+  <dialog id="last-prompt-dialog" class="dialog" aria-labelledby="last-prompt-title">
+    <h3 id="last-prompt-title">Last prompt sent to the LLM</h3>
+    <p class="muted" style="margin: 4px 0 8px; font-size: 12px;">The actual user prompt the translator received for this chapter. Useful for diagnosing mistranslations against the context that produced them.</p>
+    <pre id="last-prompt-body" style="max-height: 60vh; overflow:auto; background: var(--bg-tint); padding: 10px; border-radius: 4px; font-size: 12px; white-space: pre-wrap;"></pre>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Close</button>
+      <button type="button" class="btn-ghost" id="last-prompt-copy">Copy</button>
+    </div>
+  </dialog>
+
+  <!-- Concordance search: TM lookup across this novel. In the reader this was
+       selection-driven; here it is a search box (select text in the grid and
+       the popover's Concordance action prefills it). -->
+  <dialog id="concordance-dialog" class="dialog concordance-dialog" aria-labelledby="concordance-dialog-title">
+    <h3 id="concordance-dialog-title">Concordance</h3>
+    <p class="muted" style="font-size:.85em;margin:.2rem 0 .8rem;">
+      Every TM-indexed paragraph in this novel matching the phrase, source or
+      target side. Click a hit to open that segment.
+    </p>
+    <div class="concordance-form">
+      <input type="text" id="concordance-input" placeholder="Phrase to search (中文 or English)" maxlength="200">
+      <button type="button" class="btn-primary" id="concordance-search">Search</button>
+    </div>
+    <div class="concordance-list" id="concordance-list" aria-live="polite"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-primary" id="concordance-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Learn-from-edits panel: staged proposal derived from this chapter's
+       edited segments; the user confirms each row, then commit routes them to
+       the glossary + per-novel brief. -->
+  <dialog id="learn-edits-dialog" class="dialog" aria-labelledby="learn-edits-title">
+    <h3 id="learn-edits-title">Learn from your edits</h3>
+    <p class="muted" style="margin:4px 0 10px;font-size:12px;">
+      Patterns the system noticed in your segment edits to this chapter. Pick what it
+      should keep, so future chapters improve. Nothing is applied until you choose Apply.
+    </p>
+    <div id="learn-edits-body" style="max-height:56vh;overflow:auto;"></div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;">
+      <input type="checkbox" id="learn-edits-gt" />
+      Save this chapter as a quality reference (for A/B against future prompt changes)
+    </label>
+    <div id="learn-edits-status" style="font-size:.85em;color:var(--muted);margin-top:.4rem;min-height:1.2em;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" data-act="cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="learn-edits-apply">Apply selected</button>
+    </div>
+  </dialog>
+
+  <!-- Per-novel style note (voice anchor injected into every translation
+       prompt for this novel). -->
+  <dialog id="style-note-dialog" class="dialog" aria-labelledby="style-note-title">
+    <h3 id="style-note-title">Per-novel style note</h3>
+    <p style="font-size:.9em;color:var(--muted);margin:.4rem 0 .6rem">
+      A voice brief injected into every chapter-translation prompt for this novel. The translator reads it as a voice instruction. (For genre-level guidance, edit the novel's <em>custom style brief</em> on the novel page instead.)
+    </p>
+    <textarea id="style-note-text" rows="14" style="width:100%;font-family:var(--font-family-serif,serif);font-size:14px;padding:.6rem;box-sizing:border-box;" placeholder="(no style note yet · write one here to anchor the translator's voice)"></textarea>
+    <div id="style-note-status" style="font-size:.85em;color:var(--muted);margin-top:.4rem;min-height:1.2em;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="style-note-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="style-note-save">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Insert a mid-novel chapter that was missed during import. -->
+  <dialog id="insert-chapter-dialog" class="dialog" aria-labelledby="insert-chapter-title">
+    <h3 id="insert-chapter-title">Insert a chapter</h3>
+    <p style="font-size:.9em;color:var(--muted);margin:.4rem 0 .6rem">
+      Paste a chapter that was missed during import. It lands immediately <em>after</em> the chapter number you choose; later chapters are renumbered to make room. The inserted chapter starts untranslated.
+    </p>
+    <label style="display:block;font-size:.9em;margin-bottom:.5rem">
+      Insert after chapter
+      <input type="number" id="insert-after-num" min="0" step="1" style="width:6em;margin:0 .4rem;padding:.3rem;" />
+      <span style="color:var(--muted)">(0 = before the first chapter)</span>
+    </label>
+    <input type="text" id="insert-title" placeholder="Optional title (e.g. The Duel)" style="width:100%;padding:.4rem;box-sizing:border-box;margin-bottom:.5rem;" />
+    <textarea id="insert-text" rows="12" style="width:100%;font-family:var(--font-family-serif,serif);font-size:14px;padding:.6rem;box-sizing:border-box;" placeholder="Paste the raw chapter text here…"></textarea>
+    <div id="insert-status" style="font-size:.85em;color:var(--muted);margin-top:.4rem;min-height:1.2em;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="insert-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="insert-save">Insert</button>
+    </div>
+  </dialog>
+
+  <!-- Glossary term form: one dialog for both Add (from the selection popover
+       or the + Add term button) and Revise (terms list / popover on an exact
+       match). Fields are stamped by editor-tools.js. -->
+  <dialog id="term-form-dialog" class="dialog term-form-dialog" aria-labelledby="term-form-title">
+    <h3 id="term-form-title">Add to glossary</h3>
+    <div class="term-form-grid">
+      <label for="tf-zh">Chinese</label>
+      <input id="tf-zh" placeholder="中文 term">
+      <label for="tf-en">English</label>
+      <input id="tf-en" placeholder="English term">
+      <label for="tf-cat">Category</label>
+      <select id="tf-cat">
+        <option value="character" selected>character</option>
+        <option value="place">place</option>
+        <option value="technique">technique</option>
+        <option value="item">item</option>
+        <option value="other">other</option>
+        <option value="idiom">idiom</option>
+      </select>
+      <label for="tf-notes">Notes</label>
+      <input id="tf-notes" placeholder="optional">
+      <label for="tf-locked">Locked</label>
+      <label class="term-form-lock-row">
+        <input type="checkbox" id="tf-locked" checked>
+        <span class="muted">Protect from auto-overwrite by future translations</span>
+      </label>
+    </div>
+    <div id="tf-err" class="muted term-form-err"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost term-form-delete" id="tf-delete" hidden>Remove</button>
+      <span style="flex:1;"></span>
+      <button type="button" class="btn-ghost" id="tf-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="tf-save">Save</button>
+    </div>
+  </dialog>
 </main>
 
 <script src="/static/js/api.js"></script>
@@ -129,8 +311,10 @@
 <script src="/static/js/utils.js" defer></script>
 <!-- Editor modules: ordered plain script tags (reader-*.js convention).
      Core first owns the shared state; assist reads it and listens for the
-     editor:* CustomEvents core dispatches. -->
+     editor:* CustomEvents core dispatches; tools last adds the util menu
+     dialogs, glossary popover + terms tiers (Phase 6 relocations). -->
 <script src="/static/js/editor-core.js" defer></script>
 <script src="/static/js/editor-assist.js" defer></script>
+<script src="/static/js/editor-tools.js" defer></script>
 </body>
 </html>

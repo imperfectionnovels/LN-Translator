@@ -437,3 +437,218 @@
   .seg-meta { grid-column: 2; flex-direction: row; align-items: center; flex-wrap: wrap; }
   .editor-progress { min-width: 140px; }
 }
+
+/* ==== Phase 6: reader edit-mode relocations ==== */
+
+/* QA observations dialog: one row per observation, kind chip + dismiss. */
+.observations-dialog { max-width: 640px; }
+.observations-dialog .observations-intro { font-size: 0.85em; margin: .2rem 0 .8rem; }
+.observations-dialog .observations-list { max-height: 60vh; overflow-y: auto; }
+.observations-dialog .observation-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.observations-dialog .observation-row:first-child { border-top: none; }
+.observations-dialog .observation-kind {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.observations-dialog .observation-excerpt {
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow-wrap: break-word;
+}
+.observations-dialog .observation-dismiss {
+  flex: none;
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.observations-dialog .observation-dismiss:hover { color: var(--fg); border-color: var(--muted); }
+.observations-dialog .observations-empty { color: var(--muted); font-style: italic; }
+
+/* Concordance dialog: search box + hit list (click-to-open segment). */
+.concordance-dialog { max-width: 720px; }
+.concordance-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.concordance-form input { flex: 1; min-width: 0; }
+.concordance-dialog .concordance-list { max-height: 55vh; overflow-y: auto; }
+.concordance-dialog .concordance-hit {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.concordance-dialog .concordance-hit:first-child { border-top: none; }
+.concordance-dialog .concordance-hit:hover { background: var(--bg-tint); }
+.concordance-dialog .concordance-chapter {
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.concordance-dialog .concordance-paragraph {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.concordance-dialog .concordance-source {
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow-wrap: break-word;
+}
+.concordance-dialog .concordance-target {
+  font-size: 13px;
+  overflow-wrap: break-word;
+}
+.concordance-dialog .concordance-matched-side {
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.concordance-dialog .concordance-prov {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+}
+.concordance-dialog .concordance-prov-confirmed { background: #15803d; }
+.concordance-dialog .concordance-prov-edited    { background: #1d4ed8; }
+.concordance-dialog .concordance-empty { color: var(--muted); font-style: italic; }
+
+/* Learn-from-edits rows. */
+.learn-sec {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-weight: 600; margin: 12px 0 4px;
+}
+.learn-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 4px; font-size: 13px; line-height: 1.4;
+  border-radius: 6px; cursor: pointer;
+}
+.learn-row:hover { background: var(--bg-tint); }
+.learn-row input { margin-top: 3px; flex: none; }
+.learn-arrow { color: var(--muted); }
+
+/* Glossary term form dialog (add / revise). */
+.term-form-dialog { max-width: 480px; }
+.term-form-grid {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+}
+.term-form-grid > label { color: var(--muted); font-size: 12px; }
+.term-form-grid input[readonly] { color: var(--muted); background: var(--bg-tint); cursor: default; }
+.term-form-lock-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.term-form-err { color: var(--signal-error); min-height: 1.2em; margin-top: 6px; font-size: 12.5px; }
+.term-form-delete { color: var(--signal-error); }
+
+/* Selection popover on the segment grid (add-to-glossary / concordance). */
+.sel-pop {
+  position: absolute;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-md);
+  background: var(--topbar-bg, #222);
+  color: var(--topbar-fg, #fff);
+  box-shadow: 0 6px 18px -6px rgba(0,0,0,0.5);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.sel-pop button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.sel-pop button:hover { background: rgba(255,255,255,0.1); }
+.sel-pop .sep { width: 1px; height: 16px; background: rgba(255,255,255,0.18); }
+.sel-pop-hint { padding: 0 6px; color: rgba(255,255,255,0.75); font-size: 11.5px; }
+
+/* Chapter-level glossary tiers in the assist rail. */
+.assist-h-row { display: flex; align-items: center; gap: 6px; }
+.assist-terms-count { font-weight: 400; }
+.assist-add-term {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 7px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.missing-locked-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  margin-bottom: 5px;
+  border: 1px solid color-mix(in srgb, var(--signal-error, #7a3030) 45%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--signal-error, #7a3030) 7%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.missing-locked-row:hover { background: color-mix(in srgb, var(--signal-error, #7a3030) 14%, transparent); }
+.missing-locked-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 99px;
+  color: #fff;
+  background: var(--signal-error, #7a3030);
+}
+.missing-locked-arrow { color: var(--muted); }
+.missing-locked-segs { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chapter-term-card {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.chapter-term-card:hover { border-color: var(--accent); background: var(--bg-tint); }
+.chapter-term-card .ct-zh { font-weight: 600; }
+.chapter-term-card .ct-en { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-term-card .ct-meta { margin-left: auto; flex: none; font-size: 11px; color: var(--muted); }
