@@ -85,6 +85,7 @@ from backend.services.segmentation import (
     chapter_source_paragraphs,
     split_target_paragraphs,
 )
+from backend.services.translators.base import PROMPT_PAIR_SIDE_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -1236,9 +1237,10 @@ async def approved_prompt_pairs(
 # Phase 5: feed-the-AI exemplars + provenance-aware TM read surfaces
 # ---------------------------------------------------------------------------
 
-# Per-side truncation for a confirmed exemplar pair, matching the ~400-char
-# convention of format_style_edits (enough to convey voice, bounded prompt).
-_EXEMPLAR_SIDE_MAX_CHARS = 400
+# Per-side truncation for a confirmed exemplar / edited pair, tied to the
+# render-time bound of format_style_edits / format_confirmed_exemplars via
+# the shared constant (enough to convey voice, bounded prompt, desync-proof).
+_EXEMPLAR_SIDE_MAX_CHARS = PROMPT_PAIR_SIDE_MAX_CHARS
 # Candidate-pool multiplier: the recency query over-fetches so the source
 # dedupe below can still fill `limit` distinct pairs when the most recent
 # confirmations repeat a source paragraph.

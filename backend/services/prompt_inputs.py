@@ -35,6 +35,7 @@ from backend.services.providers import (
     get_default_provider,
     load_provider,
 )
+from backend.services.translators.base import PROMPT_PAIR_SIDE_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,11 @@ async def fetch_confirmed_exemplars(
         return []
 
 
-# Dedupe-key truncation for merged style pairs, matching the ~400-char bound
-# format_style_edits renders with (and the segment pairs are stored at), so
-# two pairs that would render identically in the prompt count as one.
-_STYLE_PAIR_KEY_CHARS = 400
+# Dedupe-key truncation for merged style pairs, tied to the bound
+# format_style_edits renders with (and the segment pairs are stored at) via
+# the shared constant, so two pairs that would render identically in the
+# prompt count as one and the sites cannot drift apart.
+_STYLE_PAIR_KEY_CHARS = PROMPT_PAIR_SIDE_MAX_CHARS
 
 
 async def fetch_style_edits(
@@ -115,11 +117,14 @@ async def fetch_style_edits(
 
     if len(result) < STYLE_EDIT_LIMIT:
         try:
+            # Over-fetch the legacy window so rows that dedupe against the
+            # fresher segment pairs (or against each other) do not under-fill
+            # the block when older distinct rows exist.
             cur = await conn.execute(
                 "SELECT before_text, after_text FROM style_edits "
                 "WHERE novel_id = ? "
                 "ORDER BY id DESC LIMIT ?",
-                (novel_id, STYLE_EDIT_LIMIT),
+                (novel_id, STYLE_EDIT_LIMIT * 2),
             )
             rows = await cur.fetchall()
         except aiosqlite.OperationalError:

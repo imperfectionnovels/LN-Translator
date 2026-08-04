@@ -5,7 +5,7 @@ Read/dismiss surfaces over the persisted chapter_observations rows:
     for the library page badges (one query, no N+1).
   * GET /api/novels/{id}/chapters/{n}/observations — full list for one
     chapter, ordered by id (stable insertion order).
-  * POST .../observations/recheck — pull-based refresh (gap audit
+  * POST .../observations/recheck: pull-based refresh (gap audit
     2026-08-04): re-runs the body-correctness observers against the current
     displayed body via services/observations.recheck_body_observations and
     returns the refreshed list (same shape as the GET). 409

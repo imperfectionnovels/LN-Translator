@@ -249,6 +249,27 @@ async def test_fetch_dedupes_legacy_on_before_text_and_caps():
     assert ("Segment draft.", "stale legacy after") not in result
 
 
+async def test_fetch_legacy_overfetch_fills_past_window_dupes():
+    """Legacy-side over-fetch (limit * 2): duplicate before-texts inside the
+    newest window must not under-fill the block when older distinct rows
+    exist. 12 rows where the newest repeats an existing before-text: a plain
+    LIMIT-10 window would yield 9 pairs; the over-fetch fills all 10."""
+    novel_id, (_ch1, _ch2, ch3) = await _seed_novel_with_chapters(3)
+    for i in range(11):
+        await _insert_style_edit(novel_id, f"legacy b{i}", f"legacy a{i}")
+    await _insert_style_edit(novel_id, "legacy b10", "legacy a10 rev2")
+    async with open_conn() as conn:
+        result = await prompt_inputs.fetch_style_edits(
+            conn, novel_id, exclude_chapter_id=ch3
+        )
+    assert len(result) == 10
+    # Newest occurrence of the repeated before-text wins the dedupe...
+    assert result[0] == ("legacy b10", "legacy a10 rev2")
+    # ...and the slot its older twin freed is back-filled from beyond the
+    # plain window.
+    assert result[-1] == ("legacy b1", "legacy a1")
+
+
 async def test_fetch_flag_off_returns_empty(monkeypatch):
     novel_id, (ch1, _ch2, ch3) = await _seed_novel_with_chapters(3)
     await _insert_segment(novel_id, ch1, 0, _zh("乙"), "Segment fix.",

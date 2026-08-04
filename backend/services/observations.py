@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import aiosqlite
+from fastapi.concurrency import run_in_threadpool
 
 from backend.services import segments as segments_svc
 from backend.services.text_observers import body_correctness_observations
@@ -327,8 +328,12 @@ async def recheck_body_observations(
     if not body.strip():
         return False
 
+    # Pure CPU scan offloaded off the event loop (the diagnostics /
+    # quality_dashboard precedent): a large glossary union over a full
+    # chapter body is regex-heavy and would stall concurrent requests.
     fresh = normalize_observer_outputs(
-        body_correctness_observations(
+        await run_in_threadpool(
+            body_correctness_observations,
             chapter_row["original_text"] or "", body, glossary,
         )
     )
@@ -343,7 +348,11 @@ async def recheck_body_observations(
     if muted:
         fresh = [o for o in fresh if o.kind not in muted]
 
-    kinds = sorted(BODY_RECHECK_KINDS)
+    # Union hardening: the static set clears fixed findings even when a run
+    # produces none of a kind; unioning in the kinds THIS run produced makes
+    # duplicate accumulation impossible for a future body observer that was
+    # not added to the static set (its rows are replaced, not appended).
+    kinds = sorted(BODY_RECHECK_KINDS | {o.kind for o in fresh})
     placeholders = ",".join("?" * len(kinds))
     cur = await conn.execute(
         f"SELECT kind, excerpt, dismissed_at FROM chapter_observations "

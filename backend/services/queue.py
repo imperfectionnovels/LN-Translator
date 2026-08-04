@@ -91,6 +91,7 @@ from backend.services.translators import translate_chapter
 from backend.services.translators.base import (
     COUNT_MISMATCH_ACCEPTED,
     COUNT_MISMATCH_RETRY,
+    PROMPT_PAIR_SIDE_MAX_CHARS,
     PROMPT_TEMPLATE_VERSION,
     ParagraphCountMismatch,
     build_count_corrective,
@@ -926,8 +927,11 @@ async def _translate_chapter_in_db(
             # A confirmed source that also recurs in THIS chapter already
             # rides the approved block (cross-chapter exact match), so the
             # exemplar copy is redundant; drop it. Exemplar sides are
-            # truncated to 400 chars, so compare on the truncated form.
-            approved_srcs = {zh[:400] for _i, zh, _en in approved_pairs}
+            # truncated to the shared pair-side bound, so compare on the
+            # truncated form.
+            approved_srcs = {
+                zh[:PROMPT_PAIR_SIDE_MAX_CHARS] for _i, zh, _en in approved_pairs
+            }
             confirmed_exemplars = [
                 (zh, en) for zh, en in confirmed_exemplars
                 if zh not in approved_srcs
@@ -936,12 +940,14 @@ async def _translate_chapter_in_db(
             # Same dedupe for the style arm: a segment pair whose AFTER text
             # already rides this chapter's approved block would show the
             # model the identical rendering twice (correction example +
-            # verbatim-reuse row). Style-pair sides are truncated to 400
-            # chars, so compare on the truncated form.
-            approved_ens = {en[:400] for _i, _zh, en in approved_pairs}
+            # verbatim-reuse row). Style-pair sides are truncated to the
+            # shared pair-side bound, so compare on the truncated form.
+            approved_ens = {
+                en[:PROMPT_PAIR_SIDE_MAX_CHARS] for _i, _zh, en in approved_pairs
+            }
             style_edits = [
                 (before, after) for before, after in style_edits
-                if after[:400] not in approved_ens
+                if after[:PROMPT_PAIR_SIDE_MAX_CHARS] not in approved_ens
             ]
         translate_t0 = time.perf_counter()
         result = await translate_chapter(

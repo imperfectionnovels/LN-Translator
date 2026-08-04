@@ -510,6 +510,15 @@ def format_glossary(
     return "\n".join(lines)
 
 
+# Per-side truncation for every example-pair prompt block (style pairs,
+# confirmed exemplars) and for the fetch/dedupe sites that must compare on
+# the rendered form (segments.recent_edited_pairs /
+# fetch_confirmed_exemplar_pairs, prompt_inputs' merge key, the queue's
+# approved-block dedupes). This render function is the source of truth;
+# consuming the constant everywhere makes desync impossible.
+PROMPT_PAIR_SIDE_MAX_CHARS = 400
+
+
 def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
     """Render captured user paragraph edits as a "preferred rewrites" block.
 
@@ -520,8 +529,8 @@ def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
         return ""
     lines: list[str] = []
     for i, (before, after) in enumerate(style_edits, start=1):
-        b = (before or "").strip().replace("\n", " ")[:400]
-        a = (after or "").strip().replace("\n", " ")[:400]
+        b = (before or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
+        a = (after or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
         if not b or not a:
             continue
         lines.append(f"Example {i}:\n  BEFORE: {b}\n  AFTER:  {a}")
@@ -602,8 +611,8 @@ def format_confirmed_exemplars(
         return ""
     lines: list[str] = []
     for i, (zh, en) in enumerate(confirmed_exemplars, start=1):
-        z = (zh or "").strip().replace("\n", " ")[:400]
-        e = (en or "").strip().replace("\n", " ")[:400]
+        z = (zh or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
+        e = (en or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
         if not z or not e:
             continue
         lines.append(f"Example {i}:\n  SOURCE:    {z}\n  CONFIRMED: {e}")

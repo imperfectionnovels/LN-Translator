@@ -263,6 +263,29 @@ async def test_body_recheck_kinds_cover_normalizer_taxonomy():
         assert translate_only not in BODY_RECHECK_KINDS
 
 
+@pytest.mark.asyncio
+async def test_future_kind_outside_static_set_replaced_not_duplicated(monkeypatch):
+    """Union hardening: a finding of a kind that was never added to
+    BODY_RECHECK_KINDS (a future body observer missed during review) still
+    gets scope-replaced because the DELETE unions in the kinds the current
+    run produced, so duplicates can never accumulate across rechecks."""
+    novel_id, chapter_id = await _seed_chapter()
+    drift = obs_svc.NormalizedObservation(
+        kind="future_body_kind", severity="warn",
+        paragraph_index=None, excerpt="future observer finding",
+    )
+    monkeypatch.setattr(
+        obs_svc, "normalize_observer_outputs", lambda msgs: [drift],
+    )
+    assert "future_body_kind" not in BODY_RECHECK_KINDS
+    await _run_recheck(novel_id, chapter_id)
+    await _run_recheck(novel_id, chapter_id)
+    rows = await _obs_rows(chapter_id)
+    assert [(r["kind"], r["excerpt"]) for r in rows] == [
+        ("future_body_kind", "future observer finding")
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Guards + inputs
 # ---------------------------------------------------------------------------
