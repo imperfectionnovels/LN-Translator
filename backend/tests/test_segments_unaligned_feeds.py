@@ -24,15 +24,25 @@ from backend.services.segments import hash16
 pytestmark = pytest.mark.asyncio
 
 
+def _unlink_db_files() -> None:
+    # WAL gotcha (docs/decisions.md): a -wal/-shm pair left beside a deleted
+    # main file resurrects stale pages into the next connection. Delete the
+    # trio, and clean up on teardown too.
+    for suffix in ("", "-wal", "-shm"):
+        p = DB_PATH.parent / (DB_PATH.name + suffix)
+        if p.exists():
+            p.unlink()
+
+
 @pytest.fixture(autouse=True)
 def _reset_db():
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    _unlink_db_files()
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
     conn.commit()
     conn.close()
     yield
+    _unlink_db_files()
 
 
 _SRC_PARA = "甲" * 29 + "。"

@@ -865,7 +865,12 @@ async def test_self_heal_preserves_human_rows_positionally():
         "OOB first.", "OOB second.", "OOB third.",
     ]
     assert [s["status"] for s in segs] == ["machine", "edited", "confirmed"]
-    assert segs[1]["origin"] == "human"
+    # B3 (bug hunt 2026-08-04): the rebuild CHANGED the human rows' text
+    # out from under them, so their origin demotes to 'reprojected' (status
+    # survives; the provenance-gated feeds stop treating the swapped text
+    # as a user edit until a later save/confirm restores 'human').
+    assert segs[1]["origin"] == "reprojected"
+    assert segs[2]["origin"] == "reprojected"
     # The human DB rows survived (same primary keys); machine row rebuilt.
     row_ids_after = {r[1]: r[0] for r in _db_segments(chapter_id)}
     assert row_ids_after[1] == row_ids_before[1]

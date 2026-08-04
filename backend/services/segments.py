@@ -65,6 +65,19 @@ STYLE PREFERENCES prompt arm from the ledger, novel-wide edited|confirmed
 before-after pairs replacing the severed style_edits in-app producer
 (prompt_inputs.fetch_style_edits merges them ahead of the legacy rows).
 
+Provenance gating (bug hunt 2026-08-04, B3+F1+F2+B14): `origin` carries real
+provenance now, not just the producer tag. Values: 'human' (an update_segment
+save wrote the text), 'llm' / 'llm_refined' / 'tm_exact' / 'aligned_backfill'
+(machine producers), and 'reprojected' (a text-authoritative rebuild or
+reproject CHANGED a human row's target out from under it: the text no longer
+carries the user's endorsement, though status is preserved per the Phase 3
+invariant). Style-pair feeds (`recent_edited_pairs`,
+`edited_pairs_for_chapter`) require origin='human'; exemplar/endorsement
+feeds keep status='confirmed' semantics (confirm-as-is IS endorsement) but
+exclude origin='reprojected'. A later human save restores origin='human';
+a single-row confirm restores it too (the user re-vouched with eyes on the
+row); bulk confirm_all deliberately does not.
+
 Async, aiosqlite. No route logic; callers own the commit.
 """
 
@@ -290,11 +303,15 @@ async def build_segments_from_alignment(
     Human rows (status edited|confirmed) are never deleted:
       - On a successful alignment they re-anchor by source_hash (their own
         seg_index is the first candidate, so an unchanged source list maps
-        positionally); status / origin / machine_text / edited_at /
-        confirmed_at ride along. target_text takes the NEW body's paragraph
-        for that slot: rebuilds are text-authoritative (the body already
-        changed out of band), so the body wins on text and the row keeps its
-        human status, exactly like `reproject_from_body`.
+        positionally); status / machine_text / edited_at / confirmed_at ride
+        along. target_text takes the NEW body's paragraph for that slot:
+        rebuilds are text-authoritative (the body already changed out of
+        band), so the body wins on text and the row keeps its human status,
+        exactly like `reproject_from_body`. When that slot's text CHANGES
+        the row's target, origin is stamped 'reprojected' (B3): the text no
+        longer carries the user's endorsement, and the provenance-gated
+        feeds stop treating it as a human edit until a later save/confirm
+        restores origin='human'.
       - When the alignment fails (below the <50% gate, empty split, or a
         human row's source paragraph vanished), every row is RETAINED
         untouched and the chapter is stamped 'unaligned' (rows kept). Only
@@ -386,11 +403,23 @@ async def build_segments_from_alignment(
         )
         for row_id, j in anchors.items():
             text, aligned = entries[j]
+            # B3 (bug hunt 2026-08-04): a rebuild is text-authoritative, so
+            # when the new body CHANGES this human row's text, the row's
+            # (machine_text, target) delta is no longer a user edit and its
+            # target no longer carries the user's endorsement. Stamp
+            # origin='reprojected' (status untouched per the Phase 3
+            # invariant); a later human save/confirm restores 'human'. The
+            # CASE reads the PRE-update target_text, so an unchanged slot
+            # keeps its origin.
             await conn.execute(
                 "UPDATE chapter_segments SET seg_index = ?, source_text = ?, "
-                "source_hash = ?, target_text = ?, aligned = ?, "
+                "source_hash = ?, "
+                "origin = CASE WHEN target_text != ? THEN 'reprojected' "
+                "ELSE origin END, "
+                "target_text = ?, aligned = ?, "
                 "updated_at = datetime('now') WHERE id = ?",
-                (j, src[j], new_hashes[j], text, 1 if aligned else 0, row_id),
+                (j, src[j], new_hashes[j], text, text,
+                 1 if aligned else 0, row_id),
             )
     human_indexes = set(anchors.values())
     await conn.executemany(
@@ -671,7 +700,14 @@ async def update_segment(
       - save:             write after_text, status -> 'edited' (a confirmed
                           row demotes), origin -> 'human', aligned -> 1.
       - confirm:          status -> 'confirmed', no text change. Idempotent
-                          on an already-confirmed row.
+                          on an already-confirmed row. Confirm-as-is keeps a
+                          machine origin (endorsement, not editing: the row
+                          must not start minting style pairs), EXCEPT
+                          origin='reprojected', which restores to 'human'
+                          (the user re-vouched for the detached text with
+                          eyes on the row). An already-confirmed reprojected
+                          row is re-endorsed via unconfirm+confirm or a
+                          save.
       - save_and_confirm: both in one write (status -> 'confirmed').
       - unconfirm:        confirmed -> 'edited' (other states are a 400).
       - revert_machine:   target_text := machine_text, status -> 'machine',
@@ -762,9 +798,15 @@ async def update_segment(
                 "text first."
             )
         if status != "confirmed":
+            # Origin: confirm-as-is preserves machine origins (see the
+            # docstring), but a 'reprojected' row restores to 'human': the
+            # user looked at the detached text and vouched for it, so it
+            # re-enters the endorsement feeds (B3).
             cur = await conn.execute(
                 "UPDATE chapter_segments SET status = 'confirmed', "
                 "aligned = 1, confirmed_at = datetime('now'), "
+                "origin = CASE WHEN origin = 'reprojected' THEN 'human' "
+                "ELSE origin END, "
                 "updated_at = datetime('now') WHERE id = ?",
                 (seg["id"],),
             )
@@ -844,7 +886,11 @@ async def confirm_all(
     ['machine', 'edited']). Rev-guarded like update_segment (including the
     optional `chapter_id` anti-renumber guard, B8); empty-target
     rows are skipped (an unwritten paragraph cannot be confirmed). No text
-    changes, so no rematerialization. Returns {confirmed, chapter_rev,
+    changes, so no rematerialization. Origin is deliberately untouched (F2):
+    a bulk sweep is not per-row endorsement, so a tm_exact row it confirms
+    keeps origin='tm_exact' (no style pair minted) and a 'reprojected' row
+    stays excluded from exemplars until a per-row save/confirm restores
+    'human'. Returns {confirmed, chapter_rev,
     segments_state, progress, next_unconfirmed_index}."""
     wanted = statuses if statuses is not None else ["machine", "edited"]
     if not wanted or any(s not in ("machine", "edited") for s in wanted):
@@ -895,7 +941,9 @@ async def reproject_from_body(
     Fast path: when the body's paragraph count matches the current non-empty
     row count positionally (and no stored target spans multiple paragraphs),
     target_text updates in place PRESERVING status: a novel-wide
-    find-replace across confirmed segments must not un-confirm them.
+    find-replace across confirmed segments must not un-confirm them. Human
+    rows whose text changes are stamped origin='reprojected' (B3, see the
+    module docstring): status survives, provenance does not.
     machine_text refreshes only for machine rows whose machine_text equaled
     the OLD target (non-divergent: for those the stored AI rendering IS
     the target, so it follows the text-authoritative rewrite); a DIVERGENT
@@ -937,12 +985,20 @@ async def reproject_from_body(
             if r["target_text"] == new_text:
                 continue
             # SET expressions read the PRE-update row, so the CASE compares
-            # the OLD machine_text against the OLD target_text (B12).
+            # the OLD machine_text against the OLD target_text (B12). Human
+            # rows whose text this rewrite CHANGES are stamped
+            # origin='reprojected' (B3): the new target is
+            # text-authoritative, not user-authored, so the provenance-gated
+            # feeds must stop shipping it as an edit/endorsement until a
+            # later save/confirm restores 'human'. (This loop only runs for
+            # rows whose text actually changes.)
             await conn.execute(
                 "UPDATE chapter_segments SET target_text = ?, "
                 "machine_text = CASE WHEN status = 'machine' "
                 "AND machine_text = target_text THEN ? "
                 "ELSE machine_text END, "
+                "origin = CASE WHEN status != 'machine' THEN 'reprojected' "
+                "ELSE origin END, "
                 "updated_at = datetime('now') "
                 "WHERE chapter_id = ? AND seg_index = ?",
                 (new_text, new_text, chapter_id, r["seg_index"]),
@@ -963,10 +1019,17 @@ async def edited_pairs_for_chapter(
     rendering exists and differs from the human text. This is the ledger-backed
     successor to the style_edits capture (Phase 6): learn_from_edits derives
     its proposals from these pairs. Ordered by seg_index so proposal ids are
-    stable across stage/commit re-derivations."""
+    stable across stage/commit re-derivations.
+
+    Requires origin='human' (F2): a confirm-as-is over a tm_exact prefill
+    (fresh AI machine_text behind a cross-chapter confirmed target) or a
+    'reprojected' row (target detached from the user's writing by a
+    text-authoritative rewrite) carries a machine-vs-machine delta, not a
+    user edit, and must not teach as one."""
     cur = await conn.execute(
         "SELECT machine_text, target_text FROM chapter_segments "
         "WHERE chapter_id = ? AND status IN ('edited', 'confirmed') "
+        "AND origin = 'human' "
         "AND machine_text IS NOT NULL AND machine_text != '' "
         "AND machine_text != target_text "
         "ORDER BY seg_index",
@@ -1063,7 +1126,11 @@ async def apply_machine_translation(
         the editor can show "the AI suggests differently"); status / origin /
         timestamps untouched (invariant I2). Re-anchored by source_hash via
         `_anchor_human_rows` (position-first, so an unchanged source maps
-        positionally).
+        positionally). The alignment entry's confidence is honored (F1+B14):
+        machine_text refreshes only from a confident slot (else the prior
+        rendering is kept), the aligned column takes the entry's flag, and
+        an unconfident slot demotes segments_state to 'partial' like any
+        machine row would.
       - Machine rows: regenerated from the new text (target_text +
         machine_text), origin=`kind`; missing rows insert; a chapter with no
         store at all gets a fresh full build.
@@ -1156,19 +1223,31 @@ async def apply_machine_translation(
         )
         for row_id, j in anchors.items():
             row = by_id[row_id]
-            new_machine, _a = entries[j]
-            # Keep the prior stored rendering when the aligner had no
-            # paragraph for this slot; an empty refresh would break
-            # revert-to-AI for no gain.
-            machine_text = new_machine or row["machine_text"] or ""
+            new_machine, entry_aligned = entries[j]
+            # F1+B14 (bug hunt 2026-08-04): honor the alignment entry's
+            # confidence for human rows exactly as the machine-row path
+            # does. machine_text refreshes ONLY from a confident slot: an
+            # unconfident slot's paragraph may render a different source
+            # paragraph, and a wrong refresh ships novel-wide as a poisoned
+            # (machine_text, target) style pair. Otherwise (unconfident
+            # slot, or the aligner had no paragraph for it) the prior
+            # stored rendering is kept so revert-to-AI stays meaningful.
+            if entry_aligned and new_machine:
+                machine_text = new_machine
+            else:
+                machine_text = row["machine_text"] or ""
             await conn.execute(
                 "UPDATE chapter_segments SET seg_index = ?, source_text = ?, "
-                "source_hash = ?, machine_text = ?, aligned = 1, "
+                "source_hash = ?, machine_text = ?, aligned = ?, "
                 "updated_at = datetime('now') WHERE id = ?",
-                (j, src_paras[j], new_hashes[j], machine_text, row_id),
+                (j, src_paras[j], new_hashes[j], machine_text,
+                 1 if entry_aligned else 0, row_id),
             )
             merged[j] = row["target_text"]
-            aligned_flags[j] = True
+            # State computation no longer force-treats human rows as
+            # aligned (B14): an unconfident slot demotes the chapter to
+            # 'partial' even when a human row occupies it.
+            aligned_flags[j] = entry_aligned
     human_indexes = set(anchors.values())
 
     inserts: list[tuple] = []
@@ -1367,13 +1446,18 @@ async def fetch_confirmed_exemplar_pairs(
     not chapter-relevant vocabulary; no relevance filter by design), deduped
     by source text (newest confirmation of a repeated source wins), empty
     targets skipped, both sides truncated to ~400 chars. 'Unaligned'
-    chapters' retained rows are excluded (B7). Read-only."""
+    chapters' retained rows are excluded (B7). Confirmed-as-is machine rows
+    STAY eligible (confirm is endorsement regardless of who wrote the text),
+    but origin='reprojected' rows are excluded (F2/B3): their target was
+    swapped by a text-authoritative rewrite AFTER the confirm, so the stored
+    confirmation no longer covers this text. Read-only."""
     if limit <= 0:
         return []
     cur = await conn.execute(
         f"SELECT cs.source_text, cs.target_text FROM chapter_segments cs "
         f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
         f"  AND cs.status = 'confirmed' "
+        f"  AND cs.origin != 'reprojected' "
         f"  AND cs.target_text != '' "
         f"  AND {_EXCLUDE_UNALIGNED_SQL} "
         f"ORDER BY cs.confirmed_at DESC, cs.id DESC LIMIT ?",
@@ -1409,9 +1493,11 @@ async def recent_edited_pairs(
     the style_edits arm: the ledger's edited|confirmed rows ARE the in-app
     paragraph edits now).
 
-    Qualifying rows: status edited|confirmed with a non-empty stored AI
-    rendering that differs from the human text and a non-empty target (the
-    same pair shape as `edited_pairs_for_chapter`). Recency-selected by
+    Qualifying rows: status edited|confirmed AND origin='human' (the same
+    provenance gate as `edited_pairs_for_chapter`, F2: tm_exact confirm-as-is
+    and 'reprojected' rows carry machine-vs-machine deltas, not user edits)
+    with a non-empty stored AI rendering that differs from the human text and
+    a non-empty target. Recency-selected by
     COALESCE(edited_at, confirmed_at) DESC (id DESC tiebreak), deduped by
     the machine (before) side so a repeated correction teaches once, both
     sides truncated to the exemplar ~400-char convention. Over-fetches by
@@ -1423,6 +1509,7 @@ async def recent_edited_pairs(
         f"SELECT cs.machine_text, cs.target_text FROM chapter_segments cs "
         f"WHERE cs.novel_id = ? AND cs.chapter_id != ? "
         f"  AND cs.status IN ('edited', 'confirmed') "
+        f"  AND cs.origin = 'human' "
         f"  AND cs.machine_text IS NOT NULL AND cs.machine_text != '' "
         f"  AND cs.machine_text != cs.target_text AND cs.target_text != '' "
         f"  AND {_EXCLUDE_UNALIGNED_SQL} "

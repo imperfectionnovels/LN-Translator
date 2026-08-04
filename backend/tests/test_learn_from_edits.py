@@ -69,23 +69,27 @@ def _seed() -> tuple[int, int]:
             "SELECT id FROM glossary_entries WHERE novel_id=?", (novel_id,)
         ).fetchone()[0]
         rows = [
-            # (seg_index, source, machine/before, target/after, status)
+            # (seg_index, source, machine/before, target/after, status, origin)
+            # Human-edited rows carry origin='human' (what update_segment's
+            # save stamps); the provenance gate (F2, bug hunt 2026-08-04)
+            # requires it for a pair to count.
             (0, "灵力涌动。", "His Spiritual Power surged.",
-             "His spiritual power surged.", "edited"),
-            (1, "停！快！走！", "Stop! Now! Go!", "Stop. Now. Go.", "confirmed"),
+             "His spiritual power surged.", "edited", "human"),
+            (1, "停！快！走！", "Stop! Now! Go!", "Stop. Now. Go.",
+             "confirmed", "human"),
             # Untouched machine row: never a pair.
-            (2, "他走了。", "He left.", "He left.", "machine"),
-            # Confirmed-as-is row (machine_text == target_text): no pair either.
+            (2, "他走了。", "He left.", "He left.", "machine", "llm"),
+            # Confirmed-as-is row (machine origin kept by confirm): no pair.
             (3, "夜深了。", "The night deepened.", "The night deepened.",
-             "confirmed"),
+             "confirmed", "llm"),
         ]
-        for seg_index, src, machine, target, status in rows:
+        for seg_index, src, machine, target, status, origin in rows:
             conn.execute(
                 "INSERT INTO chapter_segments (novel_id, chapter_id, seg_index, "
                 "source_text, source_hash, target_text, machine_text, status, "
-                "origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'llm')",
+                "origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (novel_id, chapter_id, seg_index, src, f"h{seg_index:015d}",
-                 target, machine, status),
+                 target, machine, status, origin),
             )
         conn.commit()
     finally:

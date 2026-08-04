@@ -754,7 +754,7 @@ candidates, two restorations.
   saves while the panel is open; no background sweeps, and a
   translating chapter 409s (the queue owns the rows mid-commit).
 
-## 2026-08-04 — Bug-hunt Batch 1: backend lifecycle fixes (B-series)
+## 2026-08-04: Bug-hunt Batch 1: backend lifecycle fixes (B-series)
 
 - **Archived novels are out of scope for every bulk writer (B1) and
   invisible to the queue (B2).** soft_delete.py's stated contract
@@ -842,3 +842,44 @@ candidates, two restorations.
   recreate then reads "database disk image is malformed". New fixtures
   that recreate the DB file delete the whole trio (and clean up after
   themselves on teardown).
+
+## 2026-08-04: Bug-hunt Batch 2, part 1: segment provenance gating (B3+F1+F2+B14)
+
+- **origin is provenance now, not a producer tag.** The style-pair prompt
+  feeds and the confirmed-exemplar feed gated on STATUS alone, which three
+  bugs exploited: a snapshot restore (or any text-authoritative rewrite)
+  could swap a confirmed row's target back to machine text while status
+  stayed 'confirmed' (B3: fake (M2, M1) "user preference" pairs plus fake
+  exemplars propagating cross-chapter); confirm-all flipped divergent
+  tm_exact prefills to confirmed with a fresh confirmed_at, jumping fake
+  (fresh-AI, old-confirmed) pairs to the front of the recency window (F2);
+  and the worker merge's human-row branch discarded the alignment entry's
+  confidence, refreshing machine_text from a low-confidence slot and
+  stamping aligned=1 unconditionally (F1/B14: poisoned before-sides plus a
+  chapter state that could never demote through a human row).
+- **The design**: (i) any text-authoritative write that CHANGES a human
+  row's target (reproject fast path, preservation rebuild) stamps
+  origin='reprojected', status untouched per the Phase 3 invariant (origin
+  has no CHECK constraint, verified); (ii) style-pair feeds
+  (recent_edited_pairs, edited_pairs_for_chapter, shared with
+  learn_from_edits) require origin='human'; (iii) exemplars keep
+  status='confirmed' semantics but exclude origin='reprojected'; (iv) the
+  merge honors the entry's aligned flag for human rows (machine_text
+  refreshes only from confident slots, else the prior rendering is kept).
+- **Endorsement semantics, settled**: confirm-as-is IS endorsement, so a
+  tm_exact row confirmed as-is stays exemplar-eligible (its origin is
+  preserved, so it still mints no style pair). origin='reprojected' is the
+  one exception: the text was swapped AFTER the user's judgment, so the
+  stored confirmation does not cover it ("detached text is not
+  endorsement"). A per-row save always restores 'human'; a per-row confirm
+  restores 'human' from 'reprojected' only (the user re-vouched with eyes
+  on the row); bulk confirm_all deliberately never touches origin, so a
+  blind sweep cannot launder reprojected or tm_exact rows into the human
+  feeds.
+- **Deliberately NOT changed**: prefill_confirmed_exact (and therefore the
+  approved-block cross-chapter half) still keys on status='confirmed'
+  regardless of origin='reprojected'. Excluding it there would also kill
+  prefill after every find-replace over confirmed rows, a common and
+  deliberate user action; the exemplar exclusion covers the prompt-side
+  poison. Flagged for a revisit if restore-poisoned prefills show up in
+  practice.
