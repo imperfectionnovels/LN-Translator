@@ -110,13 +110,22 @@ def test_edit_paragraph_write_path_is_gone():
     assert "edit-paragraph" not in api_js
     assert "editParagraph" not in api_js
 
-    from backend.main import app
-    paths = {getattr(r, "path", "") for r in app.routes}
+    # Assert against the sub-routers (the sibling *_routes tests' pattern),
+    # not backend.main's assembled app: the app object is shared full-suite
+    # state and reading it here proved order-fragile on CI.
+    from backend.routes import chapters as chapters_route
+    from backend.routes import observations as observations_route
+
+    paths = {r.path for r in chapters_route.router.routes}
     assert not any(p.endswith("/edit-paragraph") for p in paths), (
         "the edit-paragraph route must stay deleted; the segment PATCH is "
         "the single paragraph write path"
     )
     # The util-menu endpoints the editor re-consumes are unchanged.
-    for suffix in ("/attempts", "/last-prompt", "/pre-check", "/observations",
+    for suffix in ("/attempts", "/last-prompt", "/pre-check",
                    "/learn-edits", "/learn-edits/commit"):
         assert any(p.endswith(suffix) for p in paths), f"route {suffix} missing"
+    obs_paths = {r.path for r in observations_route.router.routes}
+    assert any(p.endswith("/observations") for p in obs_paths), (
+        "observations route missing"
+    )
