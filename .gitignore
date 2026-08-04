@@ -56,3 +56,6 @@ build-log.txt
 .desloppify/
 # Desloppify generated health badge: regenerated every scan, binary churn.
 scorecard.png
+
+# Local Claude Code project config (machine-local plugin/hook state)
+.claude/
