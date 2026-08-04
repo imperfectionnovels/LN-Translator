@@ -133,9 +133,8 @@ if (openInEditorLink) openInEditorLink.href = `/editor?novel=${novelId}&ch=${cur
 // whenever refined_text is non-empty, else 'draft'. AUTHORITY:
 // backend/services/segments.py::displayed_body (presence keying,
 // 2026-07-31 retry-window fix: retained polish stays displayed through a
-// refinement retry and after a failed retry). _displayedEnglish,
-// _paragraphTextAt, and _editVariant all consume THIS helper so the
-// display keying lives in exactly one frontend place.
+// refinement retry and after a failed retry). _displayedEnglish consumes
+// THIS helper so the display keying lives in exactly one frontend place.
 function _displayedVariant(ch) {
   return ch && ch.refined_text ? "refined" : "draft";
 }

@@ -763,18 +763,66 @@ const missingLockedEl = document.getElementById("assist-missing-locked");
 const chapterTermsEl = document.getElementById("assist-chapter-terms");
 const chapterTermsCount = document.getElementById("assist-terms-count");
 
-function zhAliases(entry) {
-  return String(entry.term_zh || "").split("/").map(s => s.trim()).filter(Boolean);
+function zhAliases(termZh) {
+  return String(termZh || "").split("/").map(s => s.trim()).filter(Boolean);
 }
 
-// Compute both tiers from the glossary x the loaded segments. Pure client
-// work (mirrors the assist rail's per-segment chips); no extra backend.
-function renderChapterTermTiers() {
-  if (!missingLockedEl || !chapterTermsEl) return;
-  const segs = currentData && currentData.segments ? currentData.segments : [];
-  if (!segs.length) {
+/* Missing-locked tier: SERVER-computed. GET .../consistency's glossary tier
+ * is glossary.missing_translator_terms(atomic_only=True): slash-split
+ * alternatives, parenthetical stripping, idiom inflections, 1-char-zh guard,
+ * and the 2026-06-23 atomic-only narrowing (an all-locked naive client
+ * matcher was measured ~96% false-fire; don't reimplement it here). The
+ * route's fuzzy `matches` tier is deliberately IGNORED: the assist rail's
+ * per-segment TM exact/fuzzy tiers already cover reuse over the segment
+ * store. Refetched (debounced) on chapter load and after segment edits. */
+let missingLockedSeq = 0;
+let missingLockedDebounce = null;
+
+function scheduleMissingLockedTier() {
+  if (missingLockedDebounce) clearTimeout(missingLockedDebounce);
+  missingLockedDebounce = setTimeout(refreshMissingLockedTier, 600);
+}
+
+async function refreshMissingLockedTier() {
+  if (!missingLockedEl) return;
+  const seq = ++missingLockedSeq;
+  const forCh = currentCh;
+  if (!currentData || !(currentData.segments || []).length) {
     missingLockedEl.innerHTML =
       `<p class="assist-empty">Loads with the segment grid.</p>`;
+    return;
+  }
+  let res;
+  try {
+    res = await api.getChapterConsistency(novelId, forCh);
+  } catch (_) {
+    if (seq !== missingLockedSeq || forCh !== currentCh) return;
+    missingLockedEl.innerHTML =
+      `<p class="assist-empty">Could not load the locked-term check.</p>`;
+    return;
+  }
+  if (seq !== missingLockedSeq || forCh !== currentCh) return;
+  const flags = (res && res.glossary_flags) || [];
+  missingLockedEl.innerHTML = flags.length
+    ? flags.map(f => `
+        <button type="button" class="missing-locked-row"
+                data-zh="${escapeHtml(f.term_zh)}" data-para="${f.paragraph_index ?? ""}"
+                title="Locked term expected but not found in this chapter's translation. Click to jump to its source.">
+          <span class="missing-locked-badge">term</span>
+          <span lang="zh">${escapeHtml(f.term_zh)}</span>
+          <span class="missing-locked-arrow">→</span>
+          <span>${escapeHtml(f.expected_en)}</span>
+        </button>`).join("")
+    : `<p class="assist-empty">No locked-term misses in this chapter.</p>`;
+}
+
+// The terms tier stays client-computed: it is a neutral "which terms fire
+// here" listing (click to revise), not a warning, so naive matching is fine.
+function renderChapterTermTiers() {
+  if (!chapterTermsEl) return;
+  scheduleMissingLockedTier();
+  const segs = currentData && currentData.segments ? currentData.segments : [];
+  if (!segs.length) {
     chapterTermsEl.innerHTML =
       `<p class="assist-empty">Loads with the segment grid.</p>`;
     if (chapterTermsCount) chapterTermsCount.textContent = "";
@@ -783,39 +831,15 @@ function renderChapterTermTiers() {
   loadGlossaryOnce().then(entries => {
     if (!currentData || currentData.segments !== segs) return; // stale
     const present = []; // {entry, count}
-    const missing = []; // {entry, segIdxs}
     for (const g of entries || []) {
-      const aliases = zhAliases(g);
+      const aliases = zhAliases(g.term_zh);
       if (!aliases.length) continue;
-      const en = String(g.term_en || "");
-      const enLc = en.toLowerCase();
       let count = 0;
-      const missIdxs = [];
       for (const s of segs) {
-        const src = s.source_text || "";
-        const hit = aliases.some(z => src.includes(z));
-        if (!hit) continue;
-        count += 1;
-        if (g.locked && en && !(s.target_text || "").toLowerCase().includes(enLc)) {
-          missIdxs.push(s.index);
-        }
+        if (aliases.some(z => (s.source_text || "").includes(z))) count += 1;
       }
       if (count > 0) present.push({ entry: g, count });
-      if (missIdxs.length) missing.push({ entry: g, segIdxs: missIdxs });
     }
-
-    missingLockedEl.innerHTML = missing.length
-      ? missing.map(({ entry, segIdxs }) => `
-          <button type="button" class="missing-locked-row" data-seg="${segIdxs[0]}"
-                  title="Locked term expected but not found in segment${segIdxs.length === 1 ? "" : "s"} ${segIdxs.map(i => i + 1).join(", ")}. Click to jump.">
-            <span class="missing-locked-badge">term</span>
-            <span lang="zh">${escapeHtml(entry.term_zh)}</span>
-            <span class="missing-locked-arrow">→</span>
-            <span>${escapeHtml(entry.term_en)}</span>
-            <span class="missing-locked-segs">¶${segIdxs.map(i => i + 1).join(", ¶")}</span>
-          </button>`).join("")
-      : `<p class="assist-empty">Every locked term that fires in this chapter is rendered.</p>`;
-
     if (chapterTermsCount) {
       chapterTermsCount.textContent = present.length ? `· ${present.length}` : "";
     }
@@ -832,9 +856,16 @@ function renderChapterTermTiers() {
 
 missingLockedEl?.addEventListener("click", (e) => {
   const row = e.target.closest(".missing-locked-row");
-  if (!row) return;
-  const idx = Number.parseInt(row.dataset.seg, 10);
-  if (Number.isFinite(idx)) jumpToSegment(currentCh, idx);
+  if (!row || !currentData) return;
+  // Locate the offending segment client-side by term_zh (slash aliases);
+  // prefer the server's paragraph_index when that row's source matches.
+  const aliases = zhAliases(row.dataset.zh);
+  const segs = currentData.segments || [];
+  const hasAlias = (s) => s && aliases.some(z => (s.source_text || "").includes(z));
+  const hinted = Number.parseInt(row.dataset.para, 10);
+  let target = Number.isFinite(hinted) ? segs.find(s => s.index === hinted) : null;
+  if (!hasAlias(target)) target = segs.find(hasAlias) || null;
+  if (target) jumpToSegment(currentCh, target.index);
 });
 
 chapterTermsEl?.addEventListener("click", async (e) => {

@@ -674,3 +674,19 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   "ruff>=0.6,<0.16" so CI matches the local toolchain; a deliberate
   ruff-upgrade sweep (fix or ignore the new rules, then lift the pin) is
   follow-up work, not a lint-churn side effect of Phase 6.
+- **Missing-locked tier consumes the server, not a reimplementation
+  (review fix).** The first Phase 6 cut computed the editor's
+  missing-locked warnings client-side over ALL locked entries with naive
+  substring matching, silently re-widening what 2026-06-23 deliberately
+  narrowed (atomic-only via glossary.missing_translator_terms; the naive
+  all-locked matcher class was measured ~96% false-fire). The tier now
+  fetches GET .../consistency (api.getChapterConsistency, dead since the
+  reader rail retired, is live again) and renders its glossary_flags;
+  click-to-jump locates the segment by term_zh aliases client-side with
+  the server's paragraph_index as a hint. The route's fuzzy `matches`
+  tier is deliberately IGNORED rather than the route slimmed: the assist
+  rail's per-segment TM tiers already cover fuzzy reuse, and keeping the
+  route whole keeps services/consistency.py the single owner of both
+  detectors with zero churn. Refetch is debounced (600ms) on segment
+  edits. The terms-in-chapter listing stays client-computed on purpose:
+  it is a neutral inventory, not a warning, so naive matching is fine.

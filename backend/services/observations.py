@@ -36,9 +36,10 @@ def parse_disabled_observers(raw: str | None) -> set[str]:
 
     Fails open: a NULL / empty value, or a malformed blob, yields the empty
     set (no mutes) so a user can never accidentally suppress every observer
-    by storing bad JSON. The single shared call site means the queue worker
-    and the edit-paragraph re-run path can't drift on how they interpret the
-    column."""
+    by storing bad JSON. Keeping the parse in one shared helper means any
+    future consumer of the column cannot drift from the queue worker's
+    interpretation (the edit-paragraph re-run path, its former second
+    consumer, retired with Phase 6)."""
     if not raw:
         return set()
     try:

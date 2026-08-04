@@ -9,9 +9,11 @@ stages ONLY style_edits rows (never overwrites the chapter body).
         [--report] [--apply]
 
 Why this exists: edits made OUTSIDE the app (in a word processor, a pasted doc)
-never reach the style_edits table, so the glossary and the per-novel brief never
-learn from them. This is the bulk counterpart to the in-app POST /edit-paragraph
-and the automated form of the manual learn-from-edits pass.
+never reach the CAT editor's segment ledger, so the glossary and the per-novel
+brief never learn from them. This is the bulk counterpart to editing segments
+in the in-app CAT editor and the automated form of the manual learn-from-edits
+pass. (Its style_edits staging is also the table's only remaining producer;
+the in-app writer retired with the edit-paragraph endpoint, Phase 6.)
 
 Routing (heuristic; the report is the product, a human confirms each move):
   - GLOSSARY (casing): a glossary term changed case only. If the matching row is

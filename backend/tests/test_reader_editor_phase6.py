@@ -101,6 +101,10 @@ def test_editor_util_menu_and_tools_wiring():
         "api.refreshFreeDraft", "api.insertChapter", "api.tmConcordance",
         "api.learnEditsStage", "api.learnEditsCommit", "api.updateNovel",
         "api.createGlossary", "api.updateGlossary", "api.glossaryApplyInPlace",
+        # Missing-locked tier consumes the SERVER's narrowed glossary tier
+        # (atomic_only); a naive all-locked client matcher was reverted as a
+        # false-fire regression (review fix, see decisions.md 2026-08-03).
+        "api.getChapterConsistency",
     ):
         assert wrapper in tools, f"editor-tools.js does not call {wrapper}"
 

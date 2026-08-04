@@ -630,7 +630,6 @@
   background: var(--signal-error, #7a3030);
 }
 .missing-locked-arrow { color: var(--muted); }
-.missing-locked-segs { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .chapter-term-card {
   display: flex;
   align-items: baseline;

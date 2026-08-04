@@ -917,7 +917,8 @@ def body_correctness_observations(
     single-pass restructure these are observers, not gates: the queue worker
     logs hits at INFO and never retries. Lives here (not in the queue worker)
     because it only composes this module's observers and carries no queue
-    state; the queue and the edit-paragraph route both call it.
+    state; the queue's translate commit is its caller (the edit-paragraph
+    route was a second caller until Phase 6 retired it).
 
     Body-only on purpose: title-targeted observations are added at the caller
     because they reference the translator's res.title_en.
