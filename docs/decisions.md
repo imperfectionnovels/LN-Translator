@@ -548,3 +548,56 @@ out, or a mistake is caught and corrected, add a dated bullet here as part of
   lives in one reader-core _displayedVariant helper consumed by
   _displayedEnglish / _paragraphTextAt / _editVariant, and the "refined
   by X" pane chip is presence-keyed so it does not vanish mid-retry.
+
+## 2026-08-03 — CAT Phase 5: feed-the-AI + provenance TM surfaces + navigation
+
+- **Confirmed exemplars are a separate block from approved translations.**
+  APPROVED TRANSLATION EXAMPLES carries the 5 most recently confirmed
+  segment pairs from OTHER chapters (recency-selected, deduped by source,
+  400 chars/side) as voice precedent; APPROVED TRANSLATIONS stays the
+  same-chapter verbatim-reuse feed. Both can appear in one prompt; the
+  queue comments the distinction at the fetch site. Recency over
+  chapter-relevance is deliberate: the block teaches voice, not
+  vocabulary, so no relevance filter.
+- **No PROMPT_TEMPLATE_VERSION bump for the exemplar block.** Same
+  cache-safety argument as Phase 4's approved block: the block is absent
+  when no exemplars exist, so a no-exemplar prompt is byte-identical to
+  the pre-phase shape (pinned by test), and a present block folds into
+  the llm_cache key by riding the prompt body. Confirming a segment
+  therefore busts the cache for future translates of other chapters,
+  which is the desired behavior.
+- **Exemplar SQL lives in segments.py, the gate in prompt_inputs.**
+  fetch_confirmed_exemplar_pairs is the single-owner query (segments.py
+  is the only module with chapter_segments SQL, binding);
+  prompt_inputs.fetch_confirmed_exemplars owns the
+  PROMPT_INCLUDE_CONFIRMED_EXEMPLARS flag gate + limit at the fetch site
+  like its sibling fetchers. prompt_inputs importing segments creates no
+  cycle (segments never imports prompt_inputs).
+- **TM read surfaces demoted tm_segments to chapter-level fallback.** The
+  consistency corpus and concordance read chapter_segments first (status
+  ranked confirmed > edited > machine > legacy) and use tm_segments ONLY
+  for chapters with zero segment rows: a covered chapter's tm rows are
+  suppressed outright (chapter_ids_with_segments), because the segment
+  store is rematerialized on every editor write while tm rows go stale
+  between translate commits. Suppression is chapter-level, not row-level,
+  so a partial chapter with empty targets cannot leak stale tm text. The
+  concordance merge lives in segments.py::concordance_search (segments
+  already imports tm; tm.py importing segments would cycle). Response
+  shapes stay backward-compatible: `status` is additive on
+  OtherRendering and ConcordanceHit. tm_segments is still written at
+  every translate commit; removing the write is future work.
+- **editor-next semantics: "needs work" not "has unconfirmed rows".** The
+  continue card's next chapter is the first (forward from `after`, then
+  wrapped) that is untranslated OR storeless OR carries any non-confirmed
+  segment; a storeless done chapter counts because its lazy build would
+  be all-machine. Simple two-query forward/wrap implementation; the card
+  memoizes per chapter and stale-guards so repeated updateActions calls
+  at 100% do not refetch.
+- **g e chord + spine 校 Editor entry.** Editor slots between Reader and
+  Glossary in the spine (novel-scoped href with /library fallback), `g e`
+  was a free chord slot, quality's worst-chapter worklist now deep-links
+  to /editor (the reader's mode=edit worklist target retires with Phase
+  6), and the reader util-menu carries an Open-in-CAT-editor item
+  re-pointed on every chapter change. The reader edit-mode hint now
+  pitches the CAT editor as the deep-editing surface (transition copy;
+  full edit-mode retirement is Phase 6).
