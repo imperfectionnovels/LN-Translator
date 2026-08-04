@@ -40,7 +40,7 @@ from backend.services.providers import (
     get_default_provider,
     load_provider,
 )
-from backend.services.translators.base import PROMPT_PAIR_SIDE_MAX_CHARS
+from backend.services.translators.base import pair_side_key
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +71,6 @@ async def fetch_confirmed_exemplars(
         return []
 
 
-# Dedupe-key truncation for merged style pairs, tied to the bound
-# format_style_edits renders with (and the segment pairs are stored at) via
-# the shared constant, so two pairs that would render identically in the
-# prompt count as one and the sites cannot drift apart.
-_STYLE_PAIR_KEY_CHARS = PROMPT_PAIR_SIDE_MAX_CHARS
-
-
 async def fetch_style_edits(
     conn: aiosqlite.Connection,
     novel_id: int,
@@ -105,7 +98,10 @@ async def fetch_style_edits(
     seen: set[str] = set()
 
     def _take(before: str, after: str) -> None:
-        key = (before or "").strip()[:_STYLE_PAIR_KEY_CHARS]
+        # Dedupe on the rendered form (pair_side_key: strip + newline
+        # collapse + the shared truncation), so two pairs that would render
+        # identically in the prompt count as one (F11).
+        key = pair_side_key(before)
         if not key or key in seen:
             return
         seen.add(key)

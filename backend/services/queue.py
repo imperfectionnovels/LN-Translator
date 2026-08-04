@@ -87,10 +87,10 @@ from backend.services.translators import translate_chapter
 from backend.services.translators.base import (
     COUNT_MISMATCH_ACCEPTED,
     COUNT_MISMATCH_RETRY,
-    PROMPT_PAIR_SIDE_MAX_CHARS,
     PROMPT_TEMPLATE_VERSION,
     ParagraphCountMismatch,
     build_count_corrective,
+    pair_side_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,7 @@ def _build_prompt_config_snapshot(
     style_edits_included: bool,
     approved_translations_included: bool,
     confirmed_exemplars_included: bool,
+    plain_fallback: bool = False,
 ) -> str:
     """JSON blob recording the prompt-assembly config that produced this
     chapter. Stamped onto chapters.prompt_config_snapshot in the same
@@ -115,8 +116,19 @@ def _build_prompt_config_snapshot(
     The `*_included` keys record what actually shipped to the model (block
     sent only when both the env flag was true AND the data was non-empty).
     The `flags` dict records what the env said, so a flag-on + data-empty
-    state is distinguishable from a flag-off state."""
+    state is distinguishable from a flag-off state.
+
+    `plain_fallback` (F4, bug hunt 2026-08-04): when the committed body came
+    from the translator's plain-text fallback, the prompt that produced it
+    carried NONE of the dynamic blocks (see base._plain_text_fallback), so
+    every block `*_included` key is forced false regardless of what was
+    fetched, and the always-present `plain_fallback` key marks the row so
+    A/B queries can exclude (or isolate) degraded output."""
     import json  # noqa: PLC0415
+    if plain_fallback:
+        free_draft_included = previous_context_included = False
+        style_note_included = style_edits_included = False
+        approved_translations_included = confirmed_exemplars_included = False
     return json.dumps({
         "prompt_template_version": PROMPT_TEMPLATE_VERSION,
         "translator_provider_id": provider.id if provider else None,
@@ -124,6 +136,7 @@ def _build_prompt_config_snapshot(
         "translator_model_id": provider.model_id if provider else None,
         "genre": novel_meta["genre"],
         "custom_brief_present": bool(novel_meta["custom_style_brief"]),
+        "plain_fallback": plain_fallback,
         "free_draft_included": free_draft_included,
         "previous_context_included": previous_context_included,
         "style_note_included": style_note_included,
@@ -708,6 +721,10 @@ async def _record_commit_provenance(
         style_edits_included=bool(style_edits),
         approved_translations_included=bool(approved_pairs),
         confirmed_exemplars_included=bool(confirmed_exemplars),
+        # F4: a degraded commit came from the plain-text fallback prompt,
+        # which ships none of the blocks; the builder forces the *_included
+        # keys false so the snapshot describes the prompt that actually ran.
+        plain_fallback=translation_degraded,
     )
     # Fixup self-audit: record which deterministic enforce_* fixups rewrote the
     # model output and by how much, in the same UPDATE as the snapshot. Makes
@@ -949,8 +966,14 @@ async def _translate_chapter_in_db(
         # deterministic merge below is the enforcement, so this pre-LLM read
         # racing an editor write is harmless (the merge re-reads inside the
         # commit transaction).
+        # Fetched UNCONDITIONALLY when source paragraphs exist (F5, bug hunt
+        # 2026-08-04): the fetched set also drives the exemplar/style
+        # dedupes below, so the flag must gate ONLY the block's inclusion in
+        # the prompt (and the snapshot). Pre-fix, flag-off skipped the fetch
+        # and therefore un-deduped the exemplar and style blocks too: a
+        # three-block delta that made the A/B arm uninterpretable.
         approved_pairs: list[tuple[int, str, str]] | None = None
-        if config.PROMPT_INCLUDE_APPROVED_TRANSLATIONS and source_paragraphs:
+        if source_paragraphs:
             approved_pairs = await segments_svc.approved_prompt_pairs(
                 conn, novel_id, chapter_id, source_paragraphs
             ) or None
@@ -968,29 +991,33 @@ async def _translate_chapter_in_db(
         if confirmed_exemplars and approved_pairs:
             # A confirmed source that also recurs in THIS chapter already
             # rides the approved block (cross-chapter exact match), so the
-            # exemplar copy is redundant; drop it. Exemplar sides are
-            # truncated to the shared pair-side bound, so compare on the
-            # truncated form.
+            # exemplar copy is redundant; drop it. Both sides compare on
+            # pair_side_key (F11): the renderers strip + collapse newlines
+            # before the shared truncation, so a raw-slice key would miss
+            # whitespace/newline variants that render identically.
             approved_srcs = {
-                zh[:PROMPT_PAIR_SIDE_MAX_CHARS] for _i, zh, _en in approved_pairs
+                pair_side_key(zh) for _i, zh, _en in approved_pairs
             }
             confirmed_exemplars = [
                 (zh, en) for zh, en in confirmed_exemplars
-                if zh not in approved_srcs
+                if pair_side_key(zh) not in approved_srcs
             ] or None
         if style_edits and approved_pairs:
             # Same dedupe for the style arm: a segment pair whose AFTER text
             # already rides this chapter's approved block would show the
             # model the identical rendering twice (correction example +
-            # verbatim-reuse row). Style-pair sides are truncated to the
-            # shared pair-side bound, so compare on the truncated form.
+            # verbatim-reuse row). Same pair_side_key comparison (F11).
             approved_ens = {
-                en[:PROMPT_PAIR_SIDE_MAX_CHARS] for _i, _zh, en in approved_pairs
+                pair_side_key(en) for _i, _zh, en in approved_pairs
             }
             style_edits = [
                 (before, after) for before, after in style_edits
-                if after[:PROMPT_PAIR_SIDE_MAX_CHARS] not in approved_ens
+                if pair_side_key(after) not in approved_ens
             ]
+        # The flag gates ONLY whether the approved block ships (prompt and
+        # snapshot); the dedupes above already consumed the fetched set (F5).
+        if not config.PROMPT_INCLUDE_APPROVED_TRANSLATIONS:
+            approved_pairs = None
         translate_t0 = time.perf_counter()
         result = await translate_chapter(
             prompt_source, prompt_title_zh, glossary,

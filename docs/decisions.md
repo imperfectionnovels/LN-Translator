@@ -883,3 +883,34 @@ candidates, two restorations.
   deliberate user action; the exemplar exclusion covers the prompt-side
   poison. Flagged for a revisit if restore-poisoned prefills show up in
   practice.
+
+## 2026-08-04: Bug-hunt Batch 2, part 2: prompt-assembly seams (F-series)
+
+- **Dedupe is decoupled from the approved flag (F5).** The exemplar and
+  style-pair dedupes compare against the approved-pairs set, but the fetch
+  was gated on PROMPT_INCLUDE_APPROVED_TRANSLATIONS, so flipping that one
+  flag also changed the exemplar and style blocks (a three-block delta; the
+  A/B arm was uninterpretable). The fetch now runs unconditionally when
+  source paragraphs exist; the flag nulls approved_pairs only after the
+  dedupes, gating exactly the block's inclusion in prompt + snapshot.
+- **Snapshot honesty on the plain-text fallback (F4).** A degraded commit's
+  body came from base._plain_text_fallback's bare prompt, which carries none
+  of the dynamic blocks, yet the snapshot stamped *_included from the
+  fetched inputs. Rule: the snapshot describes the prompt that actually
+  produced the committed text. Degraded commits force every block
+  *_included key false and stamp an always-present plain_fallback key
+  (json_extract-friendly) so A/B queries can exclude or isolate them; the
+  flags dict still records env state.
+- **Pair dedupe keys compare on the rendered form (F11).**
+  base.pair_side_key (strip + newline-collapse + the shared 400-char
+  truncation, exactly what format_style_edits / format_confirmed_exemplars
+  apply) is the one comparison key for "would these render identically"
+  decisions: the queue's two approved-block dedupes and prompt_inputs'
+  merge key all use it, so a newline-vs-space variant of the same rendering
+  can no longer ship twice in one prompt.
+- **Flags single-source through backend.config (F8).** queue.py,
+  prompt_inputs.py, and the two scripts held from-imported copies of the
+  PROMPT_INCLUDE_* flags that drifted independently under monkeypatch, so a
+  snapshot could record a flag state the gates never applied. All consumers
+  read config.<NAME> at call time; tests patch backend.config once and a
+  worker-level test pins gate/prompt/snapshot agreement.

@@ -519,6 +519,16 @@ def format_glossary(
 PROMPT_PAIR_SIDE_MAX_CHARS = 400
 
 
+def pair_side_key(text: str | None) -> str:
+    """Normalized comparison key for one side of an example pair: the exact
+    strip + newline-collapse the pair renderers below apply, truncated to
+    PROMPT_PAIR_SIDE_MAX_CHARS. Every dedupe that decides "these two sides
+    would render identically in the prompt" must compare on this form (F11,
+    bug hunt 2026-08-04): a raw `text[:400]` key misses on leading
+    whitespace or embedded newlines that the renderer collapses away."""
+    return (text or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
+
+
 def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
     """Render captured user paragraph edits as a "preferred rewrites" block.
 
@@ -529,8 +539,8 @@ def format_style_edits(style_edits: list[tuple[str, str]]) -> str:
         return ""
     lines: list[str] = []
     for i, (before, after) in enumerate(style_edits, start=1):
-        b = (before or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
-        a = (after or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
+        b = pair_side_key(before)
+        a = pair_side_key(after)
         if not b or not a:
             continue
         lines.append(f"Example {i}:\n  BEFORE: {b}\n  AFTER:  {a}")
@@ -611,8 +621,8 @@ def format_confirmed_exemplars(
         return ""
     lines: list[str] = []
     for i, (zh, en) in enumerate(confirmed_exemplars, start=1):
-        z = (zh or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
-        e = (en or "").strip().replace("\n", " ")[:PROMPT_PAIR_SIDE_MAX_CHARS]
+        z = pair_side_key(zh)
+        e = pair_side_key(en)
         if not z or not e:
             continue
         lines.append(f"Example {i}:\n  SOURCE:    {z}\n  CONFIRMED: {e}")

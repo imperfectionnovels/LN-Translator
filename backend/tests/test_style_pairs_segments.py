@@ -430,3 +430,163 @@ async def test_single_config_patch_gates_block_and_snapshot_together(monkeypatch
     snap = json.loads(row["prompt_config_snapshot"])
     assert snap["flags"]["PROMPT_INCLUDE_STYLE_EDITS"] is False
     assert snap["style_edits_included"] is False
+
+
+# ---------------------------------------------------------------------------
+# Bug hunt 2026-08-04: F5 (dedupe decoupled from the approved flag),
+# F11 (dedupe keys compare on the rendered form), F4 (fallback snapshot
+# honesty)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_dedupe_shape() -> tuple[int, int]:
+    """One novel where the pending chapter's own source paragraph has a
+    confirmed rendering (rides the approved block) AND an edit elsewhere
+    landed on the same rendering (its style pair must dedupe against the
+    approved block)."""
+    novel_id, (ch1, _ch2, _ch3) = await _seed_novel_with_chapters(3)
+    await _insert_segment(novel_id, ch1, 0, _zh("\u7678"), "Shared rendering.",
+                          machine_text="Shared rendering.", status="confirmed",
+                          edited_at=None, confirmed_at="2026-08-04 10:00:00")
+    await _insert_segment(novel_id, ch1, 1, _zh("\u4e59"), "Shared rendering.",
+                          machine_text="Different draft.",
+                          edited_at="2026-08-04 09:30:00")
+    await _insert_segment(novel_id, ch1, 2, _zh("\u4e19"), "Kept correction.",
+                          machine_text="Another draft.",
+                          edited_at="2026-08-04 09:00:00")
+    pending_id = await _seed_pending_chapter(novel_id, 4)
+    return novel_id, pending_id
+
+
+async def test_approved_flag_off_changes_exactly_one_block(monkeypatch):
+    """F5: approved pairs are fetched unconditionally for dedupe; the flag
+    gates only the block's inclusion. The flag-off arm therefore differs
+    from the flag-on arm by exactly the approved block: style edits and
+    exemplars are byte-identical across the two arms."""
+    await providers_svc.create_provider(
+        name="translator", provider_type="gemini", model_id="m", is_default=True,
+    )
+    novel_id, pending_on = await _seed_dedupe_shape()
+
+    calls_on: list = []
+    _stub_translate(monkeypatch, calls_on)
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_on)
+
+    # Re-queue the same chapter with the flag off.
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'pending', translate_queued = 1, "
+            "translated_text = NULL WHERE id = ?",
+            (pending_on,),
+        )
+        await conn.commit()
+    monkeypatch.setattr(config, "PROMPT_INCLUDE_APPROVED_TRANSLATIONS", False)
+    calls_off: list = []
+    _stub_translate(monkeypatch, calls_off)
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_on)
+
+    on, off = calls_on[0], calls_off[0]
+    assert on["approved_pairs"] and off["approved_pairs"] is None
+    # The other example blocks are identical across the arms: the dedupe
+    # still ran against the fetched (un-shipped) approved set.
+    assert off["style_edits"] == on["style_edits"]
+    assert off["confirmed_exemplars"] == on["confirmed_exemplars"]
+    assert on["style_edits"] == [("Another draft.", "Kept correction.")]
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT prompt_config_snapshot FROM chapters WHERE id = ?",
+            (pending_on,),
+        )
+        row = await cur.fetchone()
+    snap = json.loads(row["prompt_config_snapshot"])
+    assert snap["approved_translations_included"] is False
+    assert snap["flags"]["PROMPT_INCLUDE_APPROVED_TRANSLATIONS"] is False
+
+
+async def test_dedupe_matches_newline_variant_renderings(monkeypatch):
+    """F11: the dedupe keys normalize with the same strip + newline-collapse
+    the renderers apply. A style pair whose AFTER differs from an approved
+    rendering only by an internal newline (which format_style_edits would
+    collapse to a space) is recognized as the same rendering and dropped."""
+    await providers_svc.create_provider(
+        name="translator", provider_type="gemini", model_id="m", is_default=True,
+    )
+    novel_id, (ch1, _ch2, _ch3) = await _seed_novel_with_chapters(3)
+    # Approved rendering for the pending chapter's own source: space form.
+    await _insert_segment(novel_id, ch1, 0, _zh("\u7678"),
+                          "Alpha beat. Beta beat.",
+                          machine_text="Alpha beat. Beta beat.",
+                          status="confirmed", edited_at=None,
+                          confirmed_at="2026-08-04 10:00:00")
+    # Same rendering edited elsewhere with a line break instead of a space:
+    # renders identically in the prompt, so its style pair must dedupe.
+    await _insert_segment(novel_id, ch1, 1, _zh("\u4e59"),
+                          "Alpha beat.\nBeta beat.",
+                          machine_text="A machine draft.",
+                          edited_at="2026-08-04 09:30:00")
+    pending_id = await _seed_pending_chapter(novel_id, 4)
+
+    calls: list = []
+    _stub_translate(monkeypatch, calls)
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_id)
+
+    call = calls[0]
+    assert [(zh, en) for _i, zh, en in call["approved_pairs"]] == [
+        (_zh("\u7678"), "Alpha beat. Beta beat.")
+    ]
+    assert call["style_edits"] == []
+
+
+async def test_plain_fallback_snapshot_stamps_blocks_false(monkeypatch):
+    """F4: a degraded (plain-text fallback) commit stamps every block
+    *_included key false plus plain_fallback=true, because the fallback
+    prompt carried none of the fetched blocks. The flags dict still records
+    env state."""
+    await providers_svc.create_provider(
+        name="translator", provider_type="gemini", model_id="m", is_default=True,
+    )
+    novel_id, (ch1, _ch2, _ch3) = await _seed_novel_with_chapters(3)
+    await _insert_segment(novel_id, ch1, 0, _zh("\u4e59"), "Human corrected.",
+                          machine_text="Machine draft.")
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE novels SET style_note = 'A voice anchor.' WHERE id = ?",
+            (novel_id,),
+        )
+        await conn.commit()
+    pending_id = await _seed_pending_chapter(novel_id, 4)
+
+    async def _fake_degraded(chapter_zh, title_zh, glossary, **kwargs):
+        n = len(chapter_zh.split("\n\n"))
+        text = "\n\n".join(f"Fallback paragraph {i + 1}." for i in range(n))
+        return TranslationResult(
+            title_en="T", translated_text=text, new_terms=[], degraded=True,
+        )
+    monkeypatch.setattr(
+        "backend.services.queue.translate_chapter", _fake_degraded
+    )
+    async with open_conn() as conn:
+        await queue_svc._translate_chapter_in_db(conn, novel_id, pending_id)
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT prompt_config_snapshot, translation_degraded "
+            "FROM chapters WHERE id = ?",
+            (pending_id,),
+        )
+        row = await cur.fetchone()
+    assert row["translation_degraded"] == 1
+    snap = json.loads(row["prompt_config_snapshot"])
+    assert snap["plain_fallback"] is True
+    for key in (
+        "free_draft_included", "previous_context_included",
+        "style_note_included", "style_edits_included",
+        "approved_translations_included", "confirmed_exemplars_included",
+    ):
+        assert snap[key] is False, key
+    # Env state is still recorded truthfully.
+    assert snap["flags"]["PROMPT_INCLUDE_STYLE_EDITS"] is True
