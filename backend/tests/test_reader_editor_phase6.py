@@ -90,6 +90,8 @@ def test_editor_util_menu_and_tools_wiring():
         "editor-concordance", "editor-style-note", "editor-refresh-free-draft",
         "editor-insert-chapter", "assist-missing-locked", "assist-chapter-terms",
         "assist-add-term", "term-form-dialog",
+        # Pull-based observation recheck (gap audit 2026-08-04).
+        "observations-recheck",
     ):
         assert f'id="{eid}"' in html, f"editor.html missing Phase 6 element #{eid}"
     assert "editor-tools.js" in html
@@ -97,6 +99,9 @@ def test_editor_util_menu_and_tools_wiring():
     tools = (JS / "editor-tools.js").read_text(encoding="utf-8")
     for wrapper in (
         "api.chapterObservations", "api.dismissObservation",
+        # QA panel refresh path (gap audit 2026-08-04): recheck on open, on
+        # the Re-check button, and debounced after segment saves.
+        "api.recheckChapterObservations",
         "api.chapterAttempts", "api.chapterLastPrompt", "api.chapterPreCheck",
         "api.refreshFreeDraft", "api.insertChapter", "api.tmConcordance",
         "api.learnEditsStage", "api.learnEditsCommit", "api.updateNovel",
@@ -141,4 +146,7 @@ def test_edit_paragraph_write_path_is_gone():
     obs_paths = {r.path for r in observations_route.router.routes}
     assert any(p.endswith("/observations") for p in obs_paths), (
         "observations route missing"
+    )
+    assert any(p.endswith("/observations/recheck") for p in obs_paths), (
+        "observations recheck route missing (gap audit 2026-08-04)"
     )

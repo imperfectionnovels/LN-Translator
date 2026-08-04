@@ -75,21 +75,41 @@ const OBSERVATION_KIND_LABELS = {
   observation: "Observation",
 };
 
-async function loadAndRenderObservations() {
+// recheck: POST the pull-based re-run (fixed findings clear server-side)
+// instead of the plain GET. Falls back to the GET with a small note while
+// the chapter is translating (409 chapter_translating: the queue owns the
+// rows until its success commit).
+async function loadAndRenderObservations({ recheck = false } = {}) {
   if (!obsList) return;
   obsList.innerHTML = '<p class="muted">Loading…</p>';
   let rows;
+  let note = "";
   try {
-    rows = await api.chapterObservations(novelId, currentCh);
+    if (recheck) {
+      try {
+        rows = await api.recheckChapterObservations(novelId, currentCh);
+      } catch (e) {
+        if (e && e.error_kind === "chapter_translating") {
+          note = "Chapter is translating; showing the stored findings. They refresh when it finishes.";
+          rows = await api.chapterObservations(novelId, currentCh);
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      rows = await api.chapterObservations(novelId, currentCh);
+    }
   } catch (e) {
     obsList.innerHTML = `<p class="status err">Failed to load: ${escapeHtml(e.message)}</p>`;
     return;
   }
+  const noteHtml = note ? `<p class="muted">${escapeHtml(note)}</p>` : "";
   if (!rows || !rows.length) {
-    obsList.innerHTML = '<p class="observations-empty">No observations for this chapter.</p>';
+    obsList.innerHTML = noteHtml
+      + '<p class="observations-empty">No observations for this chapter.</p>';
     return;
   }
-  obsList.innerHTML = rows.map(obs => {
+  obsList.innerHTML = noteHtml + rows.map(obs => {
     const label = OBSERVATION_KIND_LABELS[obs.kind] || obs.kind;
     return `
       <div class="observation-row" data-obs-id="${obs.id}">
@@ -105,9 +125,24 @@ async function loadAndRenderObservations() {
 document.getElementById("editor-observations")?.addEventListener("click", () => {
   if (!obsDialog) return;
   if (!obsDialog.open) obsDialog.showModal();
-  loadAndRenderObservations();
+  loadAndRenderObservations({ recheck: true });
+});
+document.getElementById("observations-recheck")?.addEventListener("click", () => {
+  loadAndRenderObservations({ recheck: true });
 });
 document.getElementById("observations-close")?.addEventListener("click", () => obsDialog?.close());
+// Debounced re-check after segment saves WHILE the panel is open (the
+// missing-locked tier's debounce pattern), so a fixed finding clears without
+// closing and reopening the dialog. Closed dialog: do nothing; opening the
+// panel re-checks anyway.
+let obsRecheckDebounce = null;
+document.addEventListener("editor:segment-updated", () => {
+  if (!obsDialog || !obsDialog.open) return;
+  if (obsRecheckDebounce) clearTimeout(obsRecheckDebounce);
+  obsRecheckDebounce = setTimeout(() => {
+    if (obsDialog.open) loadAndRenderObservations({ recheck: true });
+  }, 600);
+});
 // Delegated dismiss (rows re-render after every dismiss).
 obsList?.addEventListener("click", async (e) => {
   const target = e.target.closest("[data-dismiss]");

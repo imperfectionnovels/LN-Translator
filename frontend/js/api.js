@@ -354,6 +354,13 @@ const api = {
   // ----- Observations (Initiative 1 QA dashboard) -----
   chapterObservations: (novelId, chapterNum) =>
     apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/observations`),
+  // Pull-based refresh: re-runs the body observers against the current text
+  // and returns the refreshed list (same shape as the GET). 409 with
+  // err.error_kind === "chapter_translating" while the queue owns the rows.
+  recheckChapterObservations: (novelId, chapterNum) =>
+    apiFetch(`/api/novels/${novelId}/chapters/${chapterNum}/observations/recheck`, {
+      method: "POST",
+    }),
   observationsLibrarySummary: () => apiFetch(`/api/observations/library-summary`),
   dismissObservation: (observationId) =>
     apiFetch(`/api/observations/${observationId}/dismiss`, { method: "POST" }),

@@ -18,6 +18,13 @@ queue worker does that and hands the raw outputs in. Keeping the call sites
 in the worker keeps the existing chapter-level log line intact (single
 source for the 'logged, not retried' telemetry) while this layer owns
 storage shape.
+
+Post-pivot gap audit (2026-08-04): `recheck_body_observations` adds the one
+NON-translate-time writer, a pull-based re-run of the body-correctness
+observers against the chapter's current displayed body so a finding the
+user fixed in the CAT editor clears without a manual dismiss. Scoped
+strictly to the kinds that recheck can itself recompute; everything the
+queue alone can know stays untouched.
 """
 
 from __future__ import annotations
@@ -27,7 +34,20 @@ import logging
 from dataclasses import dataclass
 from typing import Iterable
 
+import aiosqlite
+
+from backend.services import segments as segments_svc
+from backend.services.text_observers import body_correctness_observations
+
 logger = logging.getLogger(__name__)
+
+
+class ObservationRecheckBusyError(Exception):
+    """Recheck refused because the chapter is mid-translation: the queue's
+    success commit owns the observation rows then (full DELETE+INSERT), so a
+    concurrent recheck would race it for no benefit. Routes map this to 409
+    with the structured detail {message, error_kind: 'chapter_translating'}
+    (the segments-route convention)."""
 
 
 def parse_disabled_observers(raw: str | None) -> set[str]:
@@ -38,8 +58,8 @@ def parse_disabled_observers(raw: str | None) -> set[str]:
     set (no mutes) so a user can never accidentally suppress every observer
     by storing bad JSON. Keeping the parse in one shared helper means any
     future consumer of the column cannot drift from the queue worker's
-    interpretation (the edit-paragraph re-run path, its former second
-    consumer, retired with Phase 6)."""
+    interpretation (recheck_body_observations below is the second consumer;
+    the retired edit-paragraph re-run path was its predecessor)."""
     if not raw:
         return set()
     try:
@@ -242,6 +262,120 @@ def implicit_observation_paragraph_count_drift(
             f"trusted as a 1:1 map."
         ),
     )
+
+
+# Every kind text_observers.body_correctness_observations can produce through
+# normalize_observer_outputs' prefix table, including the 'observation'
+# fallback (residual-CJK / what-cleft / orphan-'Which' messages carry no
+# prefix entry; nothing outside the body observers writes that kind). This is
+# recheck_body_observations' scoped-DELETE ownership set. Kinds only the
+# translate/refine commits can know (translation_degraded, tm_inconsistency,
+# glossary_merge_error, paragraph_count_drift, missing_title_glossary_term)
+# stay untouched. Keep this in lockstep with body_correctness_observations
+# and _KIND_PREFIXES; test_observations_recheck.py pins the mapping.
+BODY_RECHECK_KINDS = frozenset({
+    "missing_glossary_term",
+    "mt_texture",
+    "double_possessive",
+    "mid_sentence_paragraph_break",
+    "intensifier_inflation",
+    "glossary_predicate_loss",
+    "observation",
+})
+
+# glossary_predicate_loss is the one kind shared between the body observers
+# and the queue's title-targeted call (detect_glossary_predicate_loss with
+# source_label='chapter title'); the label rides the excerpt as
+# '... in <source_label>: ...', so title rows are carved out of the scoped
+# DELETE by this LIKE pattern (pinned against the real message format).
+_TITLE_PREDICATE_EXCERPT_LIKE = "% in chapter title: %"
+
+
+async def recheck_body_observations(
+    conn: aiosqlite.Connection,
+    chapter_row,
+    glossary,
+) -> bool:
+    """Pull-based QA refresh: re-run the deterministic body-correctness
+    observers against the chapter's CURRENT displayed body and replace the
+    persisted rows of exactly the kinds this recheck recomputes
+    (BODY_RECHECK_KINDS; scoped DELETE + INSERT, the refinement-drift
+    scoped-replace precedent in queue.py). A finding the user fixed in the
+    CAT editor clears without a manual dismiss; translate-time-only kinds
+    and title-targeted rows are untouched.
+
+    `chapter_row` must carry id, novel_id, status, original_text,
+    translated_text, refined_text (displayed_body reads the last two).
+    Honors the novel's disabled_observers mutes. Dismissals carry over: a
+    fresh finding identical on (kind, excerpt) to a previously stored
+    dismissed row keeps its dismissed_at, so re-checking never resurrects a
+    judgment call the user already waved off.
+
+    Raises ObservationRecheckBusyError while the chapter is translating (the
+    queue owns the rows then). Returns False without touching anything when
+    there is no displayed body to check (never translated, or blanked):
+    observers against an empty body would spuriously flag every glossary
+    term as missing. Returns True when the recheck ran. The caller owns the
+    commit."""
+    if chapter_row["status"] == "translating":
+        raise ObservationRecheckBusyError(
+            "this chapter is translating; its findings refresh when the "
+            "translation finishes."
+        )
+    chapter_id = chapter_row["id"]
+    _variant, body = segments_svc.displayed_body(chapter_row)
+    if not body.strip():
+        return False
+
+    fresh = normalize_observer_outputs(
+        body_correctness_observations(
+            chapter_row["original_text"] or "", body, glossary,
+        )
+    )
+    cur = await conn.execute(
+        "SELECT disabled_observers FROM novels WHERE id = ?",
+        (chapter_row["novel_id"],),
+    )
+    mute_row = await cur.fetchone()
+    muted = parse_disabled_observers(
+        mute_row["disabled_observers"] if mute_row else None
+    )
+    if muted:
+        fresh = [o for o in fresh if o.kind not in muted]
+
+    kinds = sorted(BODY_RECHECK_KINDS)
+    placeholders = ",".join("?" * len(kinds))
+    cur = await conn.execute(
+        f"SELECT kind, excerpt, dismissed_at FROM chapter_observations "
+        f"WHERE chapter_id = ? AND kind IN ({placeholders}) "
+        f"AND dismissed_at IS NOT NULL",
+        (chapter_id, *kinds),
+    )
+    dismissed_at_of: dict[tuple[str, str], str] = {
+        (r["kind"], r["excerpt"]): r["dismissed_at"]
+        for r in await cur.fetchall()
+    }
+    await conn.execute(
+        f"DELETE FROM chapter_observations "
+        f"WHERE chapter_id = ? AND kind IN ({placeholders}) "
+        f"AND NOT (kind = 'glossary_predicate_loss' AND excerpt LIKE ?)",
+        (chapter_id, *kinds, _TITLE_PREDICATE_EXCERPT_LIKE),
+    )
+    if fresh:
+        await conn.executemany(
+            "INSERT INTO chapter_observations "
+            "(chapter_id, kind, severity, paragraph_index, excerpt, "
+            " dismissed_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    chapter_id, obs.kind, obs.severity, obs.paragraph_index,
+                    obs.excerpt,
+                    dismissed_at_of.get((obs.kind, obs.excerpt)),
+                )
+                for obs in fresh
+            ],
+        )
+    return True
 
 
 def implicit_observation_glossary_merge_error(error_msg: str) -> NormalizedObservation:

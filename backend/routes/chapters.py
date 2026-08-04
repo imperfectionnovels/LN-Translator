@@ -461,9 +461,11 @@ async def learn_edits_commit(
 # segment-reroute + observations-refresh helpers were deleted. The CAT editor's
 # PATCH /segments/{index} (routes/segments.py -> services/segments.py) is the
 # single paragraph write path; style_edits gains no new rows in-app (the table
-# stays for its historical prompt-block data). Observation rows now refresh
-# only at translate commits; a fixed-by-hand observation is dismissed from the
-# editor's QA panel instead.
+# stays as a legacy fill for the style-pairs prompt arm, which the gap audit
+# 2026-08-04 re-sourced from the segment ledger via
+# segments.recent_edited_pairs). Observation rows refresh at translate commits
+# and via the pull-based POST .../observations/recheck the editor QA panel
+# calls (routes/observations.py); dismissal remains for judgment calls.
 
 
 # F22 (2026-05-25): per-chapter translation attempts log + "show prompt"

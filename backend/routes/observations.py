@@ -5,10 +5,17 @@ Read/dismiss surfaces over the persisted chapter_observations rows:
     for the library page badges (one query, no N+1).
   * GET /api/novels/{id}/chapters/{n}/observations — full list for one
     chapter, ordered by id (stable insertion order).
+  * POST .../observations/recheck — pull-based refresh (gap audit
+    2026-08-04): re-runs the body-correctness observers against the current
+    displayed body via services/observations.recheck_body_observations and
+    returns the refreshed list (same shape as the GET). 409
+    {message, error_kind: 'chapter_translating'} while the queue owns the
+    rows.
   * POST /api/observations/{id}/dismiss — soft-dismiss one observation.
     Dismissal does NOT survive a chapter retranslation (the worker's
     DELETE+INSERT in the success-commit transaction wipes all prior rows
-    for the chapter).
+    for the chapter), but DOES survive a recheck of a still-present
+    finding (carry-over on kind + excerpt).
 
 (The novel-rollup GET and the two bulk-dismiss POSTs were removed
 2026-07-30: no UI caller ever wired them.)
@@ -24,7 +31,11 @@ from fastapi.concurrency import run_in_threadpool
 
 from backend.db import get_conn
 from backend.models import Observation
-from backend.services.observations import severity_tier_for
+from backend.services.observations import (
+    ObservationRecheckBusyError,
+    recheck_body_observations,
+    severity_tier_for,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -98,6 +109,41 @@ async def list_chapter_observations(
         )
         for r in rows
     ]
+
+
+@router.post("/novels/{novel_id}/chapters/{chapter_num}/observations/recheck")
+async def recheck_chapter_observations(
+    novel_id: int,
+    chapter_num: int,
+    conn: aiosqlite.Connection = Depends(get_conn),
+) -> list[Observation]:
+    """Pull-based QA refresh for the editor panel: re-run the deterministic
+    body-correctness observers against the chapter's current displayed body
+    (fixed findings clear, dismissed still-present findings stay dismissed;
+    translate-time-only kinds untouched), then return the refreshed panel
+    payload, the same shape as the plain GET. Thin: the semantics live in
+    services/observations.recheck_body_observations."""
+    cur = await conn.execute(
+        "SELECT id, novel_id, status, original_text, translated_text, "
+        "refined_text FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+        (novel_id, chapter_num),
+    )
+    ch = await cur.fetchone()
+    if ch is None:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    from backend.services import global_glossary as global_glossary_svc  # noqa: PLC0415
+    glossary = await global_glossary_svc.list_for_novel_with_globals(
+        conn, novel_id
+    )
+    try:
+        await recheck_body_observations(conn, ch, glossary)
+    except ObservationRecheckBusyError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(e), "error_kind": "chapter_translating"},
+        ) from e
+    await conn.commit()
+    return await list_chapter_observations(novel_id, chapter_num, conn)
 
 
 @router.get("/diagnostics")

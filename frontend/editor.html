@@ -158,14 +158,16 @@
   <!-- ==== Phase 6: dialogs relocated from the reader's edit mode. ==== -->
 
   <!-- QA panel: every observation kind for the current chapter, with soft
-       per-row dismissal. Rows are re-fetched on open. -->
+       per-row dismissal. Findings are re-checked against the current text on
+       open and (debounced) after segment saves while the panel is open. -->
   <dialog id="observations-dialog" class="dialog observations-dialog" aria-labelledby="observations-dialog-title">
     <h3 id="observations-dialog-title">Translation issues</h3>
-    <p class="observations-intro muted">Things the post-translation observers noticed. Logged for your review; no automatic re-translation. Dismiss rows you have fixed by hand.</p>
+    <p class="observations-intro muted">Things the post-translation observers noticed, re-checked against your current text whenever this panel opens or you edit a paragraph. Findings you fix clear on their own; dismiss the judgment calls. No automatic re-translation.</p>
     <div class="observations-list" id="observations-list" aria-live="polite">
       <p class="muted">Loading…</p>
     </div>
     <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="observations-recheck" title="Re-run the checks against the chapter's current text">Re-check</button>
       <button type="button" class="btn-primary" id="observations-close">Close</button>
     </div>
   </dialog>
