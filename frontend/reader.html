@@ -8,7 +8,7 @@
      readerFocusMode + mobile TOC default to avoid a flash). -->
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=5">
-<link rel="stylesheet" href="/static/css/reader.css?v=6">
+<link rel="stylesheet" href="/static/css/reader.css?v=7">
 <!-- marked + DOMPurify vendored locally (frontend/js/vendor) so the XSS
      sanitizer is not a runtime CDN dependency and the bundle stays offline. -->
 <script src="/static/js/vendor/marked.umd.min.js" defer></script>
@@ -120,6 +120,7 @@
               <button class="util-menu-item" id="retranslate" title="Re-translate this chapter with the current glossary" aria-label="Re-translate this chapter"><span class="ico">⟲</span>Retranslate chapter</button>
               <button class="util-menu-item" id="copy-chapter" title="Copy this chapter's English text to the clipboard" aria-label="Copy chapter"><span class="ico">❐</span>Copy chapter</button>
               <a class="util-menu-item" id="open-in-editor" href="#" title="Open this chapter in the CAT editor: segment-by-segment editing with confirm tracking and TM assist" aria-label="Open in CAT editor"><span class="ico">校</span>Open in CAT editor</a>
+              <a class="util-menu-item" id="open-glossary" href="#" title="Open this novel's glossary" aria-label="Open glossary"><span class="ico">詞</span>Glossary</a>
               <a class="util-menu-item" id="append-chapters" href="#" title="Append more raw chapters to this novel" aria-label="Append more chapters"><span class="ico">＋</span>Append chapters</a>
               <div class="util-menu-divider"></div>
               <a class="util-menu-item" id="download-txt" href="#" download><span class="ico">↧</span>Whole novel · .txt</a>
@@ -258,6 +259,13 @@
     </div>
   </dialog>
 
+  <!-- Glossary mini dialog (restored 2026-08-06, reading-surface form).
+       Opened by the selection popover: Add for new terms, Revise for an
+       existing entry. Lean on purpose: term_zh / term_en / category /
+       locked / notes. The full form (usage_note, delete, bulk ops) lives
+       on the glossary page; the Revise form deep-links there. -->
+  <dialog id="glossary-mini-dialog" class="dialog glossary-mini-dialog" aria-label="Glossary entry"></dialog>
+
   <!-- Bookmarks panel (Initiative 2). Lists every bookmark in this novel,
        grouped by chapter, with delete per row and click-to-jump. -->
   <dialog id="bookmarks-dialog" class="dialog bookmarks-dialog" aria-labelledby="bookmarks-dialog-title">
@@ -387,7 +395,8 @@
 -->
 <script src="/static/js/reader-core.js?v=2" defer></script>
 <script src="/static/js/reader-toc.js?v=2" defer></script>
-<script src="/static/js/reader-chapter.js?v=2" defer></script>
+<script src="/static/js/reader-chapter.js?v=3" defer></script>
+<script src="/static/js/reader-glossary.js?v=3" defer></script>
 <script src="/static/js/reader-quality.js?v=2" defer></script>
 </body>
 </html>
