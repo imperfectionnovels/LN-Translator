@@ -6,7 +6,7 @@
 <title>Editor · LN Translator</title>
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=5">
-<link rel="stylesheet" href="/static/css/editor.css?v=4">
+<link rel="stylesheet" href="/static/css/editor.css?v=5">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -55,6 +55,7 @@
           <button class="util-menu-item" id="editor-view-last-prompt" title="Show the resolved prompt that was sent to the LLM for this chapter" aria-label="View last prompt"><span class="ico">¶</span>View last prompt</button>
           <button class="util-menu-item" id="editor-precheck" title="Run the pre-translation checks (length, glossary saturation, OCR shape) for this chapter" aria-label="Pre-translation check"><span class="ico">✓</span>Pre-translation check</button>
           <div class="util-menu-divider"></div>
+          <a class="util-menu-item" id="editor-open-glossary" href="#" title="Open this novel's glossary (full entry editing, usage notes, bulk operations)" aria-label="Open glossary"><span class="ico">詞</span>Glossary</a>
           <button class="util-menu-item" id="editor-learn-edits" title="Turn your segment edits into glossary fixes and a per-novel voice note, so future chapters improve" aria-label="Learn from my edits"><span class="ico">✦</span>Learn from my edits…</button>
           <button class="util-menu-item" id="editor-concordance" title="Search the translation memory for a phrase across this novel" aria-label="Concordance search"><span class="ico">尋</span>Concordance search…</button>
           <button class="util-menu-item" id="editor-style-note" title="Edit the per-novel style note (voice anchor for translations)" aria-label="Style note"><span class="ico">✒</span>Style note…</button>
@@ -123,7 +124,16 @@
 
   <!-- Keyboard shortcuts help (toggled by ? or the bar button). -->
   <dialog id="shortcuts-dialog" class="dialog" aria-labelledby="shortcuts-dialog-title">
-    <h3 id="shortcuts-dialog-title">Keyboard shortcuts</h3>
+    <h3 id="shortcuts-dialog-title">The CAT editor</h3>
+    <p class="muted editor-purpose">
+      Fix the AI's translation one paragraph at a time, and the app learns
+      from it: every row you edit or confirm here is kept verbatim through
+      future retranslations, feeds the translation-memory assist, and
+      teaches upcoming chapters your voice (style pairs + approved
+      examples ride every prompt). The reader is for reading; this grid is
+      where corrections live.
+    </p>
+    <h4 class="shortcuts-subhead">Keyboard shortcuts</h4>
     <div class="shortcuts-grid">
       <div class="key-cell"><span class="kbd">j</span> <span class="kbd">↓</span> / <span class="kbd">k</span> <span class="kbd">↑</span></div><div>Next / previous segment</div>
       <div class="key-cell"><span class="kbd">Enter</span></div><div>Edit the active segment</div>
@@ -287,12 +297,14 @@
         <option value="other">other</option>
         <option value="idiom">idiom</option>
       </select>
+      <label for="tf-usage">Usage note</label>
+      <input id="tf-usage" placeholder="injected into every prompt, e.g. 'always lowercase'">
       <label for="tf-notes">Notes</label>
       <input id="tf-notes" placeholder="optional">
       <label for="tf-locked">Locked</label>
       <label class="term-form-lock-row">
         <input type="checkbox" id="tf-locked" checked>
-        <span class="muted">Protect from auto-overwrite by future translations</span>
+        <span class="muted" id="tf-locked-hint">Protect from auto-overwrite by future translations</span>
       </label>
     </div>
     <div id="tf-err" class="muted term-form-err"></div>
@@ -315,8 +327,8 @@
      Core first owns the shared state; assist reads it and listens for the
      editor:* CustomEvents core dispatches; tools last adds the util menu
      dialogs, glossary popover + terms tiers (Phase 6 relocations). -->
-<script src="/static/js/editor-core.js" defer></script>
+<script src="/static/js/editor-core.js?v=2" defer></script>
 <script src="/static/js/editor-assist.js" defer></script>
-<script src="/static/js/editor-tools.js" defer></script>
+<script src="/static/js/editor-tools.js?v=2" defer></script>
 </body>
 </html>

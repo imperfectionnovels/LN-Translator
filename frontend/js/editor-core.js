@@ -208,6 +208,7 @@ function rowHtml(s) {
   const failed = failedSaves.has(`${currentCh}:${s.index}`);
   return `
     <div class="seg-row" data-seg="${s.index}" data-status="${escapeHtml(s.status)}"
+         data-aligned="${s.aligned ? "1" : "0"}"
          data-provenance="${escapeHtml(s.origin)}">
       <span class="seg-idx">${s.index + 1}</span>
       <div class="seg-src" lang="zh">${escapeHtml(s.source_text)}</div>
@@ -879,7 +880,29 @@ function renderState(data) {
     }
     return;
   }
-  clearStatus();
+  if (!(data.segments || []).length) {
+    updateActions();
+    showStatus("info",
+      `No segments for this chapter yet. ` +
+      `<a href="${readerHref()}">Open it in the reader</a> to check its text, ` +
+      `then reload this page.`);
+    return;
+  }
+  if (data.segments_state === "partial") {
+    // Chapter-level signal for legacy chapters: the translation predates
+    // the 1:1 paragraph contract, so some rows were paired by the length
+    // aligner and flagged for review (merged groups, empty slots).
+    const flagged = (data.segments || []).filter(s => !s.aligned).length;
+    showStatus("info",
+      `${flagged} row${flagged === 1 ? "" : "s"} could not be pinned to a ` +
+      `single paragraph pair (this translation predates the segment ledger, ` +
+      `so rows were matched by length). Rows marked ` +
+      `<em>needs review</em> may show merged or missing English; saving a ` +
+      `row clears its flag. ` +
+      `<button type="button" class="linklike jump-flagged">Jump to next flagged row</button>`);
+  } else {
+    clearStatus();
+  }
   readOnly = false;
   renderSegments(data);
   applyFilter();
@@ -889,6 +912,18 @@ function renderState(data) {
     if (row) selectRow(row);
   }
 }
+
+// "Jump to next flagged row" in the partial-state banner: cycles through
+// the aligned=0 rows from the current selection down, wrapping to the top.
+statusEl.addEventListener("click", (e) => {
+  if (!e.target.closest(".jump-flagged")) return;
+  const rows = Array.from(grid.querySelectorAll('.seg-row[data-aligned="0"]'));
+  if (!rows.length) return;
+  const active = grid.querySelector(".seg-row.active");
+  const from = active ? Number(active.dataset.seg) : -1;
+  const next = rows.find(r => Number(r.dataset.seg) > from) || rows[0];
+  selectRow(next);
+});
 
 // --- Chapter navigation ---
 function gotoChapter(n) {

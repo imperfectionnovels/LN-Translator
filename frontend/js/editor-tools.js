@@ -463,6 +463,11 @@ async function runConcordanceSearch() {
 }
 
 document.getElementById("editor-concordance")?.addEventListener("click", () => openConcordance(null));
+
+// Novel-scoped glossary link in the util menu (the editor previously had no
+// route to the full glossary page at all).
+const editorGlossaryLink = document.getElementById("editor-open-glossary");
+if (editorGlossaryLink) editorGlossaryLink.href = `/glossary?novel=${novelId}`;
 concordanceSearchBtn?.addEventListener("click", runConcordanceSearch);
 concordanceInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); runConcordanceSearch(); }
@@ -571,8 +576,10 @@ const tfTitle = document.getElementById("term-form-title");
 const tfZh = document.getElementById("tf-zh");
 const tfEn = document.getElementById("tf-en");
 const tfCat = document.getElementById("tf-cat");
+const tfUsage = document.getElementById("tf-usage");
 const tfNotes = document.getElementById("tf-notes");
 const tfLocked = document.getElementById("tf-locked");
+const tfLockedHint = document.getElementById("tf-locked-hint");
 const tfErr = document.getElementById("tf-err");
 const tfDelete = document.getElementById("tf-delete");
 const tfSave = document.getElementById("tf-save");
@@ -591,11 +598,18 @@ function openTermForm(entry, prefill) {
     tfZh.title = "term_zh is the lookup key. Delete and re-add to change it";
     tfEn.value = entry.term_en || "";
     tfCat.value = entry.category || "other";
+    if (tfUsage) tfUsage.value = entry.usage_note || "";
     tfNotes.value = entry.notes || "";
     // Checked by default: a revision endorses the rendering (the server's
     // update_entry would implicitly lock on edit anyway); unchecking is the
-    // explicit opt-out (revise-form lock-clobber fix, 2026-06-11).
+    // explicit opt-out (revise-form lock-clobber fix, 2026-06-11). The hint
+    // shows the row's CURRENT state so the default doesn't hide it.
     tfLocked.checked = true;
+    if (tfLockedHint) {
+      tfLockedHint.textContent = entry.locked
+        ? "Currently locked. Uncheck to let auto-detection update it again."
+        : "Currently auto-managed. Saving locks it; uncheck to keep it auto.";
+    }
     tfDelete.hidden = false;
   } else {
     tfTitle.textContent = "Add to glossary";
@@ -604,8 +618,12 @@ function openTermForm(entry, prefill) {
     tfZh.removeAttribute("title");
     tfEn.value = (prefill && prefill.en) || "";
     tfCat.value = "character";
+    if (tfUsage) tfUsage.value = "";
     tfNotes.value = "";
     tfLocked.checked = true;
+    if (tfLockedHint) {
+      tfLockedHint.textContent = "Protect from auto-overwrite by future translations";
+    }
     tfDelete.hidden = true;
   }
   if (!termFormDialog.open) termFormDialog.showModal();
@@ -642,6 +660,7 @@ tfSave?.addEventListener("click", async () => {
   const zh = tfZh.value.trim();
   const en = tfEn.value.trim();
   const cat = tfCat.value;
+  const usage = tfUsage ? tfUsage.value.trim() : "";
   const notes = tfNotes.value.trim();
   const locked = tfLocked.checked;
   if (!zh || !en) {
@@ -657,6 +676,7 @@ tfSave?.addEventListener("click", async () => {
       const patch = {};
       if (en !== oldEn) patch.term_en = en;
       if (cat !== (entry.category || "other")) patch.category = cat;
+      if ((usage || null) !== (entry.usage_note || null)) patch.usage_note = usage || null;
       if ((notes || null) !== (entry.notes || null)) patch.notes = notes || null;
       // Ship the lock state whenever a field changed or it differs from the
       // row: an unchecked box must reach the server as locked=false or the
@@ -691,9 +711,17 @@ tfSave?.addEventListener("click", async () => {
         showToast("Saved", "ok");
       }
     } else {
-      await api.createGlossary(novelId, {
-        term_zh: zh, term_en: en, category: cat, notes: notes || null,
+      const created = await api.createGlossary(novelId, {
+        term_zh: zh, term_en: en, category: cat,
+        usage_note: usage || null, notes: notes || null,
       });
+      // Manual adds lock server-side; an unchecked box is the explicit
+      // opt-out, applied as a follow-up PATCH (the glossary.js pattern;
+      // previously the checkbox was silently ignored on this path).
+      if (!locked && created && created.locked) {
+        try { await api.updateGlossary(created.id, { locked: false }); }
+        catch (_) { /* keep created */ }
+      }
       termFormDialog.close();
       await refreshGlossaryCache();
       refreshGlossarySurfaces();
@@ -741,10 +769,13 @@ async function showSelPopover() {
   const entries = await loadGlossaryOnce();
   // Selection may have collapsed while the glossary loaded.
   if (!gridSelection()) return;
+  // Alias-aware match (slash-split, both sides): selecting one surface form
+  // of an entry ("筑基" when the row is "筑基 / 築基") must offer Revise,
+  // not push a duplicate through Add.
   const lc = text.toLowerCase();
   const existing = (entries || []).find(g => inZh
-    ? (g.term_zh || "").trim() === text
-    : (g.term_en || "").trim().toLowerCase() === lc);
+    ? zhAliases(g.term_zh).includes(text)
+    : zhAliases(g.term_en).some(a => a.toLowerCase() === lc));
 
   selPop = document.createElement("div");
   selPop.className = "sel-pop";
