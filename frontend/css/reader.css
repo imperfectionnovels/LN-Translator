@@ -622,6 +622,50 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   .reader-stage[data-dual="on"] .dual-grid { grid-template-columns: 1fr; gap: 24px; }
 }
 
+/* ===== Bilingual paragraph-aligned grid (restored 2026-08-06) =====
+ * Active in bilingual mode when reader-chapter.js sets data-aligned="on" on
+ * the stage (see renderChapterBody). It collapses the dual-grid to one
+ * full-width column, hides the independent ZH pane and the flowing EN body,
+ * and shows #aligned-body whose .prow rows pair each source paragraph group
+ * (.src) with its translation group (.tgt). The masthead + end-block (inside
+ * #pane-en) stay full width above and below the rows. Classic mode never
+ * sets data-aligned, so this whole block is inert there. Reading-only. */
+.aligned-body[hidden] { display: none; }
+.reader-stage[data-aligned="on"] .dual-grid { grid-template-columns: 1fr; }
+.reader-stage[data-aligned="on"] #pane-zh { display: none; }
+.reader-stage[data-aligned="on"] #body-en { display: none; }
+.reader-stage[data-aligned="on"] #aligned-body { display: block; }
+
+.aligned-body .prow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: start;
+}
+.aligned-body .src {
+  font-family: var(--font-family-han);
+  font-size: 17px;
+  line-height: 2;
+  color: var(--fg-soft);
+}
+.aligned-body .tgt {
+  font-family: var(--font-family-serif);
+  font-size: var(--fs-body, 17px);
+  line-height: var(--fs-body-lh, 1.75);
+}
+.aligned-body .src p { margin: 0 0 1em; }
+.aligned-body .tgt p { margin: 0 0 0.85em; text-wrap: pretty; }
+.aligned-body .tgt strong { font-weight: 700; }
+.aligned-body .tgt em { font-style: italic; }
+
+/* Narrow screens: stack each row (source above its translation) instead of
+ * squeezing two 17px columns side by side. */
+@media (max-width: 720px) {
+  .aligned-body .prow { grid-template-columns: 1fr; gap: 8px; }
+  .aligned-body .src p { margin-bottom: 0.4em; }
+  .aligned-body .prow + .prow { margin-top: 1.1em; }
+}
+
 .pane-label {
   font-family: var(--font-family-sans);
   font-size: 11px;
@@ -1522,6 +1566,11 @@ body[data-chapter-status="error"] .reading-rail {
     border: none !important;
     background: #fff !important;
   }
+
+  /* Aligned bilingual grid: print the legacy stacked panes, not the rows. */
+  #aligned-body { display: none !important; }
+  .reader-stage[data-aligned="on"] #body-en,
+  .reader-stage[data-aligned="on"] #pane-zh { display: block !important; }
 
   /* In bilingual mode, stack ZH above EN — side-by-side wastes paper width. */
   .pane-zh.hidden { display: none !important; }

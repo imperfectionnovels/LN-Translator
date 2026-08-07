@@ -38,6 +38,107 @@ function renderEnglishMarkdown(text) {
   );
 }
 
+/* ---- Bilingual paragraph alignment (restored 2026-08-06) ----
+ * The CAT pivot removed the aligned bilingual grid along with the edit-mode
+ * chrome, reverting bilingual reading to two independent panes whose rows
+ * drift apart at the first merge/split (and are offset by one from the top:
+ * the ZH pane keeps its leading heading paragraph while the EN title lives
+ * in the masthead). Row alignment is a READING feature, so it returns here,
+ * minus every editing hook the old builder carried. */
+
+// Mirror of backend segmentation.py::_drop_leading_heading. Conservative:
+// only the first paragraph, only when it is a CN chapter-heading line.
+const _ZH_HEADING_RE = /^[ \t]*第[\d零〇一二三四五六七八九十百千万两]+[ \t]*[章回节]/;
+function _dropLeadingZhHeading(paras) {
+  return (paras.length && _ZH_HEADING_RE.test(paras[0])) ? paras.slice(1) : paras;
+}
+
+/* Length-ratio paragraph alignment (Gale-Church-lite). Returns an ordered list
+ * of { src:[indices], tgt:[indices] } groups, or null when the two sides are
+ * too divergent to align meaningfully (caller falls back to the plain panes).
+ * Deterministic. Moves: 1:1, 2:1 (two source paras to one target), 1:2, and
+ * 1:0 / 0:1 (a paragraph with no counterpart) at a high penalty so content is
+ * grouped rather than dropped. Cost compares each target group's length to its
+ * expected length r*sourceLength, where r is the chapter's CN to EN expansion.
+ * The backend's segment-store retro-aligner (tm._dp_moves groups=True) runs
+ * this same cost model server-side, so the reader rows and the CAT editor
+ * grid agree about where merges and splits happened. */
+function _alignParas(srcParas, tgtParas) {
+  const n = srcParas.length, m = tgtParas.length;
+  if (!n || !m) return null;
+  // Very divergent counts: 1:1 / 2:1 / 1:2 moves cannot span it cleanly, and
+  // the plain panes read better than a forced grouping.
+  if (Math.abs(n - m) / Math.max(n, m) > 0.5) return null;
+  if (n * m > 4000000) return null; // perf backstop for pathological chapters
+  const sLen = srcParas.map(s => s.length);
+  const tLen = tgtParas.map(t => t.length);
+  const sTot = sLen.reduce((a, b) => a + b, 0);
+  const tTot = tLen.reduce((a, b) => a + b, 0);
+  if (!sTot || !tTot) return null;
+  const r = tTot / sTot;     // expected EN chars per CN char
+  const avgT = tTot / m;     // one average target paragraph, the penalty unit
+  // Bias hard toward 1:1. A merge or split must cut the length mismatch by more
+  // than a whole paragraph to be worth it, so equal-count chapters (the common
+  // case once the heading is dropped) stay 1:1 instead of reshuffling on
+  // per-paragraph length noise. STEP_PEN only gates OPTIONAL deviations: when the
+  // counts genuinely differ the move is forced regardless of the penalty.
+  const STEP_PEN = avgT;
+  const DROP_PEN = 4 * avgT; // dropping a paragraph (an empty cell) is a last resort
+  const cost = (srcChars, tgtChars) => Math.abs(tgtChars - r * srcChars);
+  const dp = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(Infinity));
+  const back = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(null));
+  dp[0][0] = 0;
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= m; j++) {
+      const base = dp[i][j];
+      if (base === Infinity) continue;
+      const relax = (di, dj, add) => {
+        const ni = i + di, nj = j + dj;
+        const c = base + add;
+        if (c < dp[ni][nj]) { dp[ni][nj] = c; back[ni][nj] = [di, dj]; }
+      };
+      if (i < n && j < m) relax(1, 1, cost(sLen[i], tLen[j]));
+      if (i + 1 < n && j < m) relax(2, 1, cost(sLen[i] + sLen[i + 1], tLen[j]) + STEP_PEN);
+      if (i < n && j + 1 < m) relax(1, 2, cost(sLen[i], tLen[j] + tLen[j + 1]) + STEP_PEN);
+      if (i < n) relax(1, 0, DROP_PEN + r * sLen[i]); // source para, no target
+      if (j < m) relax(0, 1, DROP_PEN + tLen[j]);     // target para, no source
+    }
+  }
+  if (dp[n][m] === Infinity) return null;
+  const groups = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    const mv = back[i][j];
+    if (!mv) return null; // unreachable; bail to the fallback
+    const [di, dj] = mv;
+    const src = [];
+    const tgt = [];
+    for (let k = i - di; k < i; k++) src.push(k);
+    for (let k = j - dj; k < j; k++) tgt.push(k);
+    groups.push({ src, tgt });
+    i -= di; j -= dj;
+  }
+  groups.reverse();
+  return groups;
+}
+
+function _buildAlignedRows(zhText, enMarkdown) {
+  const srcParas = _dropLeadingZhHeading(_splitParas(zhText));
+  const tgtParas = _splitParas(enMarkdown);
+  if (!srcParas.length || !tgtParas.length) return null;
+  const groups = _alignParas(srcParas, tgtParas);
+  if (!groups) return null;
+  let out = "";
+  for (const grp of groups) {
+    const srcHtml = grp.src
+      .map(idx => `<p>${escapeHtml(srcParas[idx]).replace(/\n/g, "<br>")}</p>`)
+      .join("");
+    const tgtHtml = grp.tgt.map(idx => renderEnglishMarkdown(tgtParas[idx])).join("");
+    out += `<div class="prow"><div class="src" lang="zh">${srcHtml}</div><div class="tgt">${tgtHtml}</div></div>`;
+  }
+  return out;
+}
+
 /* Tiny ephemeral toast anchored near a rect (selection rect or button rect).
  * Used for "Copied", "Queued", etc. — auto-clears after 1.6s. */
 function showFloatToast(msg, rect) {
@@ -948,6 +1049,18 @@ function renderChapterBody(ch) {
   const enSource = _displayedEnglish(ch);
   bodyEn.innerHTML = renderEnglishMarkdown(enSource);
   bodyZh.innerHTML = renderParagraphs(ch.original_text || "");
+  // Bilingual row alignment (restored 2026-08-06): in bilingual mode, pair
+  // source and translation paragraphs into shared rows so the columns stay
+  // in step past merges/splits. Falls back to the independent panes when the
+  // two sides diverge too far to align.
+  const alignedEl = document.getElementById("aligned-body");
+  let alignedOn = false;
+  if (dualMode && alignedEl && enSource) {
+    const rows = _buildAlignedRows(ch.original_text || "", enSource);
+    if (rows) { alignedEl.innerHTML = rows; alignedEl.hidden = false; alignedOn = true; }
+  }
+  if (!alignedOn && alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
+  stage.dataset.aligned = alignedOn ? "on" : "off";
   // F14 (2026-05-25): pre-render next chapter so Next click feels
   // instant. Only fires when the current chapter is done; pending /
   // translating chapters skip (no point cacheing what isn't ready).
