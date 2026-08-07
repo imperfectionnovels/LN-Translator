@@ -926,3 +926,47 @@ candidates, two restorations.
   gains a render-side char bound mirroring its fetch cap and the
   previous-chapter tail a generous PREVIOUS_CONTEXT_MAX_CHARS bound,
   leading paragraphs dropping first (F10).
+
+## 2026-08-06: Pivot over-cut corrected; merge-aware retro-alignment (user report)
+
+User report three days after Phase 6 shipped: (1) the reader lost glossary
+access / in-place term editing, (2) Chinese and English "no longer lined
+up" in the reader AND the CAT grid, (3) "not sure what the editor
+achieves." Root causes and calls:
+
+- **The aligned bilingual grid was never edit chrome.** Since bbaab43
+  (2026-06-09) it served bilingual READ mode; the pivot removed it only
+  because it happened to live in reader-glossary.js. Restored verbatim
+  (client Gale-Church-lite DP, reading-only rendering, no paragraph-index
+  stamping) behind data-aligned. Rule going forward: classify a feature by
+  who uses it, not by which file it lives in.
+- **The in-reader glossary flow returned in a reading-surface form**
+  (select to Add/Revise/Copy + mini dialog; alias-aware match; term_en
+  revisions apply in place like the editor's form). Edit MODE stays
+  retired: no contenteditable, no rails, no mode toggle.
+  test_reader_editor_phase6.py now pins the restorations as reading
+  chrome instead of banning them.
+- **Legacy chapters were being confidently mispaired, not "drifted".**
+  Every done chapter predates the 1:1 contract (last translate
+  2026-06-18), so the CAT store retro-pairs via tm.full_alignment_path.
+  That DP had only del/ins at a CHEAP penalty (0.5x avg paragraph): the
+  optimal way to absorb an EN merge of two short CN dialogue lines was to
+  delete whichever short line was cheapest and 1:1-match everything else,
+  producing aligned=1 rows whose English belongs paragraphs away (live n2
+  ch2: a dozen such rows). Fix: port the client aligner's cost model
+  server-side (2:1/1:2 group moves at 1x step penalty, drops at 4x,
+  count-divergence pre-gate). Merge lands on the FIRST row of its group,
+  follow-on row empty, both aligned=0. TM anchors (_length_align) keep
+  the old drop-tolerant model deliberately: a group has no single 1:1
+  anchor to store. Validated read-only against the live rows before
+  shipping; ch1 104 rows -> 99 confident.
+- **SEGMENTATION_VERSION semantics widened** (2 -> 3): the stamp's job is
+  "rebuild stores whose derivation is stale," and the retro-pairing model
+  is part of the derivation even though it lives in tm.py. The bump makes
+  every legacy store self-heal on next editor open.
+- **'partial' is now a first-class UI state** (banner + flagged count +
+  jump cycler). It was silently falling through to the normal grid, which
+  is exactly why the CAT tool read as broken/pointless on a legacy
+  corpus. The editor also gained a purpose paragraph in the ? dialog, a
+  Glossary util-menu link (it had NO route to the glossary page), and the
+  term form gained usage_note + honored Locked-on-add.

@@ -1,13 +1,18 @@
 """Phase 6 (reader edit-mode retirement) wiring pins.
 
-The reader is a pure reading surface and the CAT editor is the single editing
-surface. These are static checks over the frontend files plus a route-table
-check over the FastAPI app:
+The reader is a reading surface and the CAT editor is the single TEXT
+editing surface. Two reading-surface affordances returned on 2026-08-06
+after the pivot over-cut them (user report): the aligned bilingual grid
+(#aligned-body, a reading layout) and the select-to-add/revise glossary
+flow (reader-glossary.js + the mini dialog). Edit MODE stays retired: no
+contenteditable paragraphs, no mode toggle, no terms/consistency rails,
+no relocated diagnostic dialogs. Static checks over the frontend files
+plus a route-table check over the FastAPI app:
 
   1. `?mode=edit` reader URLs redirect to /editor (reader-core.js).
-  2. The reader ships no edit-mode chrome (no .edit-only scope, no mode
-     toggle, no aligned grid / terms / consistency rails) and loads exactly
-     the four surviving modules; the retired modules are gone from disk.
+  2. The reader ships no edit-MODE chrome and loads exactly the five
+     surviving modules; the retired edit/consistency modules are gone
+     from disk.
   3. The editor util menu carries the relocated tools and editor-tools.js
      consumes the same api wrappers the reader used (the backend routes are
      unchanged, just re-consumed).
@@ -41,7 +46,6 @@ def test_reader_has_no_edit_mode_chrome():
         "edit-only",
         "reader-mode-toggle",
         "data-reader-mode",
-        "aligned-body",
         "terms-rail",
         "consistency-rail",
         'id="edit-mode"',
@@ -55,15 +59,36 @@ def test_reader_has_no_edit_mode_chrome():
     ):
         assert marker not in html, f"reader.html still carries edit chrome: {marker}"
     # The retired modules are deleted, not just unreferenced.
-    for gone in ("reader-edit.js", "reader-glossary.js", "reader-consistency.js"):
+    # (reader-glossary.js is NOT in this list: it returned 2026-08-06 as the
+    # reading-surface glossary flow, a lean rebuild without edit mode.)
+    for gone in ("reader-edit.js", "reader-consistency.js"):
         assert not (JS / gone).exists(), f"{gone} should be deleted (Phase 6)"
         assert gone not in html
-    # Exactly the four surviving reader modules, in order.
+
+
+def test_reader_reading_surface_restorations_present():
+    """The 2026-08-06 restorations stay: the aligned bilingual grid and the
+    select-to-add/revise glossary flow are READING chrome, not edit mode."""
+    html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
+    assert 'id="aligned-body"' in html
+    assert 'id="glossary-mini-dialog"' in html
+    assert "reader-glossary.js" in html
+    src = (JS / "reader-glossary.js").read_text(encoding="utf-8")
+    for needed in ("_showSelPopover", "_glossFindEntry", "_openGlossForm"):
+        assert needed in src
+    # Still no contenteditable in the reader: text edits belong to /editor.
+    assert "contentEditable" not in src
+    chapter = (JS / "reader-chapter.js").read_text(encoding="utf-8")
+    for needed in ("_alignParas", "_buildAlignedRows", "_dropLeadingZhHeading"):
+        assert needed in chapter
+    # Exactly the five reader modules, in order (reader-glossary.js rejoined
+    # 2026-08-06 between chapter and quality).
     srcs = re.findall(r'<script\s+src="/static/js/(reader[\w-]*\.js)', html)
     assert srcs == [
         "reader-core.js",
         "reader-toc.js",
         "reader-chapter.js",
+        "reader-glossary.js",
         "reader-quality.js",
     ]
     # Reading chrome the reader must keep.
@@ -76,9 +101,11 @@ def test_reader_has_no_edit_mode_chrome():
 
 
 def test_reader_css_carries_no_mode_scope():
+    # data-aligned and .sel-pop are NOT in this list: the aligned bilingual
+    # grid and the selection popover returned 2026-08-06 as reading chrome.
     css = (FRONTEND / "css" / "reader.css").read_text(encoding="utf-8")
     for marker in ("data-reader-mode", ".edit-only", "data-terms", "data-consistency",
-                   "data-aligned", ".sel-pop", ".term-edit-pop", ".edit-mode-hint"):
+                   ".term-edit-pop", ".edit-mode-hint"):
         assert marker not in css, f"reader.css still styles edit chrome: {marker}"
 
 

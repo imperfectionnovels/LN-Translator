@@ -266,6 +266,19 @@ overflow probe that found every break this round:
 `scrollW > innerWidth` means the page scrolls sideways (the bug); they should be
 equal.
 
+The same rule applies to `.js` script tags, with one extra trap for
+RE-CREATED files (2026-08-06): when a deleted file returns under its old
+name, its historical `?v=` values are poisoned. The restored
+`reader-glossary.js` was tagged `?v=1`, the exact URL the PRE-pivot
+reader had loaded for months, so browsers with a heuristically-cached
+copy executed the 681-line OLD module. That module declared const
+identifiers the new `reader-chapter.js` now owns (`_ZH_HEADING_RE`), so
+it died on `Identifier ... has already been declared` and took the whole
+module scope with it: every function of the restored file was silently
+undefined. A re-created static asset must ship with a `?v=` value that
+has NEVER been used for that URL; check `git log -p` for the historical
+tags before picking one.
+
 ## Equal-specificity `@media` overrides must come later in source order
 
 A responsive override like `@media (max-width: 720px) { main { padding: ... } }`
