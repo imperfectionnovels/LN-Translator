@@ -35,14 +35,21 @@ import re
 from backend.services.parser import strip_heading_update_marker
 
 # Bumped on ANY change to the paragraph split, the heading detector, the
-# terminal-ending classification, or the join rule.
+# terminal-ending classification, the join rule, OR the retro-alignment model
+# in tm.py that pairs stored bodies against these paragraphs (the stamp's job
+# is "rebuild stored stores whose derivation is stale", and the pairing is
+# part of the derivation).
 # v2 (2026-07-31): the canonical recipe now composes the author-update-marker
 # strip (chapter_source_paragraphs). Before the unification the worker merges
 # stripped markers but the lazy backfill did not, so a first line surviving
 # this module's tight _HEADING_RE while matching parser's broader
 # _TITLE_PREFIX_RE with a marker produced DIFFERENT seg-0 sources per writer
 # and the anchor's full-text check sent the chapter retain-all unaligned.
-SEGMENTATION_VERSION = 2
+# v3 (2026-08-06): tm._dp_moves gained 2:1/1:2 group moves and last-resort
+# drop costs (the pre-pivot client aligner's cost model). Source recipe
+# unchanged; the bump re-pairs legacy pre-contract chapters whose stores were
+# built by the drop-happy model (confident mispairs through dialogue runs).
+SEGMENTATION_VERSION = 3
 
 # Paragraph break: blank line under either CRLF or LF line endings.
 _PARAGRAPH_BREAK_RE = re.compile(r"(?:\r?\n){2,}")

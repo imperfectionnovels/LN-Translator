@@ -19,10 +19,12 @@ from backend.services.segmentation import (
 # ---------------------------------------------------------------------------
 
 
-def test_segmentation_version_is_two():
+def test_segmentation_version_is_three():
     # v2 (2026-07-31): chapter_source_paragraphs composed the author-update
     # marker strip into the canonical recipe (writer unification).
-    assert SEGMENTATION_VERSION == 2
+    # v3 (2026-08-06): merge/split-aware retro-alignment cost model
+    # (tm._dp_moves); bump forces stored stores to re-pair on next read.
+    assert SEGMENTATION_VERSION == 3
 
 
 # ---------------------------------------------------------------------------

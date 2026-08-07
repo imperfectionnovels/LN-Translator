@@ -155,7 +155,10 @@ def test_full_path_source_without_target_gets_empty():
     assert len(path) == 4
     empties = [(t, a) for t, a in path if not t]
     assert len(empties) == 1 and empties[0][1] is False
-    assert sum(1 for _t, a in path if a) == 3
+    # The count drift reads as a 2:1 merge: the shared target lands on the
+    # first row of its group (review-flagged), the follow-on row is empty,
+    # and the two rows outside the group stay confident.
+    assert sum(1 for _t, a in path if a) == 2
     # Every target paragraph lands somewhere, in order.
     assert "\n\n".join(t for t, _a in path if t) == "\n\n".join(tgt)
 
@@ -197,6 +200,61 @@ def test_full_path_below_gate_returns_none():
     src = [_zh_para(c) for c in "甲乙丙丁戊己"]
     tgt = ["One lonely paragraph."]
     assert tm_svc.full_alignment_path(src, tgt) is None
+
+
+# ---------------------------------------------------------------------------
+# merge/split-aware retro-alignment (legacy pre-contract chapters)
+# ---------------------------------------------------------------------------
+
+
+def test_full_path_merge_lands_on_first_source_row():
+    """EN merged two short CN dialogue lines into one prose paragraph.
+
+    The merged rendering must land beside the FIRST source paragraph of the
+    group with the follow-on row empty, both flagged for review; the rows
+    around the merge stay confident 1:1. Without a merge move the DP
+    deletes one short line and confidently mispairs the other."""
+    src = [_zh_para("甲", 40), _zh_para("乙", 6), _zh_para("丙", 7),
+           _zh_para("丁", 40), _zh_para("戊", 40)]
+    # ratio ≈ 2.25: tgt[1] (29 chars) renders src[1]+src[2] (13 chars).
+    tgt = ["A" * 90, "B" * 29, "C" * 90, "D" * 90]
+    path = tm_svc.full_alignment_path(src, tgt)
+    assert path is not None
+    assert path[0] == ("A" * 90, True)
+    assert path[1] == ("B" * 29, False)
+    assert path[2] == ("", False)
+    assert path[3] == ("C" * 90, True)
+    assert path[4] == ("D" * 90, True)
+
+
+def test_full_path_split_groups_both_halves_on_their_source():
+    """EN split one long CN paragraph into two. Both halves must land on
+    THAT source row (review-flagged), not confidently mispair the second
+    half onto the next source and glue the real rendering after it."""
+    src = [_zh_para("甲", 40), _zh_para("乙", 80), _zh_para("丙", 40)]
+    # ratio = 2.25: tgt[1]+tgt[2] (180 chars) render src[1] (80 chars).
+    tgt = ["A" * 90, "B" * 90, "C" * 90, "D" * 90]
+    path = tm_svc.full_alignment_path(src, tgt)
+    assert path is not None
+    assert path[0] == ("A" * 90, True)
+    assert path[1] == ("B" * 90 + "\n\n" + "C" * 90, False)
+    assert path[2] == ("D" * 90, True)
+
+
+def test_full_path_merge_heavy_chapter_aligns_instead_of_mispairing():
+    """A chapter whose EN merged pairs of short CN lines throughout (the
+    dialogue-run shape). Fewer than half the sources can 1:1-anchor, but
+    every merge group is a confident length fit: the path must pair each
+    EN paragraph with the first line of its group and leave the second
+    empty, all review-flagged, instead of alternating confident mispairs."""
+    src = [_zh_para(c, 12) for c in "甲乙丙丁戊己庚辛壬癸子丑寅卯"]
+    tgt = ["X" * 54 for _ in range(7)]  # each renders two source lines
+    path = tm_svc.full_alignment_path(src, tgt)
+    assert path is not None
+    assert len(path) == 14
+    for k in range(7):
+        assert path[2 * k] == ("X" * 54, False)
+        assert path[2 * k + 1] == ("", False)
 
 
 def test_full_path_empty_inputs_return_none():
@@ -243,8 +301,9 @@ async def test_perfect_1to1_backfill():
 
 
 async def test_weld_case_partial():
-    # 4 source paragraphs, 3 target paragraphs: the full path assigns every
-    # source a slot; the unmatched one is flagged, state is 'partial'.
+    # 4 source paragraphs, 3 target paragraphs: the count drift reads as a
+    # 2:1 merge. Both rows of the merge group are flagged for review (the
+    # shared text on the first, "" on the follow-on), state is 'partial'.
     src = "\n\n".join(
         [_zh_para("甲"), _zh_para("乙"),
          _zh_para("丙"), _zh_para("丁")]
@@ -257,7 +316,11 @@ async def test_weld_case_partial():
     segs = payload["segments"]
     assert len(segs) == 4
     flagged = [s for s in segs if not s["aligned"]]
-    assert len(flagged) == 1 and flagged[0]["target_text"] == ""
+    assert len(flagged) == 2
+    empties = [s for s in flagged if s["target_text"] == ""]
+    assert len(empties) == 1
+    pair_first = next(s for s in flagged if s["target_text"])
+    assert empties[0]["index"] == pair_first["index"] + 1
     assert _db_chapter_state(chapter_id)[0] == "partial"
 
 
@@ -736,9 +799,11 @@ async def test_refined_variant_save_materializes_refined_column():
 
 
 async def test_partial_chapter_save_fills_empty_slot_and_flips_ok():
-    # 4 source paragraphs, 3 targets: one empty aligned=0 slot. Hand-filling
-    # it lands the paragraph at the right position in the body and, with
-    # every row now aligned, the chapter graduates to 'ok'.
+    # 4 source paragraphs, 3 targets: a 2:1 merge group (shared text +
+    # empty follow-on, both review-flagged). Hand-filling the empty slot
+    # lands the paragraph at the right position in the body; the chapter
+    # graduates to 'ok' only once the merge partner (whose text still
+    # covers both sources) is saved too.
     src = "\n\n".join(
         [_zh_para("甲"), _zh_para("乙"), _zh_para("丙"), _zh_para("丁")]
     )
@@ -751,6 +816,15 @@ async def test_partial_chapter_save_fills_empty_slot_and_flips_ok():
     )
     result = await _patch(novel_id, empty_idx, "save", after="Filled by hand.")
     assert result["segment"]["status"] == "edited"
+    assert result["segment"]["aligned"] is True
+    assert result["segments_state"] == "partial"  # merge partner still flagged
+    payload = await _get(novel_id)
+    partner = next(
+        s for s in payload["segments"] if not s["aligned"] and s["target_text"]
+    )
+    result = await _patch(
+        novel_id, partner["index"], "save", after=partner["target_text"]
+    )
     assert result["segment"]["aligned"] is True
     assert result["segments_state"] == "ok"
     body = _db_body(chapter_id)

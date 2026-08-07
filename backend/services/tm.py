@@ -75,28 +75,49 @@ def _expansion_ratio(src: list[str], tgt: list[str]) -> float:
     return total_tgt / total_src
 
 
-def _dp_moves(src: list[str], tgt: list[str]) -> list[tuple[str, int, int]]:
+def _dp_moves(
+    src: list[str], tgt: list[str], *, groups: bool = False
+) -> list[tuple[str, int, int]]:
     """Minimum-cost order-preserving alignment path (Gale-Church-lite DP).
 
     Returns the COMPLETE move list in forward order. Each move is
-    (kind, i, j): 'match' pairs src[i] with tgt[j]; 'del' means src[i] has
-    no target counterpart (j is the target cursor, unused); 'ins' means
-    tgt[j] is a target-only paragraph (i is the source cursor, unused).
+    (kind, i, j):
+      - 'match' pairs src[i] with tgt[j];
+      - 'merge2' pairs src[i] AND src[i+1] with tgt[j] (the translation
+        merged two source paragraphs into one; only with groups=True);
+      - 'split2' pairs src[i] with tgt[j] AND tgt[j+1] (the translation
+        split one source paragraph in two; only with groups=True);
+      - 'del' means src[i] has no target counterpart (j is the target
+        cursor, unused); 'ins' means tgt[j] is a target-only paragraph
+        (i is the source cursor, unused).
 
-    The cost model: a target paragraph's length is expected to be `ratio`
-    times its source paragraph's length, where `ratio` is the whole-chapter
-    expansion. A 1:1 match costs the absolute length discrepancy; skipping
-    a paragraph (a pure insertion or deletion) costs its length plus a
-    penalty.
+    The base cost model: a target paragraph's length is expected to be
+    `ratio` times its source paragraph's length, where `ratio` is the
+    whole-chapter expansion. A 1:1 match costs the absolute length
+    discrepancy; skipping a paragraph costs its length plus a penalty.
+
+    groups=True (the segment-store path, which must assign EVERY source a
+    slot) additionally ports the pre-pivot client-side reader aligner's
+    model: a 2:1 or 1:2 group must cut the mismatch by more than one
+    average paragraph (the step penalty) to beat 1:1, so equal-count
+    chapters stay 1:1 instead of reshuffling on length noise, and dropping
+    a paragraph outright becomes a last resort (4x penalty): real
+    translations merge and split, they almost never delete content, and a
+    cheap drop lets the DP delete short dialogue lines and confidently
+    mispair everything between two real merge points. The TM-anchor path
+    (`_length_align`) keeps groups=False: a group has no valid single 1:1
+    anchor to store, so it prefers the legacy drop-tolerant model that
+    maximizes clean anchors.
     """
     m, n = len(src), len(tgt)
     src_len = [len(s) for s in src]
     tgt_len = [len(t) for t in tgt]
     ratio = _expansion_ratio(src, tgt)
-    # Skip penalty scales with the mean target paragraph so behavior is the
-    # same regardless of paragraph size. It biases toward keeping a real 1:1
-    # match rather than splitting it into a separate insert and delete.
-    penalty = 0.5 * (sum(tgt_len) or 1) / n if n else 0.0
+    # Penalties scale with the mean target paragraph so behavior is the
+    # same regardless of paragraph size.
+    avg_t = (sum(tgt_len) or 1) / n if n else 0.0
+    step_pen = avg_t
+    drop_pen = 4.0 * avg_t if groups else 0.5 * avg_t
 
     inf = float("inf")
     # dp[i][j] = min cost to align src[:i] with tgt[:j]; back[i][j] is the
@@ -112,19 +133,33 @@ def _dp_moves(src: list[str], tgt: list[str]) -> list[tuple[str, int, int]]:
                 continue
             best, move = inf, None
             # Match src[i-1] with tgt[j-1]. Evaluated first so it wins ties:
-            # when matching and skipping cost the same, keep the pair.
+            # when matching and grouping cost the same, keep the pair.
             if i > 0 and j > 0:
                 c = dp[i - 1][j - 1] + abs(tgt_len[j - 1] - ratio * src_len[i - 1])
                 if c < best:
                     best, move = c, ("match", i - 1, j - 1)
+            # Merge src[i-2]+src[i-1] into tgt[j-1].
+            if groups and i > 1 and j > 0:
+                c = dp[i - 2][j - 1] + step_pen + abs(
+                    tgt_len[j - 1] - ratio * (src_len[i - 2] + src_len[i - 1])
+                )
+                if c < best:
+                    best, move = c, ("merge2", i - 2, j - 1)
+            # Split src[i-1] into tgt[j-2]+tgt[j-1].
+            if groups and i > 0 and j > 1:
+                c = dp[i - 1][j - 2] + step_pen + abs(
+                    tgt_len[j - 2] + tgt_len[j - 1] - ratio * src_len[i - 1]
+                )
+                if c < best:
+                    best, move = c, ("split2", i - 1, j - 2)
             # Delete src[i-1]: a source paragraph with no target counterpart.
             if i > 0:
-                c = dp[i - 1][j] + ratio * src_len[i - 1] + penalty
+                c = dp[i - 1][j] + ratio * src_len[i - 1] + drop_pen
                 if c < best:
                     best, move = c, ("del", i - 1, j)
             # Insert tgt[j-1]: a target-only paragraph, e.g. an added beat.
             if j > 0:
-                c = dp[i][j - 1] + tgt_len[j - 1] + penalty
+                c = dp[i][j - 1] + tgt_len[j - 1] + drop_pen
                 if c < best:
                     best, move = c, ("ins", i, j - 1)
             dp[i][j] = best
@@ -192,6 +227,11 @@ def full_alignment_path(
     the same DP path and assigns EVERY source index a target string:
 
       - a confident 1:1 anchor maps directly (aligned=True);
+      - a 2:1 merge ('merge2') lands the shared target on the FIRST source
+        row of the group; the follow-on row stays empty; both rows are
+        aligned=False (the target covers more than either source alone);
+      - a 1:2 split ('split2') lands both target halves on their source
+        row, blank-line joined, aligned=False;
       - a target-only paragraph ('ins' move) attaches to its nearest source
         neighbor on the path (the source consumed just before it, or the
         first source when inserts precede every source), joined with a blank
@@ -203,15 +243,34 @@ def full_alignment_path(
         drops) keeps its target text but is demoted to aligned=False.
 
     Returns a list of (target_text, aligned) tuples, one per source index,
-    or None below the same <50% confidence gate as `_length_align`: the
-    chapter is unalignable and none of the pairings should be trusted.
+    or None below the <50% coverage gate. Coverage counts every index that
+    takes part in a confident 1:1 anchor or a 2:1 / 1:2 group (a group is
+    a deliberate length fit, not a skip), so legacy merge-heavy chapters
+    that anchor few pure 1:1 pairs still align through their groups.
     """
     if not src or not tgt:
         return None
-    moves = _dp_moves(src, tgt)
+    # Very divergent counts: 1:1 / 2:1 / 1:2 moves cannot span the gap
+    # cleanly, and a forced grouping misleads more than it helps (same
+    # pre-gate the proven client-side aligner used before falling back to
+    # independent panes).
+    if abs(len(src) - len(tgt)) / max(len(src), len(tgt)) > 0.5:
+        return None
+    moves = _dp_moves(src, tgt, groups=True)
     matches = [(i, j) for kind, i, j in moves if kind == "match"]
     confident = set(_drop_short_outliers(matches, src, tgt))
-    if len(confident) < 0.5 * max(len(src), len(tgt)):
+    covered_src = covered_tgt = 0
+    for kind, i, j in moves:
+        if kind == "match" and (i, j) in confident:
+            covered_src += 1
+            covered_tgt += 1
+        elif kind == "merge2":
+            covered_src += 2
+            covered_tgt += 1
+        elif kind == "split2":
+            covered_src += 1
+            covered_tgt += 2
+    if covered_src < 0.5 * len(src) or covered_tgt < 0.5 * len(tgt):
         return None
 
     # Assemble per-source target pieces by walking the path in order.
@@ -224,6 +283,14 @@ def full_alignment_path(
         if kind == "match":
             parts[i].append(tgt[j])
             clean_match[i] = (i, j) in confident
+            last_src = i
+        elif kind == "merge2":
+            parts[i].append(tgt[j])
+            has_extra[i] = True
+            last_src = i + 1
+        elif kind == "split2":
+            parts[i].extend((tgt[j], tgt[j + 1]))
+            has_extra[i] = True
             last_src = i
         elif kind == "del":
             last_src = i
