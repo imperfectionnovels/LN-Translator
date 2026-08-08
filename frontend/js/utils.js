@@ -218,6 +218,70 @@ function showToast(message, kind = "info", undoAction = null) {
 }
 window.showToast = showToast;
 
+// Block 2 (2026-08-07): shared cross-tab bus over the BroadcastChannel
+// "novel-changes". Replaces three hand-rolled copies (home.js, editor-tools.js
+// insert-chapter, reader-chapter.js's raw onmessage) that had each drifted
+// into a slightly different message shape.
+//
+// Message shape: {novel_id: Number|null, type}. novel_id === null means "all
+// novels" (the global glossary page has no single novel to scope to, but a
+// global-entry edit can still change any novel's rendered text). Known types
+// in use: "appended" / "inserted" (the chapter list changed) and "glossary"
+// (glossary data changed, and chapter text may have been rewritten in place).
+//
+// Loop-free by construction: per the BroadcastChannel spec, the channel
+// object that calls postMessage never receives its own message (delivery
+// only reaches OTHER BroadcastChannel objects of the same name/origin), so
+// no sender-id bookkeeping is needed to avoid a self-triggered refresh.
+let _novelBus = null;
+try { _novelBus = new BroadcastChannel("novel-changes"); } catch (_) { _novelBus = null; }
+
+function broadcastNovelChange(novelId, type) {
+  if (!_novelBus) return;
+  try {
+    _novelBus.postMessage({ novel_id: novelId == null ? null : Number(novelId), type });
+  } catch (_) { /* ignore */ }
+}
+window.broadcastNovelChange = broadcastNovelChange;
+
+// Registers fn(data) for "novel-changes" messages that match novelId. A
+// listener's own novelId filter only rejects a message when BOTH the
+// listener's novelId and the message's novel_id are non-null and differ.
+// A null message novel_id (a global-glossary change) matches every listener,
+// and a listener registered with novelId=null receives everything.
+function onNovelChange(novelId, fn) {
+  if (!_novelBus) return;
+  const wanted = novelId == null ? null : Number(novelId);
+  _novelBus.addEventListener("message", (e) => {
+    const data = e.data || {};
+    const msgNovelId = data.novel_id == null ? null : Number(data.novel_id);
+    if (wanted != null && msgNovelId != null && wanted !== msgNovelId) return;
+    fn(data);
+  });
+}
+window.onNovelChange = onNovelChange;
+
+// Shared toast copy for a glossary apply-in-place response (Block 2,
+// 2026-08-07). Every apply surface (glossary page, editor term form, reader
+// mini form) renders the same honest sentence instead of drifting into three
+// different phrasings. Only claims a restore point when snapshot_ids is
+// actually non-empty (a novel's payload can exceed the snapshot size cap),
+// never promise an undo the backend didn't record.
+function glossaryApplyToastText(res) {
+  res = res || {};
+  const n = res.chapters_updated || 0;
+  let text = `Renamed in ${n} chapter${n === 1 ? "" : "s"}.`;
+  const skipped = (res.skipped_translating || 0) + (res.skipped_refining || 0);
+  if (skipped > 0) {
+    text += ` ${skipped} skipped (in flight), re-apply after they finish.`;
+  }
+  if (res.snapshot_ids && res.snapshot_ids.length) {
+    text += " Restore point saved to Find and Replace history.";
+  }
+  return text;
+}
+window.glossaryApplyToastText = glossaryApplyToastText;
+
 // C8: <details>-as-menu (reader's util-menu, glossary's download-menu, etc.)
 // didn't close when the user clicked outside the menu. The [open] state
 // persisted indefinitely, and the bfcache could leave the menu open after a

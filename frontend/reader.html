@@ -386,7 +386,7 @@
 <!-- utils.js is shared across pages. Deferred so the document-order rule
      puts it ahead of reader.js (also deferred) without a defer/non-defer
      race with the deferred CDN marked / DOMPurify tags. -->
-<script src="/static/js/utils.js" defer></script>
+<script src="/static/js/utils.js?v=2" defer></script>
 <!-- Shared with the CAT editor: builds the glossary-term marks both surfaces
      render. Self-contained (no page globals, no DOM), which is why it loads
      ahead of the reader modules and sits outside their boot-safety concat. -->
@@ -404,8 +404,8 @@
 -->
 <script src="/static/js/reader-core.js?v=3" defer></script>
 <script src="/static/js/reader-toc.js?v=2" defer></script>
-<script src="/static/js/reader-chapter.js?v=5" defer></script>
-<script src="/static/js/reader-glossary.js?v=4" defer></script>
+<script src="/static/js/reader-chapter.js?v=6" defer></script>
+<script src="/static/js/reader-glossary.js?v=5" defer></script>
 <script src="/static/js/reader-quality.js?v=2" defer></script>
 </body>
 </html>

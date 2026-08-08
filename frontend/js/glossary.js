@@ -86,7 +86,8 @@ function openApplyChoiceDialog(entry, oldTermEn) {
   applyChoiceBody.innerHTML =
     `<p>Glossary term updated:</p>
      <p><strong>${escapeHtml(entry.term_zh)}</strong>: ${escapeHtml(oldTermEn)} → <strong>${escapeHtml(entry.term_en)}</strong></p>
-     <p class="muted">Applying to existing translations updates exact matching English text only. Chapters where the old term was translated inconsistently won't all match. For full consistency, choose Retranslate.</p>`;
+     <p class="muted">Apply now rewrites the old wording to the new one across this novel's finished chapters (exact matches, word boundaries; slash aliases each count).</p>
+     <p class="muted">Retranslate affected instead: lines you edited or confirmed in the editor are kept verbatim and will NOT pick up the new term; use Apply now for those.</p>`;
   applyChoiceMeta.classList.add("hidden");
   applyChoiceMeta.innerHTML = "";
 
@@ -103,17 +104,14 @@ function openApplyChoiceDialog(entry, oldTermEn) {
       cleanup();
       applyChoiceDlg.close();
       if (choice === "none") {
-        showToast(`Saved “${entry.term_zh}”. Existing chapters unchanged.`, "ok");
+        showToast("Glossary updated. Existing chapters unchanged.", "ok");
         return;
       }
       if (choice === "apply") {
         try {
           const res = await api.glossaryApplyInPlace(entry.id, oldTermEn, entry.term_en);
-          showToast(
-            `Applied to ${res.chapters_updated} chapter${res.chapters_updated === 1 ? "" : "s"} · ` +
-            `${res.rows_updated_translated} draft / ${res.rows_updated_refined} refined rows.`,
-            "ok"
-          );
+          showToast(glossaryApplyToastText(res), "ok");
+          broadcastNovelChange(novelId, "glossary");
         } catch (e) {
           showToast(`Apply failed: ${e.message}`, "err");
         }
@@ -139,6 +137,7 @@ function openApplyChoiceDialog(entry, oldTermEn) {
           const res = await api.retranslateAffected(entry.id);
           const queued = res.queued_count || 0;
           showToast(`Queued ${queued} chapter${queued === 1 ? "" : "s"} for re-translation.`, "ok");
+          broadcastNovelChange(novelId, "glossary");
         } catch (e) {
           showToast(`Re-translate failed: ${e.message}`, "err");
         }
@@ -669,6 +668,7 @@ async function saveField(id, field, value) {
     if (idx >= 0) entries[idx] = updated;
     renderCatRail();
     render();
+    broadcastNovelChange(novelId, "glossary");
     if (
       field === "term_en"
       && oldTermEn != null
@@ -822,6 +822,7 @@ async function retranslateOne(id) {
     const res = await api.retranslateAffected(id);
     const queued = res.queued_count || 0;
     showToast(`Queued ${queued} chapter${queued === 1 ? "" : "s"} for re-translation.`, "ok");
+    broadcastNovelChange(novelId, "glossary");
   } catch (e) {
     showToast(`Re-translate failed: ${e.message}`, "err");
   }
@@ -842,6 +843,10 @@ async function promoteOne(id) {
     entries = entries.filter(x => x.id !== id);
     renderCatRail();
     render();
+    // Promotion moves the entry OUT of this novel and INTO the cross-novel
+    // global glossary, so its effect isn't scoped to this novel: broadcast
+    // with a null novel_id (Block 2, 2026-08-07), same as glossary-global.js.
+    broadcastNovelChange(null, "glossary");
     showToast(`Promoted “${entry.term_zh}” to global.`, "ok");
   } catch (e) {
     if (e.message && e.message.startsWith("409")) {
@@ -868,6 +873,7 @@ async function deleteOne(id) {
     selected.delete(id);
     renderCatRail();
     render();
+    broadcastNovelChange(novelId, "glossary");
     showToast(`Deleted “${entry.term_zh}”.`, "ok");
   } catch (e) {
     showToast(`Delete failed: ${e.message}`, "err");
@@ -892,6 +898,7 @@ async function bulkLockAction(locked) {
     selected.clear();
     renderCatRail();
     render();
+    broadcastNovelChange(novelId, "glossary");
     showToast(`${locked ? "Locked" : "Unlocked"} ${ids.length} entr${ids.length === 1 ? "y" : "ies"}.`, "ok");
   } catch (e) {
     showToast(`Bulk ${locked ? "lock" : "unlock"} failed: ${e.message}`, "err");
@@ -922,6 +929,7 @@ document.getElementById("gloss-bulk-retranslate")?.addEventListener("click", asy
         : `Queued ${q} chapter${q === 1 ? "" : "s"} for re-translation.${skipStr}`,
       q === 0 ? "info" : "ok",
     );
+    broadcastNovelChange(novelId, "glossary");
   } catch (e) {
     showToast(`Bulk retranslate failed: ${e.message}`, "err");
   }
@@ -943,6 +951,7 @@ document.getElementById("gloss-bulk-delete")?.addEventListener("click", async ()
     selected.clear();
     renderCatRail();
     render();
+    broadcastNovelChange(novelId, "glossary");
     showToast(`Deleted ${n} entr${n === 1 ? "y" : "ies"}.`, "ok");
   } catch (e) {
     showToast(`Bulk delete failed: ${e.message}`, "err");
@@ -1009,6 +1018,7 @@ async function submitAdd(lockIt) {
     closeAddCard();
     renderCatRail();
     render();
+    broadcastNovelChange(novelId, "glossary");
     const row = rowsEl.querySelector(`[data-id="${final.id}"]`);
     if (row) { row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1500); }
     showToast(`Added “${final.term_zh}”.`, "ok");
@@ -1130,3 +1140,8 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pageshow", (ev) => {
   if (ev.persisted) refreshIfIdle();
 });
+
+// Cross-tab (Block 2, 2026-08-07): the editor, the reader's mini form, or
+// this same novel's glossary open in another tab changed the glossary.
+// Reuses refreshIfIdle's existing edit-in-progress guard.
+onNovelChange(novelId, d => { if (d.type === "glossary") refreshIfIdle(); });

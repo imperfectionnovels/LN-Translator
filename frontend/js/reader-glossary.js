@@ -201,9 +201,20 @@ async function _saveGlossForm(entry) {
       // stored chapters in place (word-boundary, case-sensitive) so the fix
       // is visible in the chapter being read right now. The glossary page's
       // three-way dialog remains the surface for retranslate-instead.
+      // Block 2 (2026-08-07): the apply call used to swallow its own error
+      // silently, so a rewrite failure looked identical to success. The
+      // entry was saved but the chapter text never changed and nothing told
+      // the user. Surface both outcomes honestly instead.
       if (en !== oldEn) {
-        try { await api.glossaryApplyInPlace(entry.id, oldEn, en); }
-        catch (_) { /* entry saved; the apply is best-effort */ }
+        try {
+          const applyRes = await api.glossaryApplyInPlace(entry.id, oldEn, en);
+          showToast(glossaryApplyToastText(applyRes), "ok");
+        } catch (err) {
+          showToast(
+            `Glossary updated, but the chapter rewrite failed: ${err.message}. Retry from the Glossary page.`,
+            "err",
+          );
+        }
       }
     } else {
       const zh = glossaryMiniDialog.querySelector("#gm-zh").value.trim();
@@ -220,6 +231,9 @@ async function _saveGlossForm(entry) {
     }
     glossaryMiniDialog.close();
     try { glossaryCache = await api.glossary(novelId); } catch (_) { /* stale cache is fine */ }
+    // Cross-tab (Block 2, 2026-08-07): the editor and any other reader tab on
+    // this novel pick this up and refresh their own glossary-derived state.
+    broadcastNovelChange(novelId, "glossary");
     // Re-render the chapter so an applied-in-place revision shows immediately.
     if (entry && typeof loadChapter === "function") loadChapter(currentCh);
   } catch (err) {

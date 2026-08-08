@@ -85,6 +85,9 @@ async function openGlobalApplyChoiceDialog(entry, oldTermEn) {
             `${res.rows_updated_translated} draft / ${res.rows_updated_refined} refined rows.`,
             "ok"
           );
+          // A global-entry change can affect any novel, so broadcast with a
+          // null novel_id (Block 2, 2026-08-07) rather than scoping to one.
+          broadcastNovelChange(null, "glossary");
         } catch (e) {
           showToast(`Apply failed: ${e.message}`, "err");
         }
@@ -158,6 +161,7 @@ function _wireCards() {
           const updated = await api.updateGlobalGlossary(id, { [field]: value });
           const idx = entries.findIndex(x => x.id === id);
           if (idx >= 0) entries[idx] = updated;
+          broadcastNovelChange(null, "glossary");
           if (
             field === "term_en"
             && oldTermEn != null
@@ -208,6 +212,7 @@ function _wireCards() {
         await api.deleteGlobalGlossary(id);
         entries = entries.filter(x => x.id !== id);
         render();
+        broadcastNovelChange(null, "glossary");
         showToast(`Deleted "${entry.term_zh}".`, "ok");
       } catch (e) {
         showToast(`Delete failed: ${e.message}`, "err");
@@ -255,6 +260,7 @@ addForm.addEventListener("submit", async (ev) => {
     render();
     addForm.hidden = true;
     newZh.value = ""; newEn.value = ""; newNotes.value = ""; newUsageNote.value = "";
+    broadcastNovelChange(null, "glossary");
     showToast(`Added "${created.term_zh}" to the global glossary.`, "ok");
   } catch (err) {
     // 409 = collision with an existing global entry. Offer to scroll to it.

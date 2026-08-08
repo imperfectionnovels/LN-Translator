@@ -31,6 +31,22 @@ function refreshGlossaryCache() {
   });
 }
 
+// Cross-tab (Block 2, 2026-08-07): another tab (the glossary page, the
+// reader's mini form, or this same novel open in a different window) changed
+// the glossary. Re-fetch and rewrap every row + the assist rail's term
+// tiers. Segment reload is skipped while a cell is mid-edit (`editing`, an
+// editor-core shared-scope flag) so an in-flight keystroke isn't clobbered by
+// a re-render. A save that races a stale row is still covered by the
+// existing structured-409 recovery.
+onNovelChange(novelId, d => {
+  if (d.type === "glossary") {
+    refreshGlossaryCache().then(() => {
+      refreshGlossarySurfaces();
+      if (typeof editing !== "undefined" && !editing) loadSegments();
+    });
+  }
+});
+
 // Re-render every glossary-derived surface after entries changed.
 function refreshGlossarySurfaces() {
   renderChapterTermTiers();
@@ -339,11 +355,7 @@ if (insertChapterDialog) {
       insertDraft = null;
       insertStatus.textContent = `Inserted ${r.added_chapters} chapter(s) at ${r.first_new_chapter}. Opening…`;
       // Nudge any other open tab for this novel to refresh its lists.
-      try {
-        const bc = new BroadcastChannel("novel-changes");
-        bc.postMessage({ novel_id: Number(novelId), type: "inserted" });
-        bc.close();
-      } catch (_) { /* ignore */ }
+      broadcastNovelChange(novelId, "inserted");
       setTimeout(() => {
         location.href = `/editor?novel=${novelId}&ch=${r.first_new_chapter || 1}`;
       }, 500);
@@ -657,6 +669,7 @@ tfDelete?.addEventListener("click", async () => {
     termFormDialog.close();
     await refreshGlossaryCache();
     refreshGlossarySurfaces();
+    broadcastNovelChange(novelId, "glossary");
     showToast("Removed from glossary", "ok");
   } catch (e) {
     tfErr.textContent = `Delete failed: ${e.message}`;
@@ -710,9 +723,9 @@ tfSave?.addEventListener("click", async () => {
       termFormDialog.close();
       await refreshGlossaryCache();
       refreshGlossarySurfaces();
+      broadcastNovelChange(novelId, "glossary");
       if (applied) {
-        const n = applied.chapters_updated || 0;
-        showToast(`Saved. Renamed in ${n} chapter${n === 1 ? "" : "s"}.`, "ok");
+        showToast(`Saved. ${glossaryApplyToastText(applied)}`, "ok");
         await loadSegments();
       } else {
         showToast("Saved", "ok");
@@ -732,6 +745,7 @@ tfSave?.addEventListener("click", async () => {
       termFormDialog.close();
       await refreshGlossaryCache();
       refreshGlossarySurfaces();
+      broadcastNovelChange(novelId, "glossary");
       showToast("Added to glossary", "ok");
     }
   } catch (e) {

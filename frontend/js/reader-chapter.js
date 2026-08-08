@@ -1949,18 +1949,22 @@ loadBookmarksForNovel();
       refreshNovelMeta();
     }
   });
-  // Cross-tab refresh: when another tab appends chapters to this novel, pick
-  // up the new total_chapters / queue counts without waiting for the 6s tick.
-  // Safe to fail silently if the browser doesn't support BroadcastChannel.
-  try {
-    const bc = new BroadcastChannel("novel-changes");
-    bc.onmessage = (e) => {
-      if (e.data && e.data.novel_id === novelId) {
-        loadChapters();
-        refreshNovelMeta();
-      }
-    };
-  } catch (_) { /* ignore */ }
+  // Cross-tab refresh (Block 2, 2026-08-07): when another tab appends
+  // chapters to this novel, or the glossary changes, pick up the change
+  // without waiting for the 6s poll tick. onNovelChange (utils.js) wraps the
+  // shared BroadcastChannel and owns the null / novelId matching; a no-op
+  // where the browser lacks BroadcastChannel.
+  onNovelChange(novelId, (d) => {
+    loadChapters();
+    refreshNovelMeta();
+    if (d.type === "glossary") {
+      // Same-chapter reload preserves scroll; the open-dialog guard protects
+      // the mini add/revise form mid-edit from a re-render yanking it away.
+      loadGlossary().then(() => {
+        if (!document.querySelector("dialog[open]")) loadChapter(currentCh);
+      });
+    }
+  });
 })();
 
 // Lightweight novel-meta refresh: only updates fields that can change without

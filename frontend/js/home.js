@@ -2,16 +2,10 @@ const params = new URLSearchParams(location.search);
 const appendNovelId = params.get("novel");
 const appendMode = appendNovelId !== null && appendNovelId !== "";
 
-// Notify any open reader tab for the same novel that new chapters landed,
-// so it can refresh its TOC + chapter count without waiting for the 6s
-// background poll. Safe to fail silently if BroadcastChannel is unsupported.
-function broadcastNovelChange(novel_id) {
-  try {
-    const bc = new BroadcastChannel("novel-changes");
-    bc.postMessage({ novel_id: Number(novel_id), type: "appended" });
-    bc.close();
-  } catch (_) { /* ignore */ }
-}
+// broadcastNovelChange lives in frontend/js/utils.js (Block 2, 2026-08-07):
+// notifies any open reader/editor tab for the same novel that new chapters
+// landed, so it can refresh its TOC + chapter count without waiting for the
+// 6s background poll.
 
 // Mirror backend/routes/translate.py MAX_BULK_FILES so a user dragging more
 // than the cap onto the bulk-upload zone gets an immediate, descriptive error
@@ -311,7 +305,7 @@ document.getElementById("submit-paste").addEventListener("click", async (e) => {
     try {
       const r = await api.appendPaste(appendNovelId, text);
       showStatus(`Imported ${r.added_chapters} chapter(s). Opening reader. Click Translate on a chapter to queue it.`, "ok");
-      broadcastNovelChange(appendNovelId);
+      broadcastNovelChange(appendNovelId, "appended");
       renderRecent();
       const goto = r.first_new_chapter || 1;
       setTimeout(() => { location.href = `/reader?novel=${appendNovelId}&ch=${goto}`; }, 600);
@@ -370,7 +364,7 @@ document.getElementById("submit-url").addEventListener("click", async (e) => {
     try {
       const r = await api.scrape(url, null, appendNovelId, cookies);
       showStatus(`Imported ${r.added_chapters} chapter(s) from ${r.scraped_url}.`, "ok");
-      broadcastNovelChange(appendNovelId);
+      broadcastNovelChange(appendNovelId, "appended");
       renderRecent();
       const goto = r.first_new_chapter || 1;
       setTimeout(() => { location.href = `/reader?novel=${appendNovelId}&ch=${goto}`; }, 600);
@@ -607,7 +601,7 @@ document.getElementById("submit-upload").addEventListener("click", async (e) => 
     try {
       const r = await api.appendUpload(appendNovelId, file);
       showStatus(`Imported ${r.added_chapters} chapter(s) (encoding: ${r.detected_encoding}). Opening reader. Click Translate on a chapter to queue it.`, "ok");
-      broadcastNovelChange(appendNovelId);
+      broadcastNovelChange(appendNovelId, "appended");
       renderRecent();
       const goto = r.first_new_chapter || 1;
       setTimeout(() => { location.href = `/reader?novel=${appendNovelId}&ch=${goto}`; }, 800);
@@ -757,7 +751,7 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
       const skipMsg = total ? ` (${total} file(s) skipped, see below)` : "";
       const tail = hadSkips ? "" : " Opening reader. Click Translate on a chapter to queue it.";
       showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipMsg}.${tail}`, "ok");
-      broadcastNovelChange(appendNovelId);
+      broadcastNovelChange(appendNovelId, "appended");
       renderRecent();
       if (hadSkips) { unlockSubmit(btn); }
       else { setTimeout(() => { location.href = href; }, 800); }
