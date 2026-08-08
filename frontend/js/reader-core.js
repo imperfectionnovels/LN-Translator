@@ -5,6 +5,18 @@ const novelId = parseInt(params.get("novel"), 10);
 const hadExplicitCh = params.has("ch");
 let currentCh = parseInt(params.get("ch") || "1", 10);
 
+// Editor -> reader paragraph handoff (Block 5, 2026-08-07): only honored
+// when the URL carried an explicit chapter. A bare /reader?novel=N resumes
+// the last-read chapter on its own; a stray ?para= without ?ch= would fight
+// that resume instead of landing on a specific spot in a specific chapter.
+// Consumed once, in reader-chapter.js's loadChapter, at the same call site
+// that restores the saved scroll position.
+let pendingDeepPara = null;
+if (hadExplicitCh) {
+  const p = Number.parseInt(params.get("para"), 10);
+  if (Number.isFinite(p) && p >= 0) pendingDeepPara = p;
+}
+
 // Phase 6 (reader edit-mode retirement): legacy `?mode=edit` deep links (old
 // bookmarks, pre-retirement worklists) redirect to the CAT editor, the single
 // editing surface. location.replace does not halt script execution; the rest

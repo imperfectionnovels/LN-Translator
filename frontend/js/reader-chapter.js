@@ -737,8 +737,17 @@ async function loadChapter(num) {
       paintEndCard(ch);
       // Restore the user's last scroll position within this chapter. Only on
       // status=done — for pending/error states there's nothing meaningful to
-      // scroll into yet.
-      restoreScrollFor(num);
+      // scroll into yet. A one-shot editor -> reader paragraph handoff (Block
+      // 5, 2026-08-07) overrides the stored position exactly once; double
+      // rAF matches the restore path's own paint-timing choreography, and
+      // _scrollToParagraph already suppresses the synthetic scroll save.
+      if (pendingDeepPara != null) {
+        const targetPara = pendingDeepPara;
+        pendingDeepPara = null;
+        requestAnimationFrame(() => requestAnimationFrame(() => _scrollToParagraph(targetPara)));
+      } else {
+        restoreScrollFor(num);
+      }
       // Phase 4: refinement-in-flight continuation poll. The chapter is
       // displayed (draft body), but the refiner is still running; re-poll
       // so the banner updates and the body switches to refined_text when
@@ -790,6 +799,19 @@ async function loadChapter(num) {
     bodyEn.innerHTML = "";
   }
 }
+
+// Reader -> editor paragraph handoff (Block 5, 2026-08-07): rewrite the href
+// at click time, not on every render, so the CAT editor lands near whichever
+// paragraph the reader had at the top of the viewport. Registered once at
+// module scope (openInEditorLink is declared in reader-core.js, which loads
+// first); loadChapter keeps the base novel/ch href current on every
+// navigation, this listener layers the paragraph on top of that.
+openInEditorLink?.addEventListener("click", (e) => {
+  const idx = _currentTopParagraphIndex();
+  let href = `/editor?novel=${novelId}&ch=${currentCh}`;
+  if (Number.isFinite(idx) && idx >= 0) href += `&para=${idx}`;
+  e.currentTarget.href = href;
+});
 
 // Phase 4: choose which English body to display. Refined text wins when
 // refinement_status='done'; otherwise fall back to the translator's draft.
@@ -1555,10 +1577,6 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     toggleDual.querySelector(`button[data-mode="${dualMode ? "english" : "bilingual"}"]`)?.click();
   }
-  else if (e.key === "g" || e.key === "G") {
-    e.preventDefault();
-    location.href = glossaryLink.href;
-  }
   else if (e.key === "/") {
     e.preventDefault();
     tocSearch.focus();
@@ -1636,8 +1654,18 @@ let _bookmarksCache = []; // last fetched list for the novel
 // topmost paragraph currently in the viewport.
 let _pendingBookmarkParagraph = null;
 
-// Scroll units = #body-en's direct <p> children, the bookmark index space.
+// Scroll units = the paragraph elements the top-of-viewport index is
+// computed against (bookmark capture, paragraph handoff). Visibility-aware
+// (Block 5, 2026-08-07): in bilingual aligned mode #body-en is hidden behind
+// #aligned-body, so reading its paragraphs would count elements nobody can
+// see. Falls back to #body-en's direct <p> children otherwise.
 function _activeScrollUnits() {
+  if (stage.dataset.aligned === "on") {
+    const aligned = document.getElementById("aligned-body");
+    if (aligned && !aligned.hidden) {
+      return Array.from(aligned.querySelectorAll(".prow .tgt > p"));
+    }
+  }
   const body = document.getElementById("body-en");
   return body ? Array.from(body.children).filter(el => el.tagName === "P") : [];
 }
@@ -1718,7 +1746,9 @@ async function openBookmarksDialog() {
 function _scrollToParagraph(paraIndex) {
   if (paraIndex == null) return;
   const paras = _activeScrollUnits();
-  const target = paras[paraIndex];
+  if (!paras.length) return;
+  const clamped = Math.max(0, Math.min(paraIndex, paras.length - 1));
+  const target = paras[clamped];
   if (!target) return;
   // Suppress the synthetic scroll save so the user's existing saved scroll
   // doesn't get overwritten by the jump's mid-restore state.

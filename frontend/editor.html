@@ -43,7 +43,7 @@
               aria-pressed="false" title="Toggle the assist rail (a)">Assist</button>
       <button type="button" class="icon-btn" id="shortcuts-btn"
               title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
-      <a class="btn-ghost editor-reader-link" id="reader-link" href="#" title="Open this chapter in the reader">Reader</a>
+      <a class="btn-ghost editor-reader-link" id="editor-reader-link" href="#" title="Open this chapter in the reader">Reader</a>
       <!-- Phase 6: the reader's edit-mode diagnostics + actions relocated
            here as an overflow menu (same <details> util-menu pattern the
            reader's chapter bar uses; wiring lives in editor-tools.js). -->
@@ -331,7 +331,7 @@
      Core first owns the shared state; assist reads it and listens for the
      editor:* CustomEvents core dispatches; tools last adds the util menu
      dialogs, glossary popover + terms tiers (Phase 6 relocations). -->
-<script src="/static/js/editor-core.js?v=3" defer></script>
+<script src="/static/js/editor-core.js?v=4" defer></script>
 <script src="/static/js/editor-assist.js?v=2" defer></script>
 <script src="/static/js/editor-tools.js?v=3" defer></script>
 </body>

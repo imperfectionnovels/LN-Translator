@@ -51,6 +51,11 @@ if (!Number.isFinite(currentCh)) {
 }
 let focusSeg = Number.parseInt(params.get("seg"), 10);
 if (!Number.isFinite(focusSeg)) focusSeg = null;
+// Reader -> editor paragraph handoff (Block 5, 2026-08-07): an explicit
+// ?seg= always wins (it names an exact row); ?para= only applies when no
+// ?seg= was given. Consumed once in renderState, then nulled out.
+let pendingPara = Number.parseInt(params.get("para"), 10);
+if (!Number.isFinite(pendingPara) || pendingPara < 0 || focusSeg != null) pendingPara = null;
 
 // --- DOM handles (all ids are static in editor.html) ---
 const crumbNovel = document.getElementById("editor-crumb-novel");
@@ -61,7 +66,7 @@ const chSelect = document.getElementById("ch-select");
 const progressLabel = document.getElementById("progress-label");
 const progressBar = document.getElementById("progress-bar");
 const progressFill = document.getElementById("progress-fill");
-const readerLink = document.getElementById("reader-link");
+const readerLink = document.getElementById("editor-reader-link");
 const statusEl = document.getElementById("editor-status");
 const gridHead = document.getElementById("seg-grid-head");
 const grid = document.getElementById("seg-grid");
@@ -133,6 +138,30 @@ function updateBar() {
   prevBtn.disabled = i <= 0;
   nextBtn.disabled = i < 0 || i >= chaptersCache.length - 1;
 }
+// Editor -> reader paragraph handoff (Block 5, 2026-08-07): counts
+// non-empty-target rows strictly before the given segment index. Companion
+// to segIndexForDisplayedOrdinal below (the reverse direction); both walk
+// the same "displayed paragraph" ordinal space the reader's <p> elements use.
+function displayedOrdinalForSeg(idx) {
+  if (!currentData || idx == null) return null;
+  let count = 0;
+  for (const s of currentData.segments) {
+    if (s.index >= idx) break;
+    if (s.target_text) count++;
+  }
+  return count;
+}
+// Rewrite the href at click time, not on every render, so it always carries
+// the segment that's actually active right now. focusSeg == null (nothing
+// selected) leaves the link at the plain chapter-open href updateBar set.
+readerLink.addEventListener("click", (e) => {
+  let href = `/reader?novel=${novelId}&ch=${currentCh}`;
+  if (focusSeg != null) {
+    const ordinal = displayedOrdinalForSeg(focusSeg);
+    if (Number.isFinite(ordinal) && ordinal >= 0) href += `&para=${ordinal}`;
+  }
+  e.currentTarget.href = href;
+});
 function renderProgress(p) {
   progressLabel.textContent = `${p.confirmed} / ${p.total} confirmed`;
   progressBar.setAttribute("aria-valuemax", String(p.total));
@@ -168,10 +197,15 @@ function updateContinueCard() {
     if (seq !== continueSeq || forCh !== currentCh) return;
     const next = r.next_chapter_num;
     continueForCh = forCh;
+    // "Read this chapter" carries no &para=: a proofread-read starts at the
+    // top of the chapter, not wherever the editor happened to be scrolled.
+    const readLink = `<a class="btn-ghost" id="continue-read-link" href="/reader?novel=${novelId}&ch=${forCh}">Read this chapter</a>`;
     continueEl.innerHTML = next != null
       ? `<span class="continue-msg">Chapter fully confirmed</span>
+         ${readLink}
          <button type="button" class="btn-primary" id="continue-next-btn" data-next="${next}">Continue to Ch. ${next}</button>`
-      : `<span class="continue-msg">Chapter fully confirmed. Every chapter of this novel is fully confirmed.</span>`;
+      : `<span class="continue-msg">Chapter fully confirmed. Every chapter of this novel is fully confirmed.</span>
+         ${readLink}`;
     continueEl.hidden = false;
   }).catch(() => {
     if (seq !== continueSeq || forCh !== currentCh) return;
@@ -212,6 +246,21 @@ function statusLabel(s) {
 function segByIndex(idx) {
   if (!currentData) return null;
   return currentData.segments.find(s => s.index === idx) || null;
+}
+// Reader -> editor paragraph handoff (Block 5, 2026-08-07): the reader's
+// paragraph ordinal counts rendered <p> elements, which is not the same
+// index space as the segment ledger (Markdown non-paragraph blocks,
+// single-newline raws, and merged/split alignment rows all skew the two
+// orderings apart). Walks the chapter's non-empty-target segments in order
+// and returns the seg index of the k-th one, clamped to the last one when k
+// overshoots (null when the chapter has no non-empty rows at all).
+// Deliberately approximate: the goal is to land the user near the right
+// spot, never to advertise exact paragraph alignment.
+function segIndexForDisplayedOrdinal(k) {
+  if (!currentData || k == null || k < 0) return null;
+  const nonEmpty = currentData.segments.filter(s => s.target_text);
+  if (!nonEmpty.length) return null;
+  return nonEmpty[Math.min(k, nonEmpty.length - 1)].index;
 }
 // One row's markup. Kept separate from renderSegments so a save/confirm
 // re-renders a single row in place instead of blasting the whole grid.
@@ -922,6 +971,15 @@ function renderState(data) {
   renderSegments(data);
   applyFilter();
   updateActions();
+  // Reader -> editor paragraph handoff (Block 5, 2026-08-07): consume the
+  // pending ordinal once, resolving it against the just-rendered segments.
+  // pendingPara is already null when an explicit ?seg= was present (parsed
+  // at module load), so this never fights that anchor.
+  if (focusSeg == null && pendingPara != null) {
+    const resolved = segIndexForDisplayedOrdinal(pendingPara);
+    pendingPara = null;
+    if (resolved != null) focusSeg = resolved;
+  }
   if (focusSeg != null) {
     const row = rowFor(focusSeg);
     if (row) selectRow(row);
