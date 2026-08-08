@@ -351,6 +351,33 @@ def test_bulk_strips_volume_divider_before_heading(client: TestClient) -> None:
     assert "第一卷" not in rows[0]["original_text"]
 
 
+def test_bulk_strips_volume_divider_combined_with_heading_on_one_line(
+    client: TestClient,
+) -> None:
+    """Same H7 shape as test_bulk_strips_volume_divider_before_heading, but
+    the volume divider and the chapter heading share one raw source line
+    (`第一卷 风起 第296章 甲`). Before the fix, the greedy `[^\\n]*$` tail on
+    _VOLUME_RE consumed the chapter heading right along with the volume
+    token, so the file read as heading-less and lost its printed number."""
+    body = "正文内容。" * 80
+    files = [
+        _file("c296.txt", f"第一卷 风起 第296章 甲\n{body}"),
+        _file("c297.txt", f"第297章 乙\n{body}"),
+    ]
+    r = client.post("/api/translate/bulk", data={"title": "VolCombined"}, files=files)
+    assert r.status_code == 200, r.text
+    novel_id = r.json()["novel_id"]
+    rows = _row(
+        "SELECT chapter_num, title_zh, original_text FROM chapters "
+        "WHERE novel_id = ? ORDER BY chapter_num",
+        (novel_id,),
+    )
+    assert [r["chapter_num"] for r in rows] == [296, 297]
+    assert rows[0]["title_zh"] == "第296章 甲"
+    # Volume divider must not leak into the body of the first chapter.
+    assert "第一卷" not in rows[0]["original_text"]
+
+
 def test_bulk_skips_numberless_heading_author_note(client: TestClient) -> None:
     """H8: a file titled 番外+活动预告 with author-note vocabulary in the body
     used to slip through as a real chapter because split_leading_heading

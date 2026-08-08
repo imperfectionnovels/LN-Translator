@@ -34,8 +34,20 @@ CHAPTER_PATTERNS = [
 # so a volume divider no longer consumes a chapter slot. `parse_chapters`
 # strips matching lines before marker detection so the divider text neither
 # becomes a chapter nor leaks into a following chapter's body.
+#
+# The tail after the volume unit is a tempered scan, not a plain [^\n]*: a raw
+# source line sometimes carries BOTH the volume divider and the next chapter
+# heading on one line ("第一卷 风起 第一章 少年"), and a greedy [^\n]* would
+# consume the chapter heading right along with the volume text, deleting the
+# chapter's number and title. The negative lookahead re-checks the same
+# chapter-unit class CHAPTER_PATTERNS[0] uses ([章回节]) at every position, so
+# the scan stops the instant a chapter heading starts, leaving it in place at
+# the front of the (now shorter) line for marker detection to find. On a
+# standalone divider line (no trailing chapter heading) the lookahead never
+# fires, so the scan still runs to end of line exactly as before.
 _VOLUME_RE = re.compile(
-    r"^[ \t]*第[ \t]*[\d零〇一二三四五六七八九十百千万两]+[ \t]*[卷篇部集][ \t]*[:：．\.]?[ \t]*[^\n]*$",
+    r"^[ \t]*第[ \t]*[\d零〇一二三四五六七八九十百千万两]+[ \t]*[卷篇部集][ \t]*[:：．\.]?[ \t]*"
+    r"(?:(?!第[ \t]*[\d零〇一二三四五六七八九十百千万两]+[ \t]*[章回节])[^\n])*",
     re.MULTILINE,
 )
 

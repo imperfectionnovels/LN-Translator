@@ -132,6 +132,65 @@ def test_volume_divider_does_not_consume_a_chapter_number():
     assert all("第一卷" not in c.original_text for c in chapters)
 
 
+def test_volume_and_chapter_heading_combined_on_one_line():
+    """A raw source line sometimes carries the volume divider AND the next
+    chapter heading together (`第一卷 风起 第一章 少年`). Regression: the old
+    `[^\\n]*$` tail greedily ate the whole line, deleting the chapter number
+    and title along with the volume token so the body silently folded into
+    the previous chapter. Only the volume prefix should be stripped; the
+    chapter heading must survive at the start of the line."""
+    body = "正文内容。" * 80
+    text = (
+        f"第一卷 风起 第一章 少年\n{body}\n\n"
+        f"第二章 出发\n{body}\n\n"
+        f"第二卷 云涌 第三章 江湖\n{body}"
+    )
+    chapters = parse_chapters(text)
+    assert [c.chapter_num for c in chapters] == [1, 2, 3]
+    assert [c.title_zh for c in chapters] == [
+        "第一章 少年",
+        "第二章 出发",
+        "第三章 江湖",
+    ]
+    assert all(c.original_text.strip() == body for c in chapters)
+    # Neither volume token leaks into a title or a body.
+    assert all("第一卷" not in (c.title_zh or "") for c in chapters)
+    assert all("第二卷" not in (c.title_zh or "") for c in chapters)
+    assert all("卷" not in c.original_text for c in chapters)
+
+
+def test_volume_and_chapter_heading_combined_punctuation_variants():
+    """Same combined-line shape, with a colon after the volume unit and with
+    no filler title between the volume token and the chapter heading. Both
+    must strip only the volume prefix and keep the chapter heading intact."""
+    body = "正文内容。" * 80
+    variants = [
+        f"第一卷:风起 第一章 少年\n{body}",
+        f"第一卷 第一章 少年\n{body}",
+    ]
+    for text in variants:
+        chapters = parse_chapters(text)
+        assert len(chapters) == 1, text
+        assert chapters[0].chapter_num == 1
+        assert chapters[0].title_zh == "第一章 少年"
+        assert chapters[0].original_text.strip() == body
+        assert "卷" not in chapters[0].original_text
+
+
+def test_volume_and_chapter_heading_combined_keeps_printed_number():
+    """A file opening on a combined volume+chapter line must still anchor to
+    the printed chapter number (296), not fall back to sequential numbering.
+    The constant-offset protection (test_chapter_number_read_from_heading)
+    depends on the heading surviving the volume strip."""
+    body = "正文内容。" * 80
+    text = f"第一卷 风起 第296章 xxx\n{body}"
+    chapters = parse_chapters(text)
+    assert len(chapters) == 1
+    assert chapters[0].chapter_num == 296
+    assert chapters[0].printed_num == 296
+    assert chapters[0].title_zh == "第296章 xxx"
+
+
 # --- title em-dash sanitizer ------------------------------------------------
 
 
