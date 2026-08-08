@@ -970,3 +970,95 @@ achieves." Root causes and calls:
   corpus. The editor also gained a purpose paragraph in the ? dialog, a
   Glossary util-menu link (it had NO route to the glossary page), and the
   term form gained usage_note + honored Locked-on-add.
+
+## 2026-08-07: Glossary as terminology authority; term marks on both surfaces; position handoff
+
+User directive: (1) the glossary is the terminology authority, its changes
+must reach the CAT editor and everywhere else; (2) build the screenshotted
+WTR-Lab-style inline term-underline reading view, after researching
+whether it is actually the right pattern; (3) design and prove the
+Glossary to Editor and Editor to Reader interactions rather than take them
+on faith; (4) integrate completely this time, not partially.
+
+- **Inline term marks are the industry-convergent pattern, not a novel
+  idea.** memoQ highlights term-base hits in the editor's source text with
+  an editable hits pane; Trados Studio brackets every known term in the
+  source segment and edits the termbase in place; WTR-Lab (the
+  screenshotted reference) and LNMTL both ship term popovers and
+  per-novel community glossaries in the reading view, and WTR-Lab even has
+  a third-party userscript ecosystem built solely to fix terms while
+  reading. This app shipped the same feature pre-pivot (term spans plus a
+  click-to-edit popover, deleted 2026-08-03 with the edit-mode purge); the
+  machinery and its CSS variables were recovered from git rather than
+  reinvented. User picks via AskUserQuestion: marks ON by default on both
+  panes (reader and editor), a type-settings toggle, click opens the edit
+  dialog directly with no separate popover step.
+- **Glossary-page apply dialog KEPT but reweighted, not removed.**
+  `term_en` commits on blur in that form, so a dialogless forced apply
+  would turn a stray blur into an unannounced corpus rewrite. The dialog
+  stays, with "Apply now" as primary and autofocused (honest alias and
+  restore-point copy) and "Retranslate affected instead" as the honest
+  secondary (states plainly that lines the user already edited or
+  confirmed in the editor are kept verbatim and will NOT pick up the
+  rename). The editor's term form and the reader's mini form are both
+  already explicit-save gestures, so they force-apply with no intermediate
+  dialog.
+- **Alias splitting is one longest-first alternation, not a per-alias
+  loop.** A sequential loop resolves overlapping aliases wrong: renaming
+  bare "Xiaochun" while "Bai Xiaochun / Xiaochun" is in scope would turn
+  "Bai Xiaochun" into "Bai <new>" if the short alias matches first. One
+  compiled `\b(?:...)\b` alternation, with surviving aliases riding along
+  as no-op branches (the callable replacement returns them unchanged),
+  fixes this provably. The callable form also closed a reachable 500:
+  passing the new rendering as a regex substitution template raised
+  `re.error` whenever `term_en` contained a backslash.
+- **Refining chapters are skipped whole, with ids, never partially
+  patched.** The refiner's own commit rematerializes the body from its
+  merge, so a mid-refine rewrite would be clobbered on machine rows
+  regardless of when it lands. There is deliberately NO auto re-apply
+  queue for the skipped chapters: a PATCH already implicitly locks the
+  edited entry, so the live missing-locked tier in the editor re-flags
+  those chapters on their next open, meaning discovery is automatic even
+  though the fix stays a manual user action. The generic (non-glossary)
+  find/replace commit path has the identical refining-clobber hazard;
+  flagged here and left out of scope for this round, not fixed.
+- **One `fr_snapshots` restore point per touched novel**, all sharing one
+  commit token so a multi-novel apply is one logical undo group in the
+  Find/Replace History tab. `snapshot_ids` can come back shorter than the
+  touched-novel count when a novel's payload exceeds the existing size
+  cap; the UI gates its "restore point saved" copy on that list being
+  non-empty rather than promising an undo the backend did not record.
+- **The cross-tab bus rides the existing `BroadcastChannel`
+  "novel-changes"**, not a new channel. Per spec a channel never delivers
+  to the sender that posted the message, so self-delivery exclusion is
+  structural loop prevention; no sender-id bookkeeping needed.
+- **Design deviations from the initial plan, adopted from review:**
+  - Term click reuses the reader's existing Revise mini dialog rather
+    than porting the old anchored popover: identical propagation path by
+    construction, and it keeps the `.term-edit-pop` ban the structural
+    tests already enforce.
+  - The marks toggle rebuilds the DOM spans on flip rather than
+    CSS-neutralizing them, so off really means "never built" instead of
+    hidden but present.
+  - The glossary page's breadcrumb link to the reader drops `ch`; the
+    reader resumes its own last-read chapter itself, so hard-coding ch=1
+    was actively wrong, not merely redundant.
+  - The reader's plain `g` shortcut is gone in favor of the command
+    palette's `g g` chord; the plain `g` fired before the palette's chord
+    matcher could run, making `g e` and `g r` unreachable on the reader.
+  - The continue card's new "Read this chapter" link lands at the top of
+    the chapter, deliberately without a `para`; a fresh read starts at
+    the top, while a proofread-in-progress resumes where it left off (the
+    editor's own continue card is unaffected).
+  - ZH glossary aliases get the same two-character floor the EN side
+    already had. Found live: single-character aliases (tian, dao) were
+    firing inside unrelated compounds all over the ZH pane, because
+    Chinese has no word boundary for `\b` to anchor on. Single-char
+    glossary entries were already documented-inert for prompts; term
+    marks now match that policy.
+- **Position handoff is deliberately approximate, not exact.** The reader
+  hands the editor a paragraph ordinal (`para`, an explicit `seg` still
+  wins), and the editor maps it to the K-th non-empty-target segment;
+  markdown non-paragraph blocks and single-newline raw text skew the DOM
+  paragraph ordinals against the segment ledger's own indexing. The
+  contract is land near, never advertise exactness.
