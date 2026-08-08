@@ -452,9 +452,20 @@ function restoreScrollFor(num) {
 // lastChapter declared near the top of the script — see comment there.
 // F14 (2026-05-25): pre-render next chapter cache. When loadChapter
 // commits a `done` chapter, we kick off a background fetch for ch+1 and
-// cache the response. On Next, _prefetchedChapter is consumed if fresh.
-// 2-minute TTL; eviction on chapter status transition (pending→done
-// in the chapter we're caching, which would invalidate the cached body).
+// cache the response. On Next, _prefetchedChapter is consumed if fresh
+// (loadChapter's cache-hit fast path).
+// 2-minute TTL, plus three explicit eviction points (L2 fix, 2026-08-08:
+// the TTL alone let a stale prefetched BODY survive a glossary rename and
+// get served alongside freshly-built term marks):
+//   1. Consumption itself (the fast path clears num/data on a cache hit).
+//   2. A "glossary" or "inserted" onNovelChange broadcast (novel-wide text
+//      rewrite or chapter renumbering can invalidate whatever's cached).
+//   3. The top of loadChapter, whenever it's called for the chapter the
+//      reader is already on (num === currentCh): a same-chapter reload is
+//      always a post-mutation refresh (retranslate, local glossary apply,
+//      reread, a poll catching a status flip), and the mutation that
+//      changed the CURRENT chapter may equally have rewritten whatever sits
+//      in the prefetch slot.
 const _PREFETCH_TTL_MS = 2 * 60_000;
 const _prefetchedChapter = { num: null, data: null, at: 0 };
 
@@ -476,7 +487,44 @@ function _prefetchNext(currentDoneChapter) {
     .catch(() => { /* best-effort */ });
 }
 
+// L1 fix (2026-08-08): shared post-render epilogue for a status='done'
+// chapter (end-of-chapter card, scroll-position restore, last-read
+// breadcrumb). Both loadChapter's normal fetch path and its F14 prefetch-
+// cache fast path land on a done chapter and must leave the same UI behind
+// them; the fast path used to `return` before any of this ran, so a
+// prefetch-served Next left the end card and scroll position from the
+// PREVIOUS chapter on screen. Content is unchanged from the normal path's
+// former inline version: only the wrapping is new.
+function _paintDoneChapterEpilogue(ch, num) {
+  persistLastRead(ch);
+  endBlock.classList.remove("hidden");
+  paintEndCard(ch);
+  // Restore the user's last scroll position within this chapter. A one-shot
+  // editor -> reader paragraph handoff (Block 5, 2026-08-07) overrides the
+  // stored position exactly once; double rAF matches the restore path's own
+  // paint-timing choreography, and _scrollToParagraph already suppresses the
+  // synthetic scroll save.
+  if (pendingDeepPara != null) {
+    const targetPara = pendingDeepPara;
+    pendingDeepPara = null;
+    requestAnimationFrame(() => requestAnimationFrame(() => _scrollToParagraph(targetPara)));
+  } else {
+    restoreScrollFor(num);
+  }
+}
+
 async function loadChapter(num) {
+  // L2 fix (2026-08-08): a same-chapter reload (num === currentCh) is
+  // always a post-mutation refresh gesture, never a fresh navigation: see
+  // the eviction-rules comment above _prefetchedChapter's declaration.
+  // Evict defensively: harmless when the cache is already empty, including
+  // on the very first boot call, where num happens to equal the just-set
+  // currentCh too.
+  if (num === currentCh) {
+    _prefetchedChapter.num = null;
+    _prefetchedChapter.data = null;
+    _prefetchedChapter.at = 0;
+  }
   // Cancel any prior poll handle unconditionally. This is the single guard
   // that prevents a stale timer captured against an old `num` from firing
   // loadChapter(oldNum), snapping the URL back via history.replaceState,
@@ -518,7 +566,19 @@ async function loadChapter(num) {
     persistReadingPosition(num);
     history.replaceState(null, "", `/reader?novel=${novelId}&ch=${num}`);
     updateMasthead(num);
+    // L1 fix (2026-08-08): reset the status banner the same way the normal
+    // path does (~571-574) so a leftover banner ("Chapter N removed from
+    // the translation queue.", a dismissed error, …) doesn't survive a
+    // prefetch-served navigation.
+    statusEl.className = "status";
+    statusEl.textContent = "";
+    statusEl.hidden = false;
+    statusEl.removeAttribute("role");
     lastChapter = cachedCh;
+    // L1 fix (2026-08-08): keep the reading-rail's CSS status hook current,
+    // same as the normal path (~597); otherwise it reports the PREVIOUS
+    // chapter's status until the next full fetch.
+    document.body.dataset.chapterStatus = cachedCh.status || "";
     stopLoader();
     bodyEn.innerHTML = "";
     bodyZh.innerHTML = "";
@@ -526,13 +586,15 @@ async function loadChapter(num) {
     document.getElementById("glossary-merge-error-card")?.remove();
     renderToc();
     renderChapterBody(cachedCh);
-    // Refresh the library-strip snippet for a cache-hit done chapter; the full
-    // render path (below) does this at line ~2387, but the prefetch shortcut
-    // bypasses it, so without this the breadcrumb keeps the lastLine:null that
-    // persistReadingPosition just wrote.
     if (cachedCh.status === "done") {
-      persistLastRead(cachedCh);
+      // L1 fix (2026-08-08): run the same post-render epilogue the normal
+      // path runs for a done chapter (end-of-chapter card, scroll restore /
+      // pending-paragraph-handoff consumption, last-read breadcrumb)
+      // instead of returning before any of it fires.
+      _paintDoneChapterEpilogue(cachedCh, num);
       _prefetchNext(num);
+    } else {
+      endBlock.classList.add("hidden");
     }
     return;
   }
@@ -732,22 +794,11 @@ async function loadChapter(num) {
     clearStageStart(ch.chapter_num, "translate");
     renderChapterBody(ch);
     if (ch.status === "done") {
-      persistLastRead(ch);
-      endBlock.classList.remove("hidden");
-      paintEndCard(ch);
-      // Restore the user's last scroll position within this chapter. Only on
-      // status=done — for pending/error states there's nothing meaningful to
-      // scroll into yet. A one-shot editor -> reader paragraph handoff (Block
-      // 5, 2026-08-07) overrides the stored position exactly once; double
-      // rAF matches the restore path's own paint-timing choreography, and
-      // _scrollToParagraph already suppresses the synthetic scroll save.
-      if (pendingDeepPara != null) {
-        const targetPara = pendingDeepPara;
-        pendingDeepPara = null;
-        requestAnimationFrame(() => requestAnimationFrame(() => _scrollToParagraph(targetPara)));
-      } else {
-        restoreScrollFor(num);
-      }
+      // Only on status=done: for pending/error states there's nothing
+      // meaningful to scroll into yet. (Shared with the F14 prefetch fast
+      // path's cache-hit branch: see _paintDoneChapterEpilogue, L1 fix
+      // 2026-08-08.)
+      _paintDoneChapterEpilogue(ch, num);
       // Phase 4: refinement-in-flight continuation poll. The chapter is
       // displayed (draft body), but the refiner is still running; re-poll
       // so the banner updates and the body switches to refined_text when
@@ -1957,6 +2008,21 @@ loadBookmarksForNovel();
   onNovelChange(novelId, (d) => {
     loadChapters();
     refreshNovelMeta();
+    // L2 fix (2026-08-08): a "glossary" broadcast means apply-in-place may
+    // have rewritten stored chapter text anywhere in the novel
+    // (find_replace.py's apply_in_place_for_glossary_term sweeps every
+    // chapter), and an "inserted" broadcast means chapter numbers past the
+    // insertion point were renumbered (services/uploads.py::
+    // insert_parsed_chapters): either way a chapter_num the prefetch cache
+    // is holding may now map to different content, so evict it. "appended"
+    // is excluded on purpose: it only lands new chapters at the end and
+    // never rewrites or renumbers existing ones, so nothing already cached
+    // can go stale from it.
+    if (d.type === "glossary" || d.type === "inserted") {
+      _prefetchedChapter.num = null;
+      _prefetchedChapter.data = null;
+      _prefetchedChapter.at = 0;
+    }
     if (d.type === "glossary") {
       // Same-chapter reload preserves scroll; the open-dialog guard protects
       // the mini add/revise form mid-edit from a re-render yanking it away.
