@@ -183,13 +183,27 @@ function _openGlossForm(opts) {
   };
 }
 
+// In-flight guard: the save button and the dialog's Enter handler both call
+// _saveGlossForm, and the apply-in-place backend call is NOT idempotent
+// (renaming "A" to "A B" twice yields "A B B"). Without this a second Enter
+// fired mid-save silently double-applies the rename across every stored
+// chapter. Module-level because only one mini dialog exists at a time
+// (glossaryMiniDialog is a singleton).
+let _glossFormSaving = false;
+
 async function _saveGlossForm(entry) {
-  if (!glossaryMiniDialog) return;
+  if (!glossaryMiniDialog || _glossFormSaving) return;
   const errEl = glossaryMiniDialog.querySelector("#gm-err");
   const en = glossaryMiniDialog.querySelector("#gm-en").value.trim();
   const cat = glossaryMiniDialog.querySelector("#gm-cat").value;
   const notes = glossaryMiniDialog.querySelector("#gm-notes").value.trim();
   const locked = glossaryMiniDialog.querySelector("#gm-lock").checked;
+  const saveBtn = glossaryMiniDialog.querySelector("#gm-save");
+  const cancelBtn = glossaryMiniDialog.querySelector("#gm-cancel");
+  const saveLabel = saveBtn ? saveBtn.textContent : "";
+  _glossFormSaving = true;
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving..."; }
+  if (cancelBtn) cancelBtn.disabled = true;
   try {
     if (entry) {
       if (!en) { errEl.textContent = "English rendering is required."; return; }
@@ -234,10 +248,16 @@ async function _saveGlossForm(entry) {
     // Cross-tab (Block 2, 2026-08-07): the editor and any other reader tab on
     // this novel pick this up and refresh their own glossary-derived state.
     broadcastNovelChange(novelId, "glossary");
-    // Re-render the chapter so an applied-in-place revision shows immediately.
-    if (entry && typeof loadChapter === "function") loadChapter(currentCh);
+    // Re-render the chapter so the just-added/revised term's mark shows
+    // immediately, even in the acting tab (BroadcastChannel never delivers
+    // to the posting tab, so the Add path needs this too, not just Revise).
+    if (typeof loadChapter === "function") loadChapter(currentCh);
   } catch (err) {
     errEl.textContent = (err && err.message) || "Save failed.";
+  } finally {
+    _glossFormSaving = false;
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = saveLabel; }
+    if (cancelBtn) cancelBtn.disabled = false;
   }
 }
 
