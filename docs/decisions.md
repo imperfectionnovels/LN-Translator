@@ -1062,3 +1062,70 @@ on faith; (4) integrate completely this time, not partially.
   markdown non-paragraph blocks and single-newline raw text skew the DOM
   paragraph ordinals against the segment ledger's own indexing. The
   contract is land near, never advertise exactness.
+
+## 2026-08-08: Full-app bug review; 18 fixes in 13 file-disjoint blocks
+
+Three parallel review agents swept backend pipeline / routes+storage /
+frontend; every finding was re-verified against the code before it made
+the list, 18 survived, all fixed the same day (commits daa5639..eba4742).
+Orchestration followed the standing model split: fable planned, specced,
+and reviewed every diff; opus implemented the invariant-heavy blocks
+(segments, db rebuild, term-marks), sonnet the medium ones, haiku the
+mechanical ones. Judgment calls worth pinning:
+
+- **A rebuild that would blank a human row refuses whole** (eba4742).
+  The aligner legitimately emits empty slots (merge2 follow-on, bare
+  del); writing one into an anchored edited/confirmed row erased the
+  user's paragraph silently, and every later retranslate then dropped
+  that paragraph from the body (worker merge keeps human targets
+  verbatim; join skips empties). Ruled out: partial rebuild that skips
+  just the affected row (the store would no longer reproduce the body,
+  violating I1). The conservative retain-all + 'unaligned' stamp reuses
+  the vanished-source path; the worker merge additionally self-heals
+  already-blanked rows from the slot's fresh machine text (origin
+  'reprojected', status kept).
+- **Editor saves 409 during a refinement pass** (eba4742). This
+  REVERSES a previously-pinned contract (the old durability test
+  asserted a mid-refine save survives). The old pin was half right: a
+  save fully before the refine commit survives, but one whose read
+  straddles the commit wrote the wrong body column and was rebuilt away
+  after a 200. Refusing with the structured chapter_translating 409
+  matches every other write surface (get_segments, recheck, glossary
+  apply). Ruled out for now: making the save read-then-write atomic to
+  keep mid-refine editing alive; revisit only if the blocked window
+  (one refiner call) proves annoying in practice.
+- **The humanizer-era rebuild now derives from live SCHEMA** (ea47bf3).
+  Its DDL was frozen at the 2026-05-26 column set and init_db runs it
+  AFTER additive migrations, so the rebuild amputated 21 later columns.
+  Lesson: a one-shot rebuild that hand-copies columns rots silently;
+  the fix (shared DDL templates + PRAGMA-derived intersection copy)
+  makes future columns ride through by construction. The parity test
+  also caught refined_by_provider_id missing from SCHEMA entirely.
+- **Glossary apply-in-place went transactional, not hash-guarded**
+  (c72255d). BEGIN IMMEDIATE around the whole read-substitute-write
+  span (the _append_with_offset precedent) beats commit_preview-style
+  drift hashes here because there is no user-visible pause between read
+  and write; the loop is pure DB+CPU so the lock hold is short.
+- **Term marks match apostrophes per haystack** (d71a022). One alias
+  faces three surfaces: straight ' in glossary rows, curly U+2019 in
+  prose, &#39; in marked's escaped output. Two compiled variants from
+  one longest-first list (entity folded in only on the sanitized side,
+  because raw prose can carry a literal "&#39;"), byEn keys folded onto
+  straight-lowercase. Union-level \b became explicit lookarounds: \b
+  inverts at non-word edges, so "Su Nü" / "talent(s)" (29 live entries)
+  could never match at all.
+- **The reader glossary mini-form was the only unguarded apply surface**
+  (1e8cf26). A double Enter during the seconds-long apply-in-place ran
+  the non-idempotent rename twice ("Saint" -> "Saint Emperor Emperor"
+  across every chapter). Lesson for any future apply surface: the
+  find_replace docstring's "do not loop this over the same rename" is a
+  UI contract, not just an API note; every caller needs an in-flight
+  guard.
+- **Known debt, deliberately not fixed this round**: test_token_cost's
+  rebuild test runs against the shared conftest DB and corrupts it
+  (FTS5 shadow hazard) for any module collected after it; invisible in
+  CI's alphabetical order. Isolate onto tmp_path when next touching
+  that file. bookmarks.anchor_hash is additive-only (harmless until
+  someone writes a bookmarks rebuild). The tm_inconsistency mute check
+  skips the insert but still pays the detection SELECTs on muted
+  novels (mute has no UI writer today).
