@@ -564,9 +564,9 @@ def enforce_locked_term_casing(
 
     for canonical, _ in targets:
         pat = re.compile(
-            r"(?<![A-Za-z0-9_’’])"
+            r"(?<![A-Za-z0-9_'’])"
             + re.escape(canonical)
-            + r"(?![A-Za-z0-9_’’])",
+            + r"(?![A-Za-z0-9_'’])",
             re.IGNORECASE,
         )
         # Possessive form: same left boundary, but followed by ‘s or ’s
@@ -574,9 +574,9 @@ def enforce_locked_term_casing(
         # only the term portion; the possessive suffix is captured separately
         # so the replacement splices in the canonical casing and re-attaches it.
         pat_possessive = re.compile(
-            r"(?<![A-Za-z0-9_’’])"
+            r"(?<![A-Za-z0-9_'’])"
             + re.escape(canonical)
-            + r"(?=’s|’s)",
+            + r"(?='s|’s)",
             re.IGNORECASE,
         )
         for pat_used, possessive in ((pat, False), (pat_possessive, True)):

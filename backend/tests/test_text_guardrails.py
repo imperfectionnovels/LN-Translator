@@ -795,6 +795,23 @@ def test_locked_term_casing_possessive_non_glossary_untouched() -> None:
     assert n == 0
 
 
+def test_locked_term_casing_possessive_ascii_apostrophe_regression() -> None:
+    # Regression test for the duplicated U+2019 bug fix (2026-08-08).
+    # The regex had [A-Za-z0-9_''] (U+2019 twice) instead of [A-Za-z0-9_'']
+    # (ASCII apostrophe + U+2019), and the lookahead had (?='s|'s) (both U+2019)
+    # instead of (?='s|'s) (ASCII apostrophe + U+2019).
+    # This test confirms that ASCII-apostrophe possessives still work correctly.
+    g = [_atomic_entry("Emperor", category="character")]
+    text = "the emperor's blade cut through the darkness"
+    out, n = enforce_locked_term_casing(text, g)
+    assert out == "the Emperor's blade cut through the darkness"
+    assert n == 1
+    # Verify idempotent: re-running on the fixed output should not change it.
+    out2, n2 = enforce_locked_term_casing(out, g)
+    assert out2 == out
+    assert n2 == 0
+
+
 # ---------------------------------------------------------------------------
 # detect_double_possessive
 # ---------------------------------------------------------------------------
