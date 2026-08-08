@@ -1,0 +1,230 @@
+"""Term-marks wiring pins (2026-08-07 glossary/editor/reader integration).
+
+Structural pins for the shared frontend/js/term-marks.js module and its
+consumption by the reader and the CAT editor: glossary terms render as
+inline "term" spans on both surfaces (a WTR-Lab-style click-to-revise
+highlight), built by ONE matcher so the two surfaces agree on what counts
+as a term hit. Static string/regex checks over the frontend files only; no
+browser, no DOM. Each test pins one policy:
+
+  1. Load order: the shared module loads (deferred) BEFORE each page's own
+     module chain, on both pages.
+  2. Self-containment contract: the module owns its own escaping and touches
+     no page global and no DOM API, which is WHY it can load unmodified on
+     both pages and sits outside the reader*.js boot-safety concat.
+  3. Pattern engine: alias-aware slash-split, cached on array identity,
+     longest-first alternation, EN word-boundary + case-insensitive, the
+     tag-split technique that keeps already-sanitized HTML intact.
+  4. Reader threading: renderers thread the built pattern through, the
+     toggle persists to localStorage, and the g-chord conflict fix (plain
+     `g` retired; the palette's `g g` owns glossary nav) is pinned by the
+     ABSENCE of the old branch.
+  5. Editor threading: marks render in both grid cells but never enter the
+     contenteditable surface (startEdit reseeds from the plain segment
+     field); the source-side click handler is scoped to .seg-src only.
+  6. Position handoff (Block 5): reader <-> editor paragraph/segment
+     round-trip, both directions.
+  7. Dead-end fixes (Block 6): the missing-locked tier keeps its term id,
+     assist glossary chips are real buttons, the glossary page links into
+     the editor and no longer hard-codes ch=1.
+  8. Cross-tab bus (Block 2): the shared BroadcastChannel helpers + honest
+     toast copy, referenced by both pages.
+  9. ?v cache-bust discipline for a file that was deleted and re-created
+     during the CAT pivot (the re-created-file poisoning rule: never reuse
+     a ?v value git history already used for that file).
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+FRONTEND = ROOT / "frontend"
+JS = FRONTEND / "js"
+CSS = FRONTEND / "css"
+
+
+def _script_srcs(html: str) -> list[str]:
+    """Every /static/js/... script src in document order, ?v= included."""
+    return re.findall(r'<script[^>]*\ssrc="/static/js/([^"]+)"', html)
+
+
+def _index_of_prefix(srcs: list[str], prefix: str) -> int:
+    for i, s in enumerate(srcs):
+        if s.startswith(prefix):
+            return i
+    raise AssertionError(f"no script src starting with {prefix!r} found in {srcs!r}")
+
+
+def test_term_marks_loads_before_page_modules_on_both_pages():
+    reader_html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
+    editor_html = (FRONTEND / "editor.html").read_text(encoding="utf-8")
+
+    # One shared, unmodified module: both pages must reference the SAME
+    # ?v= (a cache-bust on one page without the other would mean the two
+    # surfaces could disagree about which build of the matcher is live),
+    # deferred like the rest of the ordered chains. The ?v value itself
+    # isn't pinned to a literal integer here; see the dedicated version-
+    # discipline test below for the "never reuse a used value" rule.
+    reader_m = re.search(r'<script src="/static/js/term-marks\.js\?v=(\d+)" defer></script>', reader_html)
+    editor_m = re.search(r'<script src="/static/js/term-marks\.js\?v=(\d+)" defer></script>', editor_html)
+    assert reader_m, "reader.html must load the shared term-marks.js deferred"
+    assert editor_m, "editor.html must load the shared term-marks.js deferred"
+    assert reader_m.group(1) == editor_m.group(1), (
+        "reader.html and editor.html must reference the SAME term-marks.js "
+        "?v= (it is one shared, unmodified module)"
+    )
+
+    reader_srcs = _script_srcs(reader_html)
+    editor_srcs = _script_srcs(editor_html)
+    assert _index_of_prefix(reader_srcs, "term-marks.js") < _index_of_prefix(reader_srcs, "reader-core.js"), (
+        "term-marks.js must load before reader-core.js: renderChapterBody "
+        "reads TermMarks at render time"
+    )
+    assert _index_of_prefix(editor_srcs, "term-marks.js") < _index_of_prefix(editor_srcs, "editor-core.js"), (
+        "term-marks.js must load before editor-core.js: rowHtml reads "
+        "TermMarks at render time"
+    )
+
+
+def test_term_marks_is_self_contained():
+    """Self-containment is WHY the module can sit outside the reader*.js
+    boot-safety concat (test_reader_js_boot_safety.py discovers reader*.js
+    only) and load unmodified on both pages: it must never read a page
+    global or touch the DOM."""
+    src = (JS / "term-marks.js").read_text(encoding="utf-8")
+    assert "const TermMarks" in src
+    # The module's own header comment NAMES these globals to explain that it
+    # avoids them ("touches no page global (glossaryCache, currentData,
+    # novelId, escapeHtml)..."); strip that block comment first so the pin
+    # checks the CODE, not the prose describing the code.
+    code = src.split("*/", 1)[1] if "*/" in src else src
+    for forbidden in ("glossaryCache", "currentData", "novelId", "escapeHtml(", "getElementById"):
+        assert forbidden not in code, (
+            f"term-marks.js must stay self-contained (own esc(), no DOM): "
+            f"found {forbidden!r} in the code, which would break sharing it "
+            f"unmodified between the reader and the editor"
+        )
+
+
+def test_term_marks_pattern_engine():
+    src = (JS / "term-marks.js").read_text(encoding="utf-8")
+    # Alias-aware: slash-split both term_zh and term_en before building the
+    # alternation, so "筑基 / 築基" style entries match either surface form.
+    assert "function aliases(s)" in src
+    assert 'split("/")' in src
+    # Cached on the entries ARRAY REFERENCE identity (not deep-equality):
+    # every producer replaces the array wholesale, so this is safe and cheap.
+    assert "_cacheKey === entries" in src
+    # Longest-first alternation ACROSS entries (not per-entry), so a long
+    # alias of one entry can beat a short alias of another.
+    assert "enList.sort((a, b) => b.length - a.length);" in src
+    assert "zhList.sort((a, b) => b.length - a.length);" in src
+    # EN side: word-boundary anchored, case-insensitive. The two literal
+    # backslashes below are the JS source's escaped \b, not a Python escape.
+    assert "\\b(" in src
+    assert '"gi"' in src
+    # The recovered tag-split technique: split on tags, regex only the text
+    # pieces, so <strong>/<em>/<br> markup from marked+DOMPurify survives.
+    assert "split(/(<[^>]+>)/)" in src
+
+
+def test_reader_threads_term_marks_and_toggle():
+    chapter = (JS / "reader-chapter.js").read_text(encoding="utf-8")
+    assert "TermMarks.buildPattern(glossaryCache)" in chapter
+    assert '_buildAlignedRows(ch.original_text || "", enSource, termPattern)' in chapter
+    assert "readerTermMarks" in chapter
+
+    html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
+    assert '<input id="term-marks-toggle" type="checkbox">' in html
+
+    # g-chord conflict fix: the reader's plain `g`/`G` glossary shortcut is
+    # gone (it shadowed the command palette's `g g` chord app-wide). Pin the
+    # ABSENCE of the removed branch by its distinctive body (recovered from
+    # git history: `git log -p -S'"g"'` shows the exact fragment removed).
+    assert 'e.key === "g" || e.key === "G"' not in chapter
+    assert "location.href = glossaryLink.href;" not in chapter
+
+    # The help dialog's glossary row now reads "g g", not a single "g".
+    assert (
+        '<div class="key-cell"><span class="kbd">g</span> <span class="kbd">g</span></div>'
+        "<div>Open glossary</div>"
+    ) in html
+
+
+def test_editor_marks_never_enter_contenteditable():
+    core = (JS / "editor-core.js").read_text(encoding="utf-8")
+    assert core.count("TermMarks.wrapText") >= 2, (
+        "rowHtml must wrap both .seg-src (zh) and .seg-tgt (en) via TermMarks"
+    )
+    # startEdit reseeds the live cell from the PLAIN segment field, not the
+    # marked-up rowHtml string, so a term span can never end up inside the
+    # contenteditable surface.
+    assert "cell.textContent = seg.target_text;" in core
+
+    tools = (JS / "editor-tools.js").read_text(encoding="utf-8")
+    # Delegated click is scoped to the SOURCE side only (memoQ/Trados act on
+    # source terms); .seg-tgt keeps meaning "start editing" in editor-core.
+    assert ".seg-src .term" in tools
+
+    css = (CSS / "editor.css").read_text(encoding="utf-8")
+    assert ".seg-tgt .term { cursor: text; }" in css
+
+
+def test_position_handoff_both_directions():
+    core = (JS / "editor-core.js").read_text(encoding="utf-8")
+    assert 'params.get("para")' in core
+    assert "segIndexForDisplayedOrdinal" in core
+    assert "displayedOrdinalForSeg" in core
+    assert 'id="continue-read-link"' in core
+
+    reader_core = (JS / "reader-core.js").read_text(encoding="utf-8")
+    assert "pendingDeepPara" in reader_core
+
+    chapter = (JS / "reader-chapter.js").read_text(encoding="utf-8")
+    assert "href += `&para=${idx}`;" in chapter
+
+
+def test_dead_end_fixes():
+    tools = (JS / "editor-tools.js").read_text(encoding="utf-8")
+    # Missing-locked tier keeps the server's term_id (was discarded before),
+    # so the row's revise button can resolve the entry.
+    assert "data-term-id" in tools
+    assert "missing-locked-edit" in tools
+    assert "This term's source text was not found in this chapter's segments." in tools
+
+    assist = (JS / "editor-assist.js").read_text(encoding="utf-8")
+    assert 'class="assist-term${present' in assist
+    assert 'data-entry-id="${g.id}"' in assist
+
+    glossary = (JS / "glossary.js").read_text(encoding="utf-8")
+    assert "/editor?novel=" in glossary
+    assert "&ch=1" not in glossary, (
+        "glossary.js must not hard-code ch=1: the breadcrumb resumes the "
+        "reader's last-read chapter (spine.js convention) instead"
+    )
+
+
+def test_cross_tab_bus_and_shared_toast_copy():
+    utils = (JS / "utils.js").read_text(encoding="utf-8")
+    for needed in (
+        "broadcastNovelChange", "onNovelChange", "glossaryApplyToastText", '"glossary"',
+    ):
+        assert needed in utils, f"utils.js missing the shared cross-tab bus piece: {needed!r}"
+
+    reader_html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
+    editor_html = (FRONTEND / "editor.html").read_text(encoding="utf-8")
+    assert "utils.js?v=2" in reader_html
+    assert "utils.js?v=2" in editor_html
+
+
+def test_reader_glossary_version_bumped_past_history():
+    html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
+    m = re.search(r"reader-glossary\.js\?v=(\d+)", html)
+    assert m, "reader.html must reference reader-glossary.js with a ?v= integer"
+    assert int(m.group(1)) >= 4, (
+        "reader-glossary.js was deleted and re-created during the CAT pivot; "
+        "its ?v must be a never-before-used integer (git history already "
+        "used 1 and 3), never reset to 1"
+    )

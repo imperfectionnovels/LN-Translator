@@ -68,13 +68,17 @@ def test_reader_has_no_edit_mode_chrome():
 
 def test_reader_reading_surface_restorations_present():
     """The 2026-08-06 restorations stay: the aligned bilingual grid and the
-    select-to-add/revise glossary flow are READING chrome, not edit mode."""
+    select-to-add/revise glossary flow are READING chrome, not edit mode.
+    Term marks (Block 3, 2026-08-07) are a further reading-surface
+    restoration: inline glossary-term spans, click-to-revise."""
     html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
     assert 'id="aligned-body"' in html
     assert 'id="glossary-mini-dialog"' in html
     assert "reader-glossary.js" in html
+    assert "term-marks.js" in html
+    assert 'id="term-marks-toggle"' in html
     src = (JS / "reader-glossary.js").read_text(encoding="utf-8")
-    for needed in ("_showSelPopover", "_glossFindEntry", "_openGlossForm"):
+    for needed in ("_showSelPopover", "_glossFindEntry", "_openGlossForm", "_openTermFromSpan"):
         assert needed in src
     # Still no contenteditable in the reader: text edits belong to /editor.
     assert "contentEditable" not in src
@@ -82,7 +86,12 @@ def test_reader_reading_surface_restorations_present():
     for needed in ("_alignParas", "_buildAlignedRows", "_dropLeadingZhHeading"):
         assert needed in chapter
     # Exactly the five reader modules, in order (reader-glossary.js rejoined
-    # 2026-08-06 between chapter and quality).
+    # 2026-08-06 between chapter and quality). term-marks.js is deliberately
+    # NOT one of these: it is a shared cross-page module (also loaded on
+    # editor.html) with no page globals and no DOM access, so it sits
+    # outside the reader*.js boot-safety concat by design
+    # (test_reader_js_boot_safety.py discovers reader*.js only) and is not
+    # matched by this regex.
     srcs = re.findall(r'<script\s+src="/static/js/(reader[\w-]*\.js)', html)
     assert srcs == [
         "reader-core.js",
@@ -119,8 +128,20 @@ def test_editor_util_menu_and_tools_wiring():
         "assist-add-term", "term-form-dialog",
         # Pull-based observation recheck (gap audit 2026-08-04).
         "observations-recheck",
+        # Dead-Reader-button fix (Block 5, 2026-08-07): renamed off spine's id.
+        "editor-reader-link",
     ):
         assert f'id="{eid}"' in html, f"editor.html missing Phase 6 element #{eid}"
+    # Defect fixed (Block 5): editor.html used to carry a SECOND id="reader-link"
+    # (the bar's Reader button), which spine.js also stamps into every page's
+    # .ink-spine. The duplicate id left the bar's own link dead (querySelector
+    # found spine's copy first). The bar link is now id="editor-reader-link";
+    # this page must never re-declare spine's id="reader-link" again.
+    assert 'id="reader-link"' not in html, (
+        "editor.html must not re-declare id=\"reader-link\": spine.js stamps "
+        "that id once per page already, and a second one shadows the bar's "
+        "own Reader button (the Block 5 dead-button defect)"
+    )
     assert "editor-tools.js" in html
 
     tools = (JS / "editor-tools.js").read_text(encoding="utf-8")

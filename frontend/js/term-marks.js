@@ -91,6 +91,11 @@ const TermMarks = (() => {
         if (!byEn.has(k)) byEn.set(k, g);
       }
       for (const a of aliases(g.term_zh)) {
+        // Chinese has no word boundaries the regex could anchor on, so a
+        // single-character alias fires inside unrelated compounds (tian inside
+        // idioms, dao inside verbs), pure noise in the reading view; also inert
+        // for prompt purposes.
+        if (a.length < 2) continue;
         zhList.push(a);
         if (!byZh.has(a)) byZh.set(a, g);
       }
