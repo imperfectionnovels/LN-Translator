@@ -287,6 +287,56 @@ def test_apply_in_place_respects_word_boundary_and_case(client):
     assert text == "The Golden Core, the Golden Seats, and a golden seat."
 
 
+def test_apply_in_place_global_response_carries_skip_and_snapshot_fields(client):
+    """Block 1: the global apply reports what it could NOT reach (in-flight
+    chapters) and the restore point it recorded, and it honors slash aliases
+    on term_en the same way the per-novel route does."""
+    _seed_novel_with_chapter(
+        "Alias A",
+        translated_text="The Golden Seat shone. A Gold Seat shone too.",
+    )
+    novel_b, ch_b = _seed_novel_with_chapter(
+        "Alias B", translated_text="A single Golden Seat appeared.",
+    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET refinement_status = 'pending' WHERE id = ?", (ch_b,),
+    )
+    conn.commit()
+    conn.close()
+
+    created = client.post(
+        "/api/glossary/global",
+        json={
+            "term_zh": "金丹",
+            "term_en": "Golden Seat / Gold Seat",
+            "category": "item",
+        },
+    ).json()
+    resp = client.post(
+        f"/api/glossary/global/{created['id']}/apply-in-place",
+        json={"old_en": "Golden Seat / Gold Seat", "new_en": "Golden Core"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Novel A rewritten (both aliases onto the new primary); novel B skipped.
+    assert body["chapters_updated"] == 1
+    assert body["skipped_refining"] == 1
+    assert body["skipped_refining_chapter_ids"] == [ch_b]
+    assert body["skipped_translating"] == 0
+    assert len(body["snapshot_ids"]) == 1
+
+    conn = sqlite3.connect(DB_PATH)
+    texts = dict(conn.execute(
+        "SELECT novel_id, translated_text FROM chapters"
+    ).fetchall())
+    conn.close()
+    assert texts[novel_b] == "A single Golden Seat appeared."  # untouched
+    rewritten = next(t for n, t in texts.items() if n != novel_b)
+    assert rewritten == "The Golden Core shone. A Golden Core shone too."
+
+
 def test_apply_in_place_global_404_for_unknown_entry(client):
     resp = client.post(
         "/api/glossary/global/999999/apply-in-place",

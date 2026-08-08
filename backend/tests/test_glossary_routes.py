@@ -65,13 +65,17 @@ def _seed_novel(title: str = "Glossary Novel") -> int:
         conn.close()
 
 
-def _seed_chapter(novel_id: int, chapter_num: int, original_text: str) -> int:
+def _seed_chapter(
+    novel_id: int, chapter_num: int, original_text: str, *,
+    translated_text: str | None = None, title_en: str | None = None,
+) -> int:
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            "INSERT INTO chapters (novel_id, chapter_num, original_text, status) "
-            "VALUES (?, ?, ?, 'done')",
-            (novel_id, chapter_num, original_text),
+            "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+            "translated_text, title_en, status) "
+            "VALUES (?, ?, ?, ?, ?, 'done')",
+            (novel_id, chapter_num, original_text, translated_text, title_en),
         )
         cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
@@ -457,3 +461,89 @@ def test_retranslate_affected_unknown_entry_404(client):
     resp = client.post("/api/glossary/888888/retranslate-affected")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "entry not found"
+
+
+# ---- Block 1 (2026-08-07): per-novel apply-in-place ----------------------
+
+
+def test_apply_in_place_alias_rename_response_shape(client):
+    """Owning coverage for POST /api/glossary/{id}/apply-in-place, which had
+    no route test at all before Block 1. Pins the alias semantics end to end
+    plus the extended response contract the UI reads."""
+    novel_id = _seed_novel()
+    _seed_chapter(
+        novel_id, 1, "白小纯。",
+        translated_text="Bai Xiaochun walked. Xiaochun smiled.",
+        title_en="Chapter 1: Bai Xiaochun Arrives",
+    )
+    entry = client.post(
+        f"/api/novels/{novel_id}/glossary",
+        json={
+            "term_zh": "白小纯",
+            "term_en": "Bai Xiaochun / Xiaochun",
+            "category": "character",
+        },
+    ).json()
+
+    resp = client.post(
+        f"/api/glossary/{entry['id']}/apply-in-place",
+        json={"old_en": "Bai Xiaochun / Xiaochun", "new_en": "Lord Bai"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Both aliases collapsed onto the new primary, in body and title.
+    assert body["chapters_updated"] == 1
+    assert body["rows_updated_translated"] == 1
+    assert body["rows_updated_titles"] == 1
+    # Extended contract: skips are reported, and a restore point was recorded.
+    assert body["skipped_translating"] == 0
+    assert body["skipped_refining"] == 0
+    assert body["skipped_refining_chapter_ids"] == []
+    assert len(body["snapshot_ids"]) == 1
+
+    conn = sqlite3.connect(DB_PATH)
+    translated, title = conn.execute(
+        "SELECT translated_text, title_en FROM chapters WHERE novel_id = ?",
+        (novel_id,),
+    ).fetchone()
+    conn.close()
+    assert translated == "Lord Bai walked. Lord Bai smiled."
+    assert title == "Chapter 1: Lord Bai Arrives"
+
+
+def test_apply_in_place_reports_refining_skips(client):
+    """A chapter mid-refinement is skipped and named, so the UI can tell the
+    user which chapters to re-apply after the refiner finishes."""
+    novel_id = _seed_novel()
+    _seed_chapter(novel_id, 1, "白小纯。", translated_text="Bai Xiaochun walked.")
+    ch2 = _seed_chapter(
+        novel_id, 2, "白小纯。", translated_text="Bai Xiaochun spoke.",
+    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE chapters SET refinement_status = 'in_progress' WHERE id = ?",
+        (ch2,),
+    )
+    conn.commit()
+    conn.close()
+
+    entry = client.post(
+        f"/api/novels/{novel_id}/glossary",
+        json={"term_zh": "白小纯", "term_en": "Bai Xiaochun", "category": "character"},
+    ).json()
+    body = client.post(
+        f"/api/glossary/{entry['id']}/apply-in-place",
+        json={"old_en": "Bai Xiaochun", "new_en": "Lord Bai"},
+    ).json()
+
+    assert body["chapters_updated"] == 1
+    assert body["skipped_refining"] == 1
+    assert body["skipped_refining_chapter_ids"] == [ch2]
+
+    conn = sqlite3.connect(DB_PATH)
+    kept = conn.execute(
+        "SELECT translated_text FROM chapters WHERE id = ?", (ch2,)
+    ).fetchone()[0]
+    conn.close()
+    assert kept == "Bai Xiaochun spoke."

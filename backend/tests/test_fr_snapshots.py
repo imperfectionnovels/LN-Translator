@@ -48,17 +48,32 @@ def _insert_novel() -> int:
     return novel_id
 
 
-def _insert_chapter(novel_id: int, num: int, translated: str | None) -> int:
+def _insert_chapter(
+    novel_id: int, num: int, translated: str | None, *,
+    title_en: str | None = None,
+) -> int:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.execute(
         "INSERT INTO chapters (novel_id, chapter_num, original_text, "
-        "translated_text, status) VALUES (?, ?, '...', ?, 'done')",
-        (novel_id, num, translated),
+        "translated_text, title_en, status) VALUES (?, ?, '...', ?, ?, 'done')",
+        (novel_id, num, translated, title_en),
     )
     conn.commit()
     chapter_id = cur.lastrowid
     conn.close()
     return chapter_id
+
+
+def _chapter_row(chapter_id: int) -> tuple[str | None, str | None]:
+    """(translated_text, title_en) for one chapter."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        return conn.execute(
+            "SELECT translated_text, title_en FROM chapters WHERE id = ?",
+            (chapter_id,),
+        ).fetchone()
+    finally:
+        conn.close()
 
 
 @pytest.mark.asyncio
@@ -218,6 +233,82 @@ async def test_restore_not_found_returns_404():
         with pytest.raises(HTTPException) as exc_info:
             await restore_snapshot(conn, 9999)
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_restore_applies_title_before_branch():
+    """Block 1: the glossary apply rewrites title_en too, so the snapshot
+    payload can carry a 'title_before' key and the restore must replay it."""
+    from backend.db import open_conn
+    from backend.services.fr_snapshots import record_snapshot, restore_snapshot
+
+    _setup_db()
+    novel_id = _insert_novel()
+    ch1 = _insert_chapter(
+        novel_id, 1, "Blade arrived.", title_en="Chapter 1: The Blade",
+    )
+
+    async with open_conn() as conn:
+        snap_id = await record_snapshot(
+            conn,
+            novel_id=novel_id,
+            commit_token="glossary-tok",
+            find_pattern="Sword",
+            replace_pattern="Blade",
+            target="both",
+            scope="novel",
+            chapters_changed=1,
+            payload={str(ch1): {
+                "translated_before": "Sword arrived.",
+                "title_before": "Chapter 1: The Sword",
+            }},
+        )
+        await conn.commit()
+
+    async with open_conn() as conn:
+        result = await restore_snapshot(conn, snap_id)
+    assert result["chapters_restored"] == 1
+
+    translated, title = _chapter_row(ch1)
+    assert translated == "Sword arrived."
+    assert title == "Chapter 1: The Sword"
+
+
+@pytest.mark.asyncio
+async def test_legacy_payload_without_title_before_leaves_title_untouched():
+    """Payloads written before Block 1 carry no 'title_before' key. Those
+    restores must behave exactly as they always did: body reverts, the title
+    is not touched (and certainly not nulled)."""
+    from backend.db import open_conn
+    from backend.services.fr_snapshots import record_snapshot, restore_snapshot
+
+    _setup_db()
+    novel_id = _insert_novel()
+    ch1 = _insert_chapter(
+        novel_id, 1, "Blade arrived.", title_en="Chapter 1: Untouched",
+    )
+
+    async with open_conn() as conn:
+        snap_id = await record_snapshot(
+            conn,
+            novel_id=novel_id,
+            commit_token="tok-legacy",
+            find_pattern="Sword",
+            replace_pattern="Blade",
+            target="translated_text",
+            scope="novel",
+            chapters_changed=1,
+            payload={str(ch1): {"translated_before": "Sword arrived."}},
+        )
+        await conn.commit()
+
+    async with open_conn() as conn:
+        result = await restore_snapshot(conn, snap_id)
+    assert result["chapters_restored"] == 1
+
+    translated, title = _chapter_row(ch1)
+    assert translated == "Sword arrived."
+    assert title == "Chapter 1: Untouched"
 
 
 @pytest.mark.asyncio

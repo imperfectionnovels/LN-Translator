@@ -25,7 +25,9 @@ Also exposed: `apply_in_place_for_glossary_term` — the integration point
 the glossary PATCH route uses when the user chooses "Apply to existing
 translations" after editing a `term_en`. Same engine, no preview gate (the
 glossary dialog has shown the user what they're doing), word-boundary +
-case-sensitive substitution scoped to the right novel set.
+case-sensitive substitution scoped to the right novel set. That path is
+alias-aware, records a restore snapshot, and reports what it could not
+reach; see its own docstring, which is the authority on those semantics.
 """
 
 from __future__ import annotations
@@ -168,7 +170,17 @@ class CommitResult:
     # Row ids of the find_replace_snapshots rows written during this commit,
     # one per touched novel. Empty when there were no matches (no snapshots
     # written) or when record_snapshot skipped a novel due to payload size.
+    # Callers must treat a SHORT list as "some novels have no undo" rather
+    # than assuming one id per touched novel.
     snapshot_ids: list[int] = field(default_factory=list)
+    # Block 1 (2026-08-07): honest reporting of what the glossary apply could
+    # NOT reach. Only populated by `apply_in_place_for_glossary_term`; the
+    # generic commit_preview path leaves them at zero/empty. See that
+    # function's docstring for the deliberate counting asymmetry between the
+    # two (in-scope status count vs matching-chapters-only).
+    skipped_translating: int = 0
+    skipped_refining: int = 0
+    skipped_refining_chapter_ids: list[int] = field(default_factory=list)
 
 
 # Internal in-memory store. {token: _StoredPreview}. Process-local;
@@ -290,7 +302,8 @@ async def _select_chapters_for_scope(
     """
     base_select = (
         "SELECT c.id, c.novel_id, c.chapter_num, c.title_en, "
-        "c.translated_text, c.refined_text, n.title AS novel_title "
+        "c.translated_text, c.refined_text, c.refinement_status, "
+        "n.title AS novel_title "
         "FROM chapters c JOIN novels n ON n.id = c.novel_id "
         "WHERE c.status = 'done' AND n.deleted_at IS NULL "
     )
@@ -594,26 +607,163 @@ async def commit_preview(
 # ---------------------------------------------------------------------------
 
 
+def _split_aliases(s: str) -> list[str]:
+    """Split a slash-aliased term into its alternative renderings.
+
+    `term_en` / `term_zh` carry alternatives separated by "/" throughout this
+    app; the editor splits them the same way (`zhAliases` in editor-tools.js),
+    so the two ends must agree. Trims each piece, drops empties, dedupes while
+    preserving first-seen order. The FIRST surviving alias is the primary
+    rendering.
+    """
+    out: list[str] = []
+    for piece in (s or "").split("/"):
+        alias = piece.strip()
+        if alias and alias not in out:
+            out.append(alias)
+    return out
+
+
+async def _count_translating_in_scope(
+    conn: aiosqlite.Connection, novel_id: int | None
+) -> int:
+    """In-scope chapters currently mid-translate. Mirrors the scope predicate
+    of `_select_chapters_for_scope` (including the archived-novel exclusion)
+    but on status='translating' instead of 'done'."""
+    sql = (
+        "SELECT COUNT(*) AS n FROM chapters c JOIN novels n ON n.id = c.novel_id "
+        "WHERE c.status = 'translating' AND n.deleted_at IS NULL"
+    )
+    params: list = []
+    if novel_id is not None:
+        sql += " AND c.novel_id = ?"
+        params.append(novel_id)
+    cur = await conn.execute(sql, params)
+    return (await cur.fetchone())["n"]
+
+
 async def apply_in_place_for_glossary_term(
     conn: aiosqlite.Connection,
     old_en: str,
     new_en: str,
     novel_id: int | None,
 ) -> CommitResult:
-    """Substitute every word-boundary occurrence of `old_en` with `new_en`
-    across the relevant chapters. Used by the glossary PATCH route when
-    the user picks "Apply to existing translations" after editing a term.
+    """Rewrite a renamed glossary term across the relevant chapters' bodies
+    and titles. Used by the glossary apply-in-place routes when the user picks
+    "Apply to existing translations" after editing a `term_en`.
 
     Scope: a non-None `novel_id` restricts to that novel; None means every
-    novel (the global-glossary edit case). Always case-sensitive (English
-    proper nouns are meaning-bearing) and word-boundary (so editing
-    "Bai Xiaochun" doesn't disturb "Bai Xiaochuns'").
+    active novel (the global-glossary case). Archived novels are always out of
+    scope. Case-sensitive (English proper nouns are meaning-bearing) and
+    word-boundary anchored (editing "Bai Xiaochun" leaves "Bai Xiaochuns'"
+    alone). Bypasses the preview/token gate: the glossary dialog has already
+    shown the user the impact.
 
-    Bypasses the preview/token gate — the glossary dialog has already
-    shown the user the impact and confirmed. Direct single-step substitution.
+    ALIAS SEMANTICS. Both sides are slash-split into alias lists. Every OLD
+    alias that is absent from the NEW set is a rename target and collapses
+    onto the new PRIMARY (first) alias; aliases that survive into the new set
+    are left alone. Matching runs as ONE compiled longest-first alternation
+    with a CALLABLE replacement, which buys three things a per-alias loop
+    cannot:
+      * overlapping aliases resolve correctly. With "Bai Xiaochun / Xiaochun",
+        a sequential loop that hit the short alias first would turn
+        "Bai Xiaochun" into "Bai <new>"; longest-first consumes the long form
+        as one match.
+      * surviving aliases are protected. They ride the alternation as no-op
+        branches (the callable returns the matched text unchanged), so a short
+        rename target nested inside a surviving alias cannot corrupt it, for
+        example renaming bare "Xiaochun" while "Bai Xiaochun" survives.
+      * the replacement is literal. Passing the new rendering as a regex
+        template made a backslash in `term_en` raise `re.error: bad escape`
+        (a 500 out of the route) and would have read "\\1" as a capture
+        reference.
+
+    NOT IDEMPOTENT in one corner: renaming old "A" to new "A B" rewrites each
+    "A" to "A B", so a second run over the same pair yields "A B B". The UI
+    never re-runs the same pair (it sends the old and new values of a single
+    edit), and detecting the already-applied state is not decidable from text
+    alone. Do not loop this function over the same rename.
+
+    SKIPS, and how the user finds out. Chapters mid-refinement
+    (refinement_status pending/in_progress) are skipped ENTIRELY, body and
+    title: the refiner's commit rematerializes the body from its own merge, so
+    a rewrite landing now would be clobbered on machine rows. Chapters
+    mid-translate are already invisible here (the scope SELECT pins
+    status='done'). Both are counted so the caller can say so out loud instead
+    of silently under-delivering. There is deliberately NO auto re-apply
+    queue: the editing surface already re-flags these chapters, because the
+    consistency glossary tier recomputes live against the current glossary on
+    every request and a PATCH implicitly locks the edited entry, so a skipped
+    chapter surfaces in the EDITOR'S MISSING-LOCKED TIER on its next open.
+    Discovery is automatic; the fix stays a deliberate user action.
+
+    The two skip counts are deliberately asymmetric:
+      * `skipped_refining` counts only chapters the rewrite WOULD have
+        changed. Their text is in hand (they are status='done'), so the id
+        list can be a precise re-apply worklist rather than padded with
+        chapters that never contained the term.
+      * `skipped_translating` is a plain in-scope status count, no matching.
+        A mid-translate row's text is ambiguous: a retranslate still holds the
+        OLD body, but a first translation holds NULL, so a match-filtered
+        count would report zero for exactly the chapters most likely to emerge
+        containing the old rendering. Over-reporting is recoverable; silently
+        under-reporting defeats the purpose of the counter.
+
+    A pending chapter can also be claimed into in_progress in the milliseconds
+    between the scope SELECT and the UPDATE. That race is accepted: the worst
+    case is one rewrite lost on machine rows of one chapter, which the
+    missing-locked tier then re-flags.
+
+    Records one find_replace_snapshots row per touched novel before the
+    commit, so a rename is undoable from the existing Find/Replace History
+    tab. `snapshot_ids` can come back SHORTER than the touched-novel count
+    when a novel's payload exceeds the size cap (existing record_snapshot
+    contract); callers must not promise a restore point on a short list.
+
+    Aliases whose edges are CJK or punctuation silently match nothing, since
+    \\b does not fire between two non-word characters. Pre-existing caveat,
+    now evaluated per alias rather than for the whole string.
     """
-    if not old_en or not new_en or old_en == new_en:
+    old_aliases = _split_aliases(old_en)
+    new_aliases = _split_aliases(new_en)
+    if not old_aliases or not new_aliases:
         return CommitResult(0, 0, 0)
+    # Preserve the size contract the old `_build_pattern` route enforced.
+    if len(old_en.encode("utf-8")) > MAX_PATTERN_BYTES:
+        raise InvalidPatternError(
+            f"find string exceeds {MAX_PATTERN_BYTES}-byte cap"
+        )
+    if len(new_en.encode("utf-8")) > MAX_REPLACEMENT_BYTES:
+        raise InvalidPatternError(
+            f"replacement string exceeds {MAX_REPLACEMENT_BYTES}-byte cap"
+        )
+    new_primary = new_aliases[0]
+    new_set = set(new_aliases)
+    targets = {a for a in old_aliases if a not in new_set}
+    if not targets:
+        # Pure reordering / no-op rename (this also covers old_en == new_en):
+        # nothing to write, so no snapshot either.
+        return CommitResult(0, 0, 0)
+    # Survivors ride the alternation as no-op branches so a nested target
+    # cannot eat into them; longest-first makes the longer form win.
+    alternation = sorted(old_aliases, key=len, reverse=True)
+    pattern = re.compile(
+        r"\b(?:" + "|".join(re.escape(a) for a in alternation) + r")\b"
+    )
+
+    def _replace(m: re.Match) -> str:
+        matched = m.group(0)
+        return new_primary if matched in targets else matched
+
+    def _sub(text: str | None) -> tuple[str | None, bool]:
+        """Returns (new_text, changed). Uniform across the write path and the
+        refining skip count, so a chapter containing only SURVIVING aliases
+        counts as unchanged in both."""
+        if not text:
+            return text, False
+        out = pattern.sub(_replace, text)
+        return out, out != text
+
     query = FindReplaceQuery(
         find=old_en,
         replacement=new_en,
@@ -624,43 +774,44 @@ async def apply_in_place_for_glossary_term(
         case_sensitive=True,
         word_boundary=True,
     )
-    pattern = _build_pattern(query)
     rows = await _select_chapters_for_scope(conn, query)
     rows_translated = 0
     rows_refined = 0
     rows_titles = 0
+    skipped_refining = 0
+    skipped_refining_ids: list[int] = []
     chapters_touched: set[int] = set()
     body_changed_ids: list[int] = []
+    snapshot_payloads: dict[int, dict[str, dict]] = {}
     for r in rows:
         translated = r["translated_text"]
         refined = r["refined_text"]
         title_en = r["title_en"]
-        new_translated = translated
-        new_refined = refined
-        new_title = title_en
-        change_translated = False
-        change_refined = False
-        change_title = False
-        if translated:
-            substituted, n = pattern.subn(new_en, translated)
-            if n > 0:
-                new_translated = substituted
-                change_translated = True
-        if refined:
-            substituted, n = pattern.subn(new_en, refined)
-            if n > 0:
-                new_refined = substituted
-                change_refined = True
-        if title_en:
-            substituted, n = pattern.subn(new_en, title_en)
-            if n > 0:
-                new_title = substituted
-                change_title = True
+        new_translated, change_translated = _sub(translated)
+        new_refined, change_refined = _sub(refined)
+        new_title, change_title = _sub(title_en)
         if not (change_translated or change_refined or change_title):
+            continue
+        if r["refinement_status"] in ("pending", "in_progress"):
+            # Skip the chapter whole: a partial write here would be undone by
+            # the refiner's merge anyway. Counted only because it WOULD have
+            # changed, which keeps the id list a usable worklist.
+            skipped_refining += 1
+            skipped_refining_ids.append(r["id"])
             continue
         chapters_touched.add(r["id"])
         if change_translated or change_refined:
             body_changed_ids.append(r["id"])
+        # Capture the pre-substitution values for restore; only the columns
+        # this run actually changes go in, which keeps the payload small.
+        before: dict[str, str | None] = {}
+        if change_translated:
+            before["translated_before"] = translated
+        if change_refined:
+            before["refined_before"] = refined
+        if change_title:
+            before["title_before"] = title_en
+        snapshot_payloads.setdefault(r["novel_id"], {})[str(r["id"])] = before
         # One UPDATE per chapter; assemble the SET clause from whichever
         # columns actually changed so we don't rewrite untouched bodies.
         set_parts: list[str] = []
@@ -690,10 +841,38 @@ async def apply_in_place_for_glossary_term(
     from backend.services import segments as segments_svc  # noqa: PLC0415
     for cid in body_changed_ids:
         await segments_svc.reproject_from_body(conn, cid)
+
+    # One snapshot per touched novel, inside the same transaction as the
+    # UPDATEs so a crash between them can't leave un-restorable changes. One
+    # token across all novels keeps a multi-novel global apply one logical
+    # undo group, matching commit_preview's per-commit token.
+    from backend.services.fr_snapshots import record_snapshot  # noqa: PLC0415
+    commit_token = f"glossary-{secrets.token_urlsafe(16)}"
+    snapshot_ids: list[int] = []
+    for touched_novel_id, payload in snapshot_payloads.items():
+        sid = await record_snapshot(
+            conn,
+            novel_id=touched_novel_id,
+            commit_token=commit_token,
+            find_pattern=old_en,
+            replace_pattern=new_en,
+            target="both",
+            scope="novel" if novel_id is not None else "all",
+            chapters_changed=len(payload),
+            payload=payload,
+        )
+        if sid is not None:
+            snapshot_ids.append(sid)
+
+    skipped_translating = await _count_translating_in_scope(conn, novel_id)
     await conn.commit()
     return CommitResult(
         chapters_updated=len(chapters_touched),
         rows_updated_translated=rows_translated,
         rows_updated_refined=rows_refined,
         rows_updated_titles=rows_titles,
+        snapshot_ids=snapshot_ids,
+        skipped_translating=skipped_translating,
+        skipped_refining=skipped_refining,
+        skipped_refining_chapter_ids=skipped_refining_ids,
     )

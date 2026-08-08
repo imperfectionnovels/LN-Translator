@@ -562,3 +562,281 @@ async def test_restore_then_apply_reaches_the_novel_again():
         assert preview.total_chapters == 1
         await fr.commit_preview(conn, preview.token)
     assert await _chapter_body(novel_id, 1) == "Lord Bai walked."
+
+
+# ---- Block 1 (2026-08-07): alias-aware, snapshot-recording apply ----------
+
+
+async def _chapter_id(novel_id: int, chapter_num: int) -> int:
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        )
+        return (await cur.fetchone())["id"]
+
+
+async def _chapter_title(novel_id: int, chapter_num: int) -> str | None:
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT title_en FROM chapters WHERE novel_id = ? AND chapter_num = ?",
+            (novel_id, chapter_num),
+        )
+        return (await cur.fetchone())["title_en"]
+
+
+async def _set_title(novel_id: int, chapter_num: int, title: str) -> None:
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET title_en = ? "
+            "WHERE novel_id = ? AND chapter_num = ?",
+            (title, novel_id, chapter_num),
+        )
+        await conn.commit()
+
+
+async def _set_refinement(novel_id: int, chapter_num: int, status: str) -> None:
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = ? "
+            "WHERE novel_id = ? AND chapter_num = ?",
+            (status, novel_id, chapter_num),
+        )
+        await conn.commit()
+
+
+async def _insert_translating_chapter(
+    novel_id: int, chapter_num: int, translated: str
+) -> int:
+    """A chapter mid-flight in the LLM lane. The scope SELECT pins
+    status='done', so this row is invisible to the rewrite; the point of the
+    test is that it is now COUNTED rather than silently dropped."""
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO chapters "
+            "(novel_id, chapter_num, original_text, translated_text, status) "
+            "VALUES (?, ?, ?, ?, 'translating')",
+            (novel_id, chapter_num, "原文", translated),
+        )
+        await conn.commit()
+        return cur.lastrowid
+
+
+def test_split_aliases_trims_dedupes_and_preserves_order():
+    """`term_en` carries slash aliases in this app; the editor splits the same
+    way (zhAliases). The backend split must agree: trim, drop empties, dedupe,
+    keep first-seen order (the first alias is the PRIMARY rendering)."""
+    assert fr._split_aliases("A / B /  A / ") == ["A", "B"]
+    assert fr._split_aliases("Bai Xiaochun/Xiaochun") == ["Bai Xiaochun", "Xiaochun"]
+    assert fr._split_aliases("Solo") == ["Solo"]
+    assert fr._split_aliases("") == []
+    assert fr._split_aliases("   ") == []
+    assert fr._split_aliases(" / / ") == []
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_alias_split_replaces_each_alias_with_new_primary():
+    """Every OLD alias absent from the new set collapses onto the new PRIMARY
+    (first) alias. Before this, only the literal full 'A / B' string was
+    searched for, so a slash-aliased rename rewrote nothing at all."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked. Xiaochun smiled.", None),
+    ])
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun / Xiaochun", new_en="Lord Bai",
+            novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert await _chapter_body(novel_id, 1) == "Lord Bai walked. Lord Bai smiled."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_alias_surviving_in_new_set_is_untouched():
+    """An alias that SURVIVES into the new set is not a rename target, and it
+    also has to be protected from a shorter target nested inside it: rewriting
+    bare 'Xiaochun' must not corrupt the surviving 'Bai Xiaochun' into
+    'Bai Bai Xiaochun'."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Xiaochun bowed. Bai Xiaochun smiled.", None),
+    ])
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn,
+            old_en="Bai Xiaochun / Xiaochun",
+            new_en="Bai Xiaochun / Xiao Chun",
+            novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert await _chapter_body(novel_id, 1) == (
+        "Bai Xiaochun bowed. Bai Xiaochun smiled."
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_longest_alias_wins_no_double_substitution():
+    """Overlapping aliases resolve longest-first inside ONE alternation. A
+    sequential per-alias loop (or a shortest-first alternation) would match
+    the nested 'Xiaochun' first and yield 'Bai Bai Xiao Chun bowed.'"""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun bowed.", None),
+    ])
+    async with open_conn() as conn:
+        await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun / Xiaochun", new_en="Bai Xiao Chun",
+            novel_id=novel_id,
+        )
+    assert await _chapter_body(novel_id, 1) == "Bai Xiao Chun bowed."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_all_aliases_survive_is_noop():
+    """Reordering the aliases (every old alias still present in the new set)
+    renames nothing: no writes, no snapshot row."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "The Golden Core and the Gold Core.", None),
+    ])
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn,
+            old_en="Golden Core / Gold Core",
+            new_en="Gold Core / Golden Core",
+            novel_id=novel_id,
+        )
+    assert result.chapters_updated == 0
+    assert result.snapshot_ids == []
+    assert await _chapter_body(novel_id, 1) == "The Golden Core and the Gold Core."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_backslash_in_new_en_is_literal():
+    """The replacement is a CALLABLE, not a regex template. A backslash in the
+    new rendering used to blow up as `re.error: bad escape` (a 500 out of the
+    route); it must land literally instead."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "The Path opened.", None),
+    ])
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Path", new_en="Path\\Way", novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert await _chapter_body(novel_id, 1) == "The Path\\Way opened."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_records_restorable_snapshot():
+    """The apply now writes a find_replace_snapshots row, so the existing
+    History tab can undo a glossary rename. The snapshot carries title_en too,
+    so the restore reverts everything the apply touched."""
+    from backend.services.fr_snapshots import restore_snapshot
+
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    await _set_title(novel_id, 1, "Chapter 1: Bai Xiaochun Arrives")
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+    assert len(result.snapshot_ids) == 1
+    assert await _chapter_body(novel_id, 1) == "Lord Bai walked."
+    assert await _chapter_title(novel_id, 1) == "Chapter 1: Lord Bai Arrives"
+
+    async with open_conn() as conn:
+        restored = await restore_snapshot(conn, result.snapshot_ids[0])
+    assert restored["chapters_restored"] == 1
+    assert await _chapter_body(novel_id, 1) == "Bai Xiaochun walked."
+    assert await _chapter_title(novel_id, 1) == "Chapter 1: Bai Xiaochun Arrives"
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_skips_refining_chapters_and_reports_ids():
+    """A chapter mid-refinement is skipped ENTIRELY (body and title): the
+    refiner's commit would clobber the rewrite on machine rows anyway. The
+    ids come back so the caller can name them."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+        (2, "Bai Xiaochun spoke.", None),
+        (3, "Bai Xiaochun slept.", None),
+    ])
+    await _set_title(novel_id, 2, "Chapter 2: Bai Xiaochun Speaks")
+    await _set_refinement(novel_id, 2, "pending")
+    await _set_refinement(novel_id, 3, "in_progress")
+    ch2 = await _chapter_id(novel_id, 2)
+    ch3 = await _chapter_id(novel_id, 3)
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert result.skipped_refining == 2
+    assert sorted(result.skipped_refining_chapter_ids) == sorted([ch2, ch3])
+    # Chapter 1 rewritten; the two refining chapters untouched in BOTH columns.
+    assert await _chapter_body(novel_id, 1) == "Lord Bai walked."
+    assert await _chapter_body(novel_id, 2) == "Bai Xiaochun spoke."
+    assert await _chapter_title(novel_id, 2) == "Chapter 2: Bai Xiaochun Speaks"
+    assert await _chapter_body(novel_id, 3) == "Bai Xiaochun slept."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_refining_chapter_without_the_term_is_not_counted():
+    """The skip list is a re-apply worklist, so it holds only chapters that
+    WOULD have changed. A refining chapter with no occurrence is not noise in
+    that list."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+        (2, "The sect deliberated.", None),
+    ])
+    await _set_refinement(novel_id, 2, "in_progress")
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert result.skipped_refining == 0
+    assert result.skipped_refining_chapter_ids == []
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_counts_translating_chapters_as_skipped():
+    """Chapters mid-translate are already invisible to the rewrite (the scope
+    SELECT pins status='done'). Counting them turns a silent gap into an
+    honest 'N skipped, re-apply after they finish'."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    await _insert_translating_chapter(novel_id, 2, "Bai Xiaochun spoke.")
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+    assert result.skipped_translating == 1
+    assert await _chapter_body(novel_id, 2) == "Bai Xiaochun spoke."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_translating_count_excludes_archived_novels():
+    """The skip count honors the same archived-novel exclusion as the rewrite
+    itself, so an archived novel's in-flight chapter is not reported as work
+    the user should come back to."""
+    active_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    archived_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun slept.", None),
+    ])
+    await _insert_translating_chapter(archived_id, 2, "Bai Xiaochun spoke.")
+    await _archive(archived_id)
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=None,
+        )
+    assert result.chapters_updated == 1
+    assert result.skipped_translating == 0
+    assert await _chapter_body(active_id, 1) == "Lord Bai walked."

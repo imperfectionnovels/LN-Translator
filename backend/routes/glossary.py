@@ -175,10 +175,24 @@ class ApplyInPlaceRequest(BaseModel):
 
 
 class ApplyInPlaceResponse(BaseModel):
+    """What the rename actually reached.
+
+    `skipped_*` report chapters the rewrite could NOT touch: ones mid-refine
+    (skipped whole, since the refiner's merge would clobber the rewrite) and
+    ones mid-translate. `snapshot_ids` carries the restore points recorded for
+    this rename, one per touched novel; it can be SHORTER than the touched
+    count when a novel's payload exceeds the snapshot size cap, so treat an
+    empty or short list as "no restore point for those novels" rather than
+    promising an undo."""
+
     chapters_updated: int
     rows_updated_translated: int
     rows_updated_refined: int
     rows_updated_titles: int = 0
+    skipped_translating: int = 0
+    skipped_refining: int = 0
+    skipped_refining_chapter_ids: list[int] = Field(default_factory=list)
+    snapshot_ids: list[int] = Field(default_factory=list)
 
 
 @router.post("/glossary/{entry_id}/apply-in-place")
@@ -189,12 +203,21 @@ async def apply_in_place(
 ) -> ApplyInPlaceResponse:
     """Substitute `old_en` with `new_en` across every chapter of the
     novel that owns this glossary entry. Word-boundary, case-sensitive,
-    NO preview gate — the glossary edit dialog has already shown the
+    NO preview gate: the glossary edit dialog has already shown the
     user what they're doing.
+
+    Both terms are slash-split into aliases: every OLD alias absent from the
+    NEW set collapses onto the new PRIMARY (first) alias, and surviving
+    aliases are left intact. Bodies and chapter titles are both rewritten,
+    and a restore point is recorded so the rename is undoable from the
+    Find/Replace History tab.
 
     The UI copy must make clear: this updates EXACT matching English text
     only. Chapters where the term was translated inconsistently won't all
-    match — for full consistency, use Retranslate instead."""
+    match, so for full consistency use Retranslate instead. Chapters that were
+    mid-translate or mid-refine come back in the `skipped_*` fields; they are
+    re-flagged by the editor's missing-locked tier, so the honest copy is to
+    invite a re-apply once they finish."""
     entry = await glossary_svc.get_one(conn, entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="entry not found")
@@ -214,6 +237,10 @@ async def apply_in_place(
         rows_updated_translated=result.rows_updated_translated,
         rows_updated_refined=result.rows_updated_refined,
         rows_updated_titles=result.rows_updated_titles,
+        skipped_translating=result.skipped_translating,
+        skipped_refining=result.skipped_refining,
+        skipped_refining_chapter_ids=result.skipped_refining_chapter_ids,
+        snapshot_ids=result.snapshot_ids,
     )
 
 

@@ -128,10 +128,20 @@ class GlobalApplyInPlaceRequest(BaseModel):
 
 
 class GlobalApplyInPlaceResponse(BaseModel):
+    """See the per-novel ApplyInPlaceResponse: same shape, library-wide
+    scope. `snapshot_ids` carries one restore point per touched novel and can
+    be shorter than the touched count when a novel's payload exceeds the
+    snapshot size cap, which matters more here because the blast radius is
+    every active novel."""
+
     chapters_updated: int
     rows_updated_translated: int
     rows_updated_refined: int
     rows_updated_titles: int = 0
+    skipped_translating: int = 0
+    skipped_refining: int = 0
+    skipped_refining_chapter_ids: list[int] = Field(default_factory=list)
+    snapshot_ids: list[int] = Field(default_factory=list)
 
 
 @router.post("/glossary/global/{entry_id}/apply-in-place")
@@ -142,8 +152,11 @@ async def apply_in_place_global(
 ) -> GlobalApplyInPlaceResponse:
     """Substitute `old_en` with `new_en` across EVERY novel's chapters.
 
-    Same word-boundary, case-sensitive contract as the per-novel
-    apply-in-place. The blast radius is the full library, so the UI
+    Same word-boundary, case-sensitive, alias-aware contract as the per-novel
+    apply-in-place: both terms slash-split, every OLD alias absent from the
+    NEW set collapses onto the new PRIMARY alias, bodies and chapter titles
+    both rewritten, one restore point recorded per touched novel. Archived
+    novels stay out of scope. The blast radius is the full library, so the UI
     must show the per-novel impact count first (the existing
     /usage endpoint does this)."""
     entry = await global_svc.get_one(conn, entry_id)
@@ -160,6 +173,10 @@ async def apply_in_place_global(
         rows_updated_translated=result.rows_updated_translated,
         rows_updated_refined=result.rows_updated_refined,
         rows_updated_titles=result.rows_updated_titles,
+        skipped_translating=result.skipped_translating,
+        skipped_refining=result.skipped_refining,
+        skipped_refining_chapter_ids=result.skipped_refining_chapter_ids,
+        snapshot_ids=result.snapshot_ids,
     )
 
 

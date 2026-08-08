@@ -75,7 +75,11 @@ async def record_snapshot(
 
     Caller is responsible for building `payload` as a dict mapping
     chapter_id (str) → {"translated_before": str | None, "refined_before":
-    str | None}. We JSON-encode and store as a TEXT column.
+    str | None, "title_before": str | None}. Every key is optional; include
+    only the columns the commit actually changed. "title_before" is written
+    by the glossary apply-in-place path (which rewrites chapter titles as
+    well as bodies) and is absent from every pre-2026-08-07 payload, so the
+    restore treats it as optional. We JSON-encode and store as a TEXT column.
 
     Does NOT commit; callers wrap in their own transaction so the
     snapshot lives inside the same transaction that did the substitution.
@@ -189,6 +193,14 @@ async def restore_snapshot(
             if target in ("refined_text", "both") and "refined_before" in before:
                 sets.append("refined_text = ?")
                 params.append(before["refined_before"])
+            # Title restore is gated on key presence ALONE, not on `target`:
+            # `target` is body vocabulary ('translated_text' | 'refined_text' |
+            # 'both') and titles are a separate column the glossary apply also
+            # rewrites. Legacy payloads carry no "title_before" key, so they
+            # behave exactly as they always did.
+            if "title_before" in before:
+                sets.append("title_en = ?")
+                params.append(before["title_before"])
             if not sets:
                 continue
             params.append(chapter_id)

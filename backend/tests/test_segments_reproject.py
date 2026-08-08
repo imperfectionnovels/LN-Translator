@@ -101,7 +101,7 @@ def _db_rows(chapter_id: int) -> list[sqlite3.Row]:
     try:
         return conn.execute(
             "SELECT id, seg_index, source_hash, target_text, machine_text, "
-            "status, aligned FROM chapter_segments "
+            "status, aligned, origin FROM chapter_segments "
             "WHERE chapter_id = ? ORDER BY seg_index",
             (chapter_id,),
         ).fetchall()
@@ -199,6 +199,31 @@ async def test_glossary_apply_in_place_preserves_statuses():
     rows = _db_rows(chapter_id)
     assert rows[0]["status"] == "confirmed"
     assert rows[0]["target_text"].startswith("Bai Hen walked")
+    _assert_i1(chapter_id)
+
+
+@pytest.mark.asyncio
+async def test_glossary_alias_apply_stamps_reprojected_origin_preserving_status():
+    """Block 1: the alias-aware apply is still a text-authoritative mutation
+    routed through reproject_from_body, so the Phase 3 invariant (status
+    survives) and the B3 provenance rule (a CHANGED human row is stamped
+    origin='reprojected') both hold for an aliased rename. The single-owner
+    rule is intact: no chapter_segments SQL was added to find_replace."""
+    novel_id, chapter_id = await _seed_chapter()
+    await _confirm(novel_id, 0)
+    assert _db_rows(chapter_id)[0]["origin"] != "reprojected"
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun / Xiaochun", new_en="Lord Bai",
+            novel_id=novel_id,
+        )
+    assert result.chapters_updated == 1
+
+    rows = _db_rows(chapter_id)
+    assert rows[0]["status"] == "confirmed"  # Phase 3: status survives
+    assert rows[0]["origin"] == "reprojected"  # B3: provenance does not
+    assert rows[0]["target_text"] == "Lord Bai walked forward through the gate."
     _assert_i1(chapter_id)
 
 
