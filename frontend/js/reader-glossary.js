@@ -6,10 +6,16 @@
  * phrase in either pane (or the aligned bilingual grid), then Add it to the
  * novel glossary or Revise the existing entry without leaving the chapter.
  *
- * Deliberately lean: no term highlighting, no contenteditable, no delete
- * (the glossary page owns destructive ops), no concordance (editor tools).
- * The mini form covers term_zh / term_en / category / locked / notes; the
- * Revise form deep-links to the full entry on the glossary page.
+ * Term highlighting returned 2026-08-07: the marks themselves are built by the
+ * shared term-marks.js and rendered by reader-chapter.js, and THIS module owns
+ * the click, which opens the same Revise mini dialog the selection popover
+ * uses. One save-and-propagate path, whether the user reached it by selecting
+ * a phrase or by clicking an existing mark.
+ *
+ * Still deliberately lean: no contenteditable, no delete (the glossary page
+ * owns destructive ops), no concordance (editor tools). The mini form covers
+ * term_zh / term_en / category / locked / notes; the Revise form deep-links to
+ * the full entry on the glossary page.
  *
  * Load order: after reader-chapter.js (uses its loadChapter + renderers'
  * shared state), before reader-quality.js. Classic scripts, shared scope:
@@ -220,6 +226,33 @@ async function _saveGlossForm(entry) {
     errEl.textContent = (err && err.message) || "Save failed.";
   }
 }
+
+/* ---- Term click: open Revise ----
+ * A rendered .term span carries data-entry-id, so the click resolves the entry
+ * with one lookup instead of scanning the glossary by text. Opens the SAME
+ * mini dialog the selection popover's Revise action uses, which is what keeps
+ * the reader on a single save-and-propagate path. */
+function _openTermFromSpan(e) {
+  const span = e.target.closest(".term");
+  if (!span) return;
+  // Drag wins: while a live selection exists the user is selecting text, not
+  // clicking a term. The selection popover handles that gesture instead.
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+  const id = Number(span.dataset.entryId);
+  if (!Number.isFinite(id)) return;
+  const entry = (glossaryCache || []).find(g => g.id === id);
+  // A span left over from a deleted entry simply does nothing.
+  if (!entry) return;
+  e.preventDefault();
+  _clearSelPop();
+  _openGlossForm({ entry });
+}
+
+bodyEn.addEventListener("click", _openTermFromSpan);
+bodyZh.addEventListener("click", _openTermFromSpan);
+// The aligned grid host is static markup, so one bind survives every re-render.
+document.getElementById("aligned-body")?.addEventListener("click", _openTermFromSpan);
 
 // Util-menu Glossary link (novel-scoped, set once).
 (() => {

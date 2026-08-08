@@ -1,9 +1,12 @@
-/* ---- Chapter body renderers (Phase 6) ----
- * Relocated from the retired reader-glossary.js and simplified: the reader is
- * a pure reading surface, so bodies render WITHOUT glossary-term highlight
- * spans (read mode never showed them after the 2026-05-25 mode split; the
- * CAT editor owns glossary tooling now). glossaryCache stays loaded for the
- * pre-translation cockpit's preflight pane. */
+/* ---- Chapter body renderers ----
+ * Relocated from the retired reader-glossary.js during the CAT pivot. Term
+ * marks returned 2026-08-07: bodies render glossary-term spans again, built by
+ * the shared term-marks.js so the reader and the CAT editor mark terms
+ * identically. This stays a READING surface: a mark is a read-only affordance
+ * (quiet dotted underline, click opens the Revise dialog owned by
+ * reader-glossary.js), never contenteditable. Marks are opt-out per reader via
+ * the type-settings toggle (_termMarksOn); when off, no spans are built at
+ * all. glossaryCache also feeds the pre-translation cockpit's preflight pane. */
 
 // Shared paragraph splitter for both reading panes. Blank lines delimit
 // paragraphs. When a raw has internal newlines but no blank-line separator
@@ -17,13 +20,24 @@ function _splitParas(text) {
   return raw.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
 }
 
-function renderParagraphs(text) {
+function renderParagraphs(text, side = "zh", pattern = null) {
   return _splitParas(text)
-    .map(para => `<p>${escapeHtml(para).replace(/\n/g, "<br>")}</p>`)
+    .map(para => {
+      const inner = pattern
+        ? TermMarks.wrapText(para, side, pattern)
+        : escapeHtml(para);
+      return `<p>${inner.replace(/\n/g, "<br>")}</p>`;
+    })
     .join("");
 }
 
-function renderEnglishMarkdown(text) {
+// Term marks are opt-out, default ON. Read at render time so a toggle flip
+// takes effect on the next renderChapterBody with no reload.
+function _termMarksOn() {
+  return localStorage.getItem("readerTermMarks") !== "0";
+}
+
+function renderEnglishMarkdown(text, pattern = null) {
   // The translator emits Markdown: **bold** around 【】 system blocks,
   // *italics* for first-person present-tense thought / recited text / titles
   // of works. Parse with marked, sanitize with DOMPurify (LLM output is
@@ -31,11 +45,14 @@ function renderEnglishMarkdown(text) {
   // lib failed to load, degrade to the plain escape-and-render path.
   const src = String(text || "");
   if (!window.marked || !window.DOMPurify || !src) {
-    return renderParagraphs(src);
+    return renderParagraphs(src, "en", pattern);
   }
-  return window.DOMPurify.sanitize(
+  const clean = window.DOMPurify.sanitize(
     window.marked.parse(src, { breaks: true, gfm: true })
   );
+  // Term marks go on strictly AFTER DOMPurify: re-sanitizing our own spans
+  // would strip data-entry-id and break the click-to-revise path.
+  return TermMarks.wrapSanitizedHtml(clean, pattern);
 }
 
 /* ---- Bilingual paragraph alignment (restored 2026-08-06) ----
@@ -122,7 +139,7 @@ function _alignParas(srcParas, tgtParas) {
   return groups;
 }
 
-function _buildAlignedRows(zhText, enMarkdown) {
+function _buildAlignedRows(zhText, enMarkdown, pattern = null) {
   const srcParas = _dropLeadingZhHeading(_splitParas(zhText));
   const tgtParas = _splitParas(enMarkdown);
   if (!srcParas.length || !tgtParas.length) return null;
@@ -131,9 +148,14 @@ function _buildAlignedRows(zhText, enMarkdown) {
   let out = "";
   for (const grp of groups) {
     const srcHtml = grp.src
-      .map(idx => `<p>${escapeHtml(srcParas[idx]).replace(/\n/g, "<br>")}</p>`)
+      .map(idx => {
+        const inner = pattern
+          ? TermMarks.wrapText(srcParas[idx], "zh", pattern)
+          : escapeHtml(srcParas[idx]);
+        return `<p>${inner.replace(/\n/g, "<br>")}</p>`;
+      })
       .join("");
-    const tgtHtml = grp.tgt.map(idx => renderEnglishMarkdown(tgtParas[idx])).join("");
+    const tgtHtml = grp.tgt.map(idx => renderEnglishMarkdown(tgtParas[idx], pattern)).join("");
     out += `<div class="prow"><div class="src" lang="zh">${srcHtml}</div><div class="tgt">${tgtHtml}</div></div>`;
   }
   return out;
@@ -1047,8 +1069,11 @@ function renderChapterBody(ch) {
   // via _displayedEnglish's guard — no extra render-path needed.
   applyTranslationSource(ch);
   const enSource = _displayedEnglish(ch);
-  bodyEn.innerHTML = renderEnglishMarkdown(enSource);
-  bodyZh.innerHTML = renderParagraphs(ch.original_text || "");
+  // One pattern per render, threaded into all three body renders (the cache in
+  // term-marks.js keys on the glossaryCache array identity, so this is cheap).
+  const termPattern = _termMarksOn() ? TermMarks.buildPattern(glossaryCache) : null;
+  bodyEn.innerHTML = renderEnglishMarkdown(enSource, termPattern);
+  bodyZh.innerHTML = renderParagraphs(ch.original_text || "", "zh", termPattern);
   // Bilingual row alignment (restored 2026-08-06): in bilingual mode, pair
   // source and translation paragraphs into shared rows so the columns stay
   // in step past merges/splits. Falls back to the independent panes when the
@@ -1056,7 +1081,7 @@ function renderChapterBody(ch) {
   const alignedEl = document.getElementById("aligned-body");
   let alignedOn = false;
   if (dualMode && alignedEl && enSource) {
-    const rows = _buildAlignedRows(ch.original_text || "", enSource);
+    const rows = _buildAlignedRows(ch.original_text || "", enSource, termPattern);
     if (rows) { alignedEl.innerHTML = rows; alignedEl.hidden = false; alignedOn = true; }
   }
   if (!alignedOn && alignedEl) { alignedEl.hidden = true; alignedEl.innerHTML = ""; }
@@ -1425,6 +1450,7 @@ const fsBodyReadout = document.getElementById("fs-body-readout");
 const fsLhReadout = document.getElementById("fs-lh-readout");
 const focusModeToggle = document.getElementById("focus-mode-toggle");
 const pageTurnSelect = document.getElementById("page-turn-select");
+const termMarksToggle = document.getElementById("term-marks-toggle");
 const DEFAULT_FS_BODY = 17;
 const DEFAULT_FS_LH = 1.75;
 function _currentFsBody() {
@@ -1450,6 +1476,7 @@ function openTypeSettings() {
   // (other tab, or initial bootstrap on first paint).
   if (focusModeToggle) focusModeToggle.checked = _isFocusModeOn();
   if (pageTurnSelect) pageTurnSelect.value = _pageTurnPref();
+  if (termMarksToggle) termMarksToggle.checked = _termMarksOn();
   _syncTypeReadouts();
   typeDlg.showModal();
 }
@@ -1460,6 +1487,7 @@ document.getElementById("type-settings-reset")?.addEventListener("click", () => 
   localStorage.removeItem("readerFsLh");
   localStorage.removeItem("readerFocusMode");
   localStorage.removeItem(PAGE_TURN_KEY);
+  localStorage.removeItem("readerTermMarks");
   document.documentElement.style.removeProperty("--fs-body");
   document.documentElement.style.removeProperty("--fs-body-lh");
   document.documentElement.removeAttribute("data-focus-mode");
@@ -1467,7 +1495,10 @@ document.getElementById("type-settings-reset")?.addEventListener("click", () => 
   if (fsLhSlider) fsLhSlider.value = String(DEFAULT_FS_LH);
   if (focusModeToggle) focusModeToggle.checked = false;
   if (pageTurnSelect) pageTurnSelect.value = "shift";
+  // Marks default ON, so the reset repaints the chapter to bring them back.
+  if (termMarksToggle) termMarksToggle.checked = true;
   _syncTypeReadouts();
+  if (lastChapter) renderChapterBody(lastChapter);
 });
 pageTurnSelect?.addEventListener("change", () => {
   localStorage.setItem(PAGE_TURN_KEY, pageTurnSelect.value);
@@ -1499,6 +1530,17 @@ if (focusModeToggle) {
     if (on) document.documentElement.setAttribute("data-focus-mode", "1");
     else document.documentElement.removeAttribute("data-focus-mode");
     localStorage.setItem("readerFocusMode", on ? "1" : "0");
+  });
+}
+
+/* Glossary term marks. Same shape as the focus-mode toggle: localStorage is
+ * the canonical state, read fresh on every render. A flip repaints the current
+ * chapter so the change is visible without a reload. */
+if (termMarksToggle) {
+  termMarksToggle.checked = _termMarksOn();
+  termMarksToggle.addEventListener("change", () => {
+    localStorage.setItem("readerTermMarks", termMarksToggle.checked ? "1" : "0");
+    if (lastChapter) renderChapterBody(lastChapter);
   });
 }
 

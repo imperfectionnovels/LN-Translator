@@ -1234,6 +1234,33 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   margin-bottom: 24px;
 }
 
+/* Glossary term marks (restored 2026-08-07). Quiet by default: a dotted
+ * underline in the term color, with the highlight pill appearing only on
+ * hover. Padding is constant across every state so hovering causes no reflow.
+ * There is no read-mode neutralizer: when the type-settings toggle is off the
+ * spans are never built, so there is nothing to style away. */
+.term {
+  color: var(--term-fg);
+  border-radius: var(--r-sm);
+  padding: 0 2px;
+  cursor: pointer;
+  border-bottom: 1px dotted color-mix(in srgb, var(--term-fg) 50%, transparent);
+  transition: background-color 110ms var(--ease);
+}
+.term.alt {
+  color: var(--term-alt-fg);
+  border-bottom-color: color-mix(in srgb, var(--term-alt-fg) 50%, transparent);
+}
+.term:hover { background: var(--term-bg); }
+.term.alt:hover { background: var(--term-alt-bg); }
+
+/* Brief flash used to point the eye at a term after a jump. */
+.term.term-flash { animation: term-flash 1200ms var(--ease); border-radius: 3px; }
+@keyframes term-flash {
+  0%, 35% { background: var(--accent); color: var(--bg); }
+  100% { background: transparent; }
+}
+
 /* Markdown emitted by the translator */
 .pane-en .body strong { font-weight: 700; }
 .pane-en .body em { font-style: italic; }

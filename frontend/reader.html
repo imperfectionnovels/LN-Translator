@@ -8,7 +8,7 @@
      readerFocusMode + mobile TOC default to avoid a flash). -->
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=5">
-<link rel="stylesheet" href="/static/css/reader.css?v=7">
+<link rel="stylesheet" href="/static/css/reader.css?v=8">
 <!-- marked + DOMPurify vendored locally (frontend/js/vendor) so the XSS
      sanitizer is not a runtime CDN dependency and the bundle stays offline. -->
 <script src="/static/js/vendor/marked.umd.min.js" defer></script>
@@ -252,6 +252,11 @@
         <option value="fade">Soft fade</option>
         <option value="off">Off</option>
       </select>
+      <label for="term-marks-toggle" class="focus-mode-row">
+        <span>Highlight glossary terms</span>
+        <span class="focus-mode-hint muted">Dotted underline; click a term to revise it</span>
+      </label>
+      <input id="term-marks-toggle" type="checkbox">
     </div>
     <div class="dialog-actions">
       <button type="button" class="btn-ghost" id="type-settings-reset">Reset</button>
@@ -382,6 +387,10 @@
      puts it ahead of reader.js (also deferred) without a defer/non-defer
      race with the deferred CDN marked / DOMPurify tags. -->
 <script src="/static/js/utils.js" defer></script>
+<!-- Shared with the CAT editor: builds the glossary-term marks both surfaces
+     render. Self-contained (no page globals, no DOM), which is why it loads
+     ahead of the reader modules and sits outside their boot-safety concat. -->
+<script src="/static/js/term-marks.js?v=1" defer></script>
 <!--
   reader.js was split into ordered modules (2026-06; Phase 6 retired the
   edit-mode modules). They are plain classic scripts sharing one global scope;
@@ -395,8 +404,8 @@
 -->
 <script src="/static/js/reader-core.js?v=2" defer></script>
 <script src="/static/js/reader-toc.js?v=2" defer></script>
-<script src="/static/js/reader-chapter.js?v=3" defer></script>
-<script src="/static/js/reader-glossary.js?v=3" defer></script>
+<script src="/static/js/reader-chapter.js?v=4" defer></script>
+<script src="/static/js/reader-glossary.js?v=4" defer></script>
 <script src="/static/js/reader-quality.js?v=2" defer></script>
 </body>
 </html>
