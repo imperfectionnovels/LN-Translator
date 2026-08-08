@@ -153,6 +153,26 @@
 .seg-src { color: var(--muted); }
 .seg-empty { color: var(--muted); font-style: italic; }
 
+/* Glossary term marks (Block 4, 2026-08-07): same matcher, span shape and
+   --term-* variables as the reader (term-marks.js). No padding here, unlike
+   the reader: at the grid's tighter column widths padding would nudge
+   neighboring characters and cause visible reflow on hover. */
+.term {
+  color: var(--term-fg);
+  border-radius: var(--r-sm);
+  border-bottom: 1px dotted color-mix(in srgb, var(--term-fg) 50%, transparent);
+}
+.term.alt {
+  color: var(--term-alt-fg);
+  border-bottom-color: color-mix(in srgb, var(--term-alt-fg) 50%, transparent);
+}
+.term:hover { background: var(--term-bg); }
+.term.alt:hover { background: var(--term-alt-bg); }
+/* Source terms are clickable (open the revise form); target terms are plain
+   text inside an editable cell, so they keep the text-editing cursor. */
+.seg-src .term { cursor: pointer; transition: background-color 110ms var(--ease); }
+.seg-tgt .term { cursor: text; }
+
 .seg-meta {
   display: flex;
   flex-direction: column;
@@ -389,12 +409,18 @@
   overflow-wrap: break-word;
 }
 .assist-glossary { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Chips became <button> (Block 6, 2026-08-07): reset the browser's native
+   button chrome so the chip keeps looking exactly like the plain chip it
+   replaced, and add the affordance a clickable chip needs. */
 .assist-term {
+  font-family: inherit;
   font-size: 12px;
   padding: 3px 8px;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
 }
 .assist-term-missing {
   color: var(--signal-error, #7a3030);
@@ -622,14 +648,23 @@
   text-transform: none;
   letter-spacing: 0;
 }
+/* Block 6, 2026-08-07: each finding is now a jump button (source) plus a
+   compact revise button (glossary entry), side by side. */
+.missing-locked-item {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 5px;
+}
 .missing-locked-row {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   padding: 5px 8px;
-  margin-bottom: 5px;
+  margin-bottom: 0;
   border: 1px solid color-mix(in srgb, var(--signal-error, #7a3030) 45%, transparent);
   border-radius: var(--r-md);
   background: color-mix(in srgb, var(--signal-error, #7a3030) 7%, transparent);
@@ -640,6 +675,19 @@
   cursor: pointer;
 }
 .missing-locked-row:hover { background: color-mix(in srgb, var(--signal-error, #7a3030) 14%, transparent); }
+.missing-locked-edit {
+  flex: none;
+  width: 26px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.missing-locked-edit:hover { color: var(--fg); border-color: var(--muted); }
 .missing-locked-badge {
   font-size: 10px;
   font-weight: 700;

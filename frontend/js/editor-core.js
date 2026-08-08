@@ -80,6 +80,17 @@ let pollTimer = null;
 let loadSeq = 0; // stale-response guard for fast chapter switches
 let readOnly = true; // true until a loaded chapter proves editable
 
+// Term marks (Block 4, 2026-08-07): the glossary entries rowHtml wraps
+// source/target text against, via the shared term-marks.js module. Assigned
+// by editor-tools.js once loadGlossaryOnce() resolves (boot) and again after
+// every glossary mutation; null until then, so early rows render plain.
+let termMarkEntries = null;
+function termPat() {
+  return termMarkEntries && termMarkEntries.length
+    ? TermMarks.buildPattern(termMarkEntries)
+    : null;
+}
+
 // Active in-cell edit, or null. Captured AT EDIT START so a late blur
 // saves against the right chapter/segment even after navigation:
 // {chapterNum, segIndex, beforeText, chapterRev, beforeHash, chapterId,
@@ -204,17 +215,21 @@ function segByIndex(idx) {
 }
 // One row's markup. Kept separate from renderSegments so a save/confirm
 // re-renders a single row in place instead of blasting the whole grid.
+// Term-mark spans (TermMarks.wrapText) NEVER enter contenteditable: startEdit
+// resets the target cell from seg.target_text (plain data, not this markup),
+// so a live edit always starts from bare text.
 function rowHtml(s) {
   const failed = failedSaves.has(`${currentCh}:${s.index}`);
+  const pat = termPat();
   return `
     <div class="seg-row" data-seg="${s.index}" data-status="${escapeHtml(s.status)}"
          data-aligned="${s.aligned ? "1" : "0"}"
          data-provenance="${escapeHtml(s.origin)}">
       <span class="seg-idx">${s.index + 1}</span>
-      <div class="seg-src" lang="zh">${escapeHtml(s.source_text)}</div>
+      <div class="seg-src" lang="zh">${TermMarks.wrapText(s.source_text, "zh", pat)}</div>
       <div class="seg-tgt">${
         s.target_text
-          ? escapeHtml(s.target_text)
+          ? TermMarks.wrapText(s.target_text, "en", pat)
           : `<span class="seg-empty">(no paragraph assigned)</span>`
       }</div>
       <div class="seg-meta">

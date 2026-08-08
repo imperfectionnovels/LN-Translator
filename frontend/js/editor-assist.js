@@ -176,12 +176,13 @@ function renderGlossaryChips(seg) {
       const present = en && (cur.target_text || "")
         .toLowerCase().includes(en.toLowerCase());
       chips.push(
-        `<span class="assist-term${present ? "" : " assist-term-missing"}"
+        `<button type="button" class="assist-term${present ? "" : " assist-term-missing"}"
+              data-entry-id="${g.id}"
               title="${present
                 ? "Rendered in this paragraph"
                 : "Expected English is missing from this paragraph"}">
           <span lang="zh">${escapeHtml(hit)}</span> → ${escapeHtml(en)}
-        </span>`,
+        </button>`,
       );
     }
     assistGlossaryEl.innerHTML = chips.length
@@ -214,6 +215,21 @@ assistTmEl.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-assist-apply]");
   if (!btn) return;
   applyAssistMatch(Number.parseInt(btn.dataset.assistApply, 10));
+});
+
+// Glossary chips (Block 6, 2026-08-07): click opens the revise form.
+// editor-tools.js (which defines openTermForm) loads AFTER this file, but
+// the click itself happens long after boot, so the guard only ever matters
+// on a race at first paint.
+assistGlossaryEl.addEventListener("click", async (e) => {
+  const chip = e.target.closest(".assist-term");
+  if (!chip) return;
+  if (typeof openTermForm !== "function") return;
+  const id = Number.parseInt(chip.dataset.entryId, 10);
+  if (!Number.isFinite(id)) return;
+  const entries = await loadGlossaryOnce();
+  const entry = (entries || []).find(g => g.id === id);
+  if (entry) openTermForm(entry, null);
 });
 
 // --- "AI suggests" dialog (kept chip on human rows) ---

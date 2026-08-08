@@ -64,6 +64,16 @@ function escapeAttr(s) { return String(s || "").replace(/"/g, "&quot;"); }
 
 /* Confirm dialog lives in frontend/js/utils.js (C7). */
 
+// Chapter numbers in an affected-chapters confirm-dialog meta, as links into
+// the editor (Block 6, 2026-08-07): the glossary page previously had zero
+// route to the editor at all. chapter_num is numeric, so no escaping needed
+// building the href.
+function affectedChapterLinks(affected) {
+  return (affected || [])
+    .map(c => `<a href="/editor?novel=${novelId}&ch=${c.chapter_num}">${c.chapter_num}</a>`)
+    .join(", ");
+}
+
 /* ============================================================
    Apply-choice dialog (Initiative 4). Same behavior as before.
    ============================================================ */
@@ -121,7 +131,7 @@ function openApplyChoiceDialog(entry, oldTermEn) {
           title: `Re-translate ${affected.length} chapter${affected.length === 1 ? "" : "s"}?`,
           body: `<p>Affected chapters use <strong>${escapeHtml(entry.term_zh)}</strong>.</p>
                  <p class="muted">Existing polished text for these chapters will be cleared when they're re-translated.</p>`,
-          meta: `<strong>Chapters:</strong> ${escapeHtml(affected.map(c => c.chapter_num).join(", "))}`,
+          meta: `<strong>Chapters:</strong> ${affectedChapterLinks(affected)}`,
           okText: "Re-translate",
         });
         if (!ok) return;
@@ -804,7 +814,7 @@ async function retranslateOne(id) {
     title: `Re-translate ${affected.length} chapter${affected.length === 1 ? "" : "s"}?`,
     body: `<p>Affected chapters use <strong>${escapeHtml(entry.term_zh)}</strong>.</p>
            <p class="muted">Any existing polished text for these chapters will be cleared when they are re-translated.</p>`,
-    meta: `<strong>Chapters:</strong> ${escapeHtml(affected.map(c => c.chapter_num).join(", "))}`,
+    meta: `<strong>Chapters:</strong> ${affectedChapterLinks(affected)}`,
     okText: "Re-translate",
   });
   if (!ok) return;
@@ -1087,7 +1097,9 @@ async function load() {
     const crumbNovel = document.getElementById("crumb-novel");
     if (crumbNovel) {
       crumbNovel.textContent = novel.title;
-      crumbNovel.href = `/reader?novel=${novelId}&ch=1`;
+      // No &ch=: the reader resumes the last-read chapter itself
+      // (spine.js convention; fix per Block 6, 2026-08-07).
+      crumbNovel.href = `/reader?novel=${novelId}`;
     }
     entries = await api.glossary(novelId);
     headSub.textContent = `${entries.length} terms · ${entries.filter(e => e.locked).length} locked.`;

@@ -18,10 +18,17 @@
 
 // One glossary fetch shared with editor-assist (its `glossaryPromise` is a
 // shared top-level binding). Invalidate after any glossary mutation so the
-// chips and the chapter tiers re-read fresh entries.
+// chips and the chapter tiers re-read fresh entries. Also refreshes the term
+// marks (Block 4): termMarkEntries feeds every rowHtml render, so a stale
+// glossary would keep painting marks for a term that was just renamed or
+// removed.
 function refreshGlossaryCache() {
   glossaryPromise = null;
-  return loadGlossaryOnce();
+  return loadGlossaryOnce().then(entries => {
+    termMarkEntries = entries;
+    if (currentData) for (const s of currentData.segments) updateRow(s);
+    return entries;
+  });
 }
 
 // Re-render every glossary-derived surface after entries changed.
@@ -872,14 +879,19 @@ async function refreshMissingLockedTier() {
   const flags = (res && res.glossary_flags) || [];
   missingLockedEl.innerHTML = flags.length
     ? flags.map(f => `
-        <button type="button" class="missing-locked-row"
-                data-zh="${escapeHtml(f.term_zh)}" data-para="${f.paragraph_index ?? ""}"
-                title="Locked term expected but not found in this chapter's translation. Click to jump to its source.">
-          <span class="missing-locked-badge">term</span>
-          <span lang="zh">${escapeHtml(f.term_zh)}</span>
-          <span class="missing-locked-arrow">→</span>
-          <span>${escapeHtml(f.expected_en)}</span>
-        </button>`).join("")
+        <div class="missing-locked-item">
+          <button type="button" class="missing-locked-row"
+                  data-zh="${escapeHtml(f.term_zh)}" data-para="${f.paragraph_index ?? ""}"
+                  data-term-id="${f.term_id ?? ""}"
+                  title="Locked term expected but not found in this chapter's translation. Click to jump to its source.">
+            <span class="missing-locked-badge">term</span>
+            <span lang="zh">${escapeHtml(f.term_zh)}</span>
+            <span class="missing-locked-arrow">→</span>
+            <span>${escapeHtml(f.expected_en)}</span>
+          </button>
+          <button type="button" class="missing-locked-edit" data-term-id="${f.term_id ?? ""}"
+                  title="Revise this glossary entry" aria-label="Revise this glossary entry">✎</button>
+        </div>`).join("")
     : `<p class="assist-empty">No locked-term misses in this chapter.</p>`;
 }
 
@@ -921,7 +933,17 @@ function renderChapterTermTiers() {
   });
 }
 
-missingLockedEl?.addEventListener("click", (e) => {
+missingLockedEl?.addEventListener("click", async (e) => {
+  const editBtn = e.target.closest(".missing-locked-edit");
+  if (editBtn) {
+    const id = Number.parseInt(editBtn.dataset.termId, 10);
+    if (!Number.isFinite(id)) return;
+    const entries = await loadGlossaryOnce();
+    const entry = (entries || []).find(g => g.id === id);
+    if (entry) openTermForm(entry, null);
+    else showToast("This glossary entry no longer exists.", "info");
+    return;
+  }
   const row = e.target.closest(".missing-locked-row");
   if (!row || !currentData) return;
   // Locate the offending segment client-side by term_zh (slash aliases);
@@ -933,6 +955,7 @@ missingLockedEl?.addEventListener("click", (e) => {
   let target = Number.isFinite(hinted) ? segs.find(s => s.index === hinted) : null;
   if (!hasAlias(target)) target = segs.find(hasAlias) || null;
   if (target) jumpToSegment(currentCh, target.index);
+  else showToast("This term's source text was not found in this chapter's segments.", "info");
 });
 
 chapterTermsEl?.addEventListener("click", async (e) => {
@@ -949,3 +972,29 @@ document.addEventListener("editor:segment-updated", renderChapterTermTiers);
 
 // Boot paint (segments usually land later and repaint via the event).
 renderChapterTermTiers();
+
+/* ---- Term marks (Block 4): source-pane click opens the revise form ---- */
+
+// The boot glossary fetch feeds termMarkEntries as soon as it lands and
+// rewraps whatever rows already rendered without it (rowHtml runs with
+// termMarkEntries still null on the very first paint).
+loadGlossaryOnce().then(entries => {
+  termMarkEntries = entries;
+  if (currentData) for (const s of currentData.segments) updateRow(s);
+});
+
+// Delegated click on the grid: only .seg-src spans are actionable (memoQ /
+// Trados act on the SOURCE side). .seg-tgt terms carry no handler here, so
+// clicking a target cell keeps meaning "start editing" (editor-core's own
+// grid click listener owns that).
+grid.addEventListener("click", async (e) => {
+  const span = e.target.closest(".seg-src .term");
+  if (!span) return;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) return; // drag-select wins
+  const id = Number.parseInt(span.dataset.entryId, 10);
+  if (!Number.isFinite(id)) return;
+  const entries = await loadGlossaryOnce();
+  const entry = (entries || []).find(g => g.id === id);
+  if (entry) openTermForm(entry, null);
+});

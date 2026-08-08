@@ -6,7 +6,7 @@
 <title>Editor · LN Translator</title>
 <script src="/static/js/boot.js"></script>
 <link rel="stylesheet" href="/static/css/base.css?v=5">
-<link rel="stylesheet" href="/static/css/editor.css?v=5">
+<link rel="stylesheet" href="/static/css/editor.css?v=6">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -323,12 +323,16 @@
 <script src="/static/js/command-palette.js"></script>
 <script src="/static/js/queue-panel.js"></script>
 <script src="/static/js/utils.js" defer></script>
+<!-- Self-contained shared module (Block 4, 2026-08-07): no page globals, so
+     it loads before the editor modules that consume it. See its own header
+     comment for why it sits outside the reader boot-safety concat. -->
+<script src="/static/js/term-marks.js?v=1" defer></script>
 <!-- Editor modules: ordered plain script tags (reader-*.js convention).
      Core first owns the shared state; assist reads it and listens for the
      editor:* CustomEvents core dispatches; tools last adds the util menu
      dialogs, glossary popover + terms tiers (Phase 6 relocations). -->
-<script src="/static/js/editor-core.js?v=2" defer></script>
-<script src="/static/js/editor-assist.js" defer></script>
-<script src="/static/js/editor-tools.js?v=2" defer></script>
+<script src="/static/js/editor-core.js?v=3" defer></script>
+<script src="/static/js/editor-assist.js?v=2" defer></script>
+<script src="/static/js/editor-tools.js?v=3" defer></script>
 </body>
 </html>
