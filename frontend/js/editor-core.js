@@ -1004,6 +1004,7 @@ function gotoChapter(n) {
   if (editing) finishEdit({}); // flush; the save is anchored to its chapter
   currentCh = n;
   focusSeg = null;
+  pendingPara = null; // a para handoff is anchored to the chapter it arrived for; navigating away drops it
   syncUrl();
   saveBreadcrumb();
   updateBar();
