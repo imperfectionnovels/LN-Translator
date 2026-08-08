@@ -35,7 +35,35 @@ async def _apply_conn_pragmas(conn: aiosqlite.Connection) -> None:
     await conn.execute("PRAGMA busy_timeout = 5000")
 
 
-SCHEMA = """
+# ---------------------------------------------------------------------------
+# Shared CREATE TABLE templates.
+#
+# `novels`, `chapters` and `style_edits` are the three tables the one-shot
+# humanizer-era rebuild (`_drop_dead_columns`) recreates from scratch. Their
+# DDL lives here as named templates and is rendered into BOTH the SCHEMA
+# executescript (as the real table) and the rebuild (as the `__new` scratch
+# table).
+#
+# Why templates instead of two copies: the rebuild used to carry its own
+# hand-written DDL, frozen at the 2026-05-26 column set. `init_db` runs the
+# additive migrations BEFORE the rebuild, so on any DB that took the rebuild
+# path the tables came back WITHOUT every column added after that date
+# (chapters.free_draft_*, prompt_config_snapshot, fixup_audit, segments_*,
+# novels.author / cover_image_path / deleted_at / disabled_observers, ...).
+# One shared definition makes the rebuild column-complete BY CONSTRUCTION: a
+# column added below lands in both paths and the rebuild can never rot again.
+#
+# `_TABLE_NAME_TOKEN` is substituted with a plain str.replace rather than
+# str.format because the DDL contains a `'{}'` default literal.
+_TABLE_NAME_TOKEN = "__TABLE__"
+
+
+def _render_table_ddl(template: str, table_name: str) -> str:
+    """Render one of the shared CREATE TABLE templates for a concrete name."""
+    return template.replace(_TABLE_NAME_TOKEN, table_name)
+
+
+_SCHEMA_PROVIDERS = """
 -- User-configurable AI provider definitions. Each row describes a provider
 -- the user can pick as a per-novel translator or refinement agent. API keys
 -- are NOT stored here; secret_ref names the OS keychain entry (preferred)
@@ -59,8 +87,10 @@ CREATE TABLE IF NOT EXISTS providers (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_default
     ON providers(is_default) WHERE is_default = 1;
+"""
 
-CREATE TABLE IF NOT EXISTS novels (
+_NOVELS_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS __TABLE__ (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     source_type TEXT NOT NULL CHECK (source_type IN ('paste', 'txt', 'url', 'epub', 'docx', 'html')),
@@ -121,8 +151,10 @@ CREATE TABLE IF NOT EXISTS novels (
     last_read_chapter_num INTEGER,
     last_read_at TEXT
 );
+"""
 
-CREATE TABLE IF NOT EXISTS chapters (
+_CHAPTERS_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS __TABLE__ (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
     chapter_num INTEGER NOT NULL,
@@ -205,6 +237,13 @@ CREATE TABLE IF NOT EXISTS chapters (
     -- without re-deriving from novels.translator_provider_id (which can
     -- change after the chapter was translated).
     translated_by_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+    -- Per-chapter refiner provenance (Design v2 Phase B): which provider
+    -- produced `refined_text`, so the reader can render a "refined by X" chip.
+    -- NULL on chapters that never refined. Declared here as well as in
+    -- _ADDITIVE_MIGRATIONS: it used to exist ONLY as an additive ALTER, which
+    -- meant the humanizer-era rebuild (built from SCHEMA) dropped it and the
+    -- next boot re-added it empty.
+    refined_by_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
     -- 2026-05-28 prompt-assembly provenance. JSON blob written on every
     -- successful translate commit and extended on every refine commit:
     -- which prompt blocks shipped, which env flags were set, which
@@ -236,7 +275,9 @@ CREATE TABLE IF NOT EXISTS chapters (
     segments_rev TEXT,
     UNIQUE (novel_id, chapter_num)
 );
+"""
 
+_SCHEMA_CHAPTER_INDEXES_AND_GLOSSARY = """
 CREATE INDEX IF NOT EXISTS idx_chapters_novel ON chapters(novel_id, chapter_num);
 CREATE INDEX IF NOT EXISTS idx_chapters_translate_queued
     ON chapters(novel_id, chapter_num) WHERE translate_queued = 1;
@@ -271,8 +312,10 @@ CREATE TABLE IF NOT EXISTS glossary_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_glossary_novel ON glossary_entries(novel_id);
+"""
 
-CREATE TABLE IF NOT EXISTS style_edits (
+_STYLE_EDITS_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS __TABLE__ (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
     chapter_id INTEGER REFERENCES chapters(id) ON DELETE SET NULL,
@@ -280,6 +323,9 @@ CREATE TABLE IF NOT EXISTS style_edits (
     after_text TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+"""
+
+_SCHEMA_REMAINDER = """
 CREATE INDEX IF NOT EXISTS idx_style_edits_novel ON style_edits(novel_id, id);
 
 -- Ground-truth rewrites the user has approved as the reference rendering of a
@@ -489,6 +535,19 @@ CREATE INDEX IF NOT EXISTS idx_chapter_segments_novel_hash
 CREATE INDEX IF NOT EXISTS idx_chapter_segments_nonmachine
     ON chapter_segments(novel_id, status) WHERE status != 'machine';
 """
+
+# The full first-boot schema script, assembled from the literal sections plus
+# the three shared table templates rendered for their real table names. Kept
+# as one plain string so `conn.executescript(SCHEMA)` (used across the test
+# suite too) keeps working unchanged.
+SCHEMA = (
+    _SCHEMA_PROVIDERS
+    + _render_table_ddl(_NOVELS_TABLE_DDL, "novels")
+    + _render_table_ddl(_CHAPTERS_TABLE_DDL, "chapters")
+    + _SCHEMA_CHAPTER_INDEXES_AND_GLOSSARY
+    + _render_table_ddl(_STYLE_EDITS_TABLE_DDL, "style_edits")
+    + _SCHEMA_REMAINDER
+)
 
 
 # Idempotent additive migrations. Each ALTER raises OperationalError if the
@@ -962,22 +1021,58 @@ END;
 """
 
 
-async def _chapter_columns(conn: aiosqlite.Connection) -> set[str]:
-    cur = await conn.execute("PRAGMA table_info(chapters)")
+async def _table_column_names(conn: aiosqlite.Connection, table: str) -> list[str]:
+    """Column names of `table`, in declaration order (empty if it's absent)."""
+    cur = await conn.execute(f"PRAGMA table_info({table})")
     rows = await cur.fetchall()
-    return {r[1] for r in rows}
+    return [r[1] for r in rows]
+
+
+async def _chapter_columns(conn: aiosqlite.Connection) -> set[str]:
+    return set(await _table_column_names(conn, "chapters"))
 
 
 async def _novel_columns(conn: aiosqlite.Connection) -> set[str]:
-    cur = await conn.execute("PRAGMA table_info(novels)")
-    rows = await cur.fetchall()
-    return {r[1] for r in rows}
+    return set(await _table_column_names(conn, "novels"))
 
 
 async def _style_edits_columns(conn: aiosqlite.Connection) -> set[str]:
-    cur = await conn.execute("PRAGMA table_info(style_edits)")
-    rows = await cur.fetchall()
-    return {r[1] for r in rows}
+    return set(await _table_column_names(conn, "style_edits"))
+
+
+async def _copy_shared_columns(
+    conn: aiosqlite.Connection, src: str, dst: str
+) -> None:
+    """Copy every row of `src` into `dst`, over the columns they share.
+
+    This is what keeps a table rebuild column-complete without a hand-written
+    list. Columns only the OLD table has (the dead humanizer / review ones)
+    are left behind; columns only the NEW table has (anything added to SCHEMA
+    since the source DB was last upgraded) fall back to their DDL default. A
+    future column therefore needs no edit here.
+
+    A destination column declared NOT NULL WITH a DEFAULT is COALESCEd onto
+    that default: an older DB can hold NULL where the current DDL forbids it
+    (chapters.refinement_status and chapters.prompt_config_snapshot are the
+    live cases), and PRAGMA hands back the default as ready-to-use SQL text.
+    NOT NULL columns without a default (original_text, title, ...) are copied
+    as-is; a NULL there was already invalid in the source table."""
+    src_cols = await _table_column_names(conn, src)
+    cur = await conn.execute(f"PRAGMA table_info({dst})")
+    # {name: (notnull, default_sql)} for the destination table.
+    dst_info = {r[1]: (r[3], r[4]) for r in await cur.fetchall()}
+    shared = [c for c in src_cols if c in dst_info]
+    select_exprs = []
+    for name in shared:
+        notnull, default_sql = dst_info[name]
+        if notnull and default_sql is not None:
+            select_exprs.append(f"COALESCE({name}, {default_sql})")
+        else:
+            select_exprs.append(name)
+    await conn.execute(
+        f"INSERT INTO {dst} ({', '.join(shared)}) "
+        f"SELECT {', '.join(select_exprs)} FROM {src}"
+    )
 
 
 async def _migrate_humanized_into_translated(conn: aiosqlite.Connection) -> int:
@@ -1011,6 +1106,18 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
     triggers leaves the index in a state that corrupts the next UPDATE
     ('database disk image is malformed'). When the legacy column exists
     but holds no data, just drop the column and skip the rebuild.
+
+    Column completeness (2026-08-08 fix): each `__new` table is created from
+    the SAME template SCHEMA uses and filled with the old/new column
+    INTERSECTION, so the rebuild carries every current column by construction.
+    It previously carried a hand-copied DDL frozen at the 2026-05-26 column
+    set, and since init_db runs the additive migrations BEFORE this function,
+    every DB that reached the rebuild lost the columns added after that date
+    (chapters.free_draft_*, prompt_config_snapshot, fixup_audit, segments_*,
+    refined_by_provider_id; novels.author / cover_image_path / deleted_at /
+    disabled_observers / ...): the rest of that boot 500s on "no such column",
+    and on the DROP-COLUMN fall-through above the DATA in them is gone for
+    good. Pinned by test_drop_dead_columns_rebuild.py.
     """
     cols = await _chapter_columns(conn)
     if "humanized_text" not in cols:
@@ -1038,100 +1145,16 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
     try:
         await conn.execute("BEGIN")
         # ----- chapters rebuild -----
-        # Cost columns (input_tokens / output_tokens / cached_input_tokens /
-        # cost_usd) are part of the live schema; without them here, a rebuild
-        # leaves the chapters table without the columns the live SQL expects,
-        # and subsequent SELECTs fail with "no such column: cost_usd". Same
-        # defense-in-depth as refinement_status below.
-        await conn.execute(
-            """
-            CREATE TABLE chapters__new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
-                chapter_num INTEGER NOT NULL,
-                title_zh TEXT,
-                title_en TEXT,
-                original_text TEXT NOT NULL,
-                translated_text TEXT,
-                status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'translating', 'done', 'error')),
-                error_msg TEXT,
-                translate_queued INTEGER NOT NULL DEFAULT 0,
-                -- Audit 3.2 (2026-06-11): move-to-front priority preserved
-                -- through the dead-column rebuild so existing queued rows
-                -- keep their priority after a first-boot schema migration.
-                queue_priority INTEGER NOT NULL DEFAULT 0,
-                force_retranslate INTEGER NOT NULL DEFAULT 0,
-                translation_degraded INTEGER NOT NULL DEFAULT 0,
-                glossary_merge_error TEXT,
-                refinement_status TEXT NOT NULL DEFAULT 'none'
-                    CHECK (refinement_status IN ('none', 'pending', 'in_progress', 'done', 'error')),
-                refined_text TEXT,
-                refinement_error TEXT,
-                refined_at TEXT,
-                input_tokens INTEGER,
-                output_tokens INTEGER,
-                cached_input_tokens INTEGER,
-                cost_usd REAL,
-                translated_at TEXT,
-                import_source_url TEXT,
-                import_fetched_at TEXT,
-                UNIQUE (novel_id, chapter_num)
-            )
-            """
-        )
-        # The refinement_* / cost / translated_at columns were added by the
-        # additive-migration batch that ran moments ago, but defense-in-depth:
-        # re-snapshot the actual column set right now and carry forward
-        # whichever subset exists. Same belt-and-suspenders pattern as the
-        # novels rebuild's n_cols_now recheck below.
-        cols_now = await _chapter_columns(conn)
-        has_refinement = "refinement_status" in cols_now
-        has_cost = "cost_usd" in cols_now
-        has_translated_at = "translated_at" in cols_now
-        # Audit 3.2: carry queue_priority through the rebuild so an in-flight
-        # prioritized chapter keeps its priority. Default 0 when absent on very
-        # old pre-migration rows (the additive migration ran moments ago so the
-        # column exists on every normally-initialised DB).
-        has_queue_priority = "queue_priority" in cols_now
-        # Cost + translated_at SELECT/INSERT fragments -- empty when the
-        # source rows don't have the columns yet (so the INSERT defaults
-        # them to NULL).
-        cost_select = (
-            ", input_tokens, output_tokens, cached_input_tokens, cost_usd"
-            if has_cost else ", NULL, NULL, NULL, NULL"
-        )
-        cost_cols = ", input_tokens, output_tokens, cached_input_tokens, cost_usd"
-        ta_select = ", translated_at" if has_translated_at else ", NULL"
-        ta_cols = ", translated_at"
-        qp_select = ", queue_priority" if has_queue_priority else ", 0"
-        qp_cols = ", queue_priority"
-        if has_refinement:
-            await conn.execute(
-                "INSERT INTO chapters__new "
-                "(id, novel_id, chapter_num, title_zh, title_en, original_text, "
-                "translated_text, status, error_msg, translate_queued, "
-                "force_retranslate, translation_degraded, glossary_merge_error, "
-                "refinement_status, refined_text, refinement_error, refined_at"
-                + cost_cols + ta_cols + qp_cols + ") "
-                "SELECT id, novel_id, chapter_num, title_zh, title_en, original_text, "
-                "translated_text, status, error_msg, translate_queued, "
-                "force_retranslate, translation_degraded, glossary_merge_error, "
-                "COALESCE(refinement_status, 'none'), refined_text, refinement_error, refined_at"
-                + cost_select + ta_select + qp_select + " FROM chapters"
-            )
-        else:
-            await conn.execute(
-                "INSERT INTO chapters__new "
-                "(id, novel_id, chapter_num, title_zh, title_en, original_text, "
-                "translated_text, status, error_msg, translate_queued, "
-                "force_retranslate, translation_degraded, glossary_merge_error"
-                + cost_cols + ta_cols + qp_cols + ") "
-                "SELECT id, novel_id, chapter_num, title_zh, title_en, original_text, "
-                "translated_text, status, error_msg, translate_queued, "
-                "force_retranslate, translation_degraded, glossary_merge_error"
-                + cost_select + ta_select + qp_select + " FROM chapters"
-            )
+        # The scratch table is created from the SHARED template that SCHEMA
+        # itself uses, so it always carries the CURRENT column set. Copying the
+        # old/new column intersection then drops exactly the dead columns and
+        # nothing else. Do NOT re-introduce a hand-written DDL or a hand-listed
+        # column set here: the previous frozen copy silently deleted every
+        # column added after 2026-05-26 (free_draft_*, prompt_config_snapshot,
+        # fixup_audit, segments_*) from any DB that took this path.
+        await conn.execute("DROP TABLE IF EXISTS chapters__new")
+        await conn.execute(_render_table_ddl(_CHAPTERS_TABLE_DDL, "chapters__new"))
+        await _copy_shared_columns(conn, "chapters", "chapters__new")
         # Drop FTS triggers first — they reference the old columns and would
         # error during DROP TABLE chapters.
         await conn.execute("DROP TRIGGER IF EXISTS chapter_fts_ai")
@@ -1162,93 +1185,36 @@ async def _drop_dead_columns(conn: aiosqlite.Connection) -> None:
             "ON chapters(novel_id, chapter_num) WHERE translate_queued = 1"
         )
 
+        # The import-pending partial index lives in _ADDITIVE_MIGRATIONS (its
+        # WHERE clause needs columns the base SCHEMA table predates), so the
+        # DROP TABLE above took it with them. Recreate it here rather than
+        # leaving the resume query unindexed until the next boot.
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chapters_import_pending "
+            "ON chapters(novel_id) "
+            "WHERE import_fetched_at IS NULL AND import_source_url IS NOT NULL"
+        )
+
         # ----- novels rebuild (drop humanizer_*) -----
+        # Same shared-template + intersection-copy contract as chapters above:
+        # every current novels column (author, cover_image_path, deleted_at,
+        # disabled_observers, ...) survives because the DDL is the SCHEMA one.
         n_cols = await _novel_columns(conn)
         if "humanizer_tone" in n_cols:
-            await conn.execute(
-                """
-                CREATE TABLE novels__new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    source_type TEXT NOT NULL CHECK (source_type IN ('paste', 'txt', 'url', 'epub', 'docx', 'html')),
-                    source_url TEXT,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    style_note TEXT,
-                    source_language TEXT NOT NULL DEFAULT 'zh',
-                    genre TEXT,
-                    custom_style_brief TEXT,
-                    translator_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
-                    refinement_provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
-                    import_status TEXT,
-                    last_read_chapter_num INTEGER,
-                    last_read_at TEXT
-                )
-                """
-            )
-            # style_note / source_language / genre / custom_style_brief /
-            # translator_provider_id / refinement_provider_id may or may not
-            # exist on the old novels table at this point. The additive
-            # migrations above add them, but if any haven't landed yet
-            # (defense-in-depth) handle the subset. n_cols was snapshotted
-            # before the ALTERs in init_db ran; re-check now.
-            n_cols_now = await _novel_columns(conn)
-            select_cols = ["id", "title", "source_type", "source_url", "created_at"]
-            insert_cols = list(select_cols)
-            # style_note from the 2026-05-22 single-pass restructure.
-            if "style_note" in n_cols_now:
-                select_cols.append("style_note")
-                insert_cols.append("style_note")
-            # 2026-05-23 per-novel provider + genre fields. Carry whichever
-            # subset is currently present; the schema columns default to NULL
-            # (or 'zh' for source_language) so omitted ones get sane values.
-            for col in (
-                "source_language",
-                "genre",
-                "custom_style_brief",
-                "translator_provider_id",
-                "refinement_provider_id",
-                # 2026-05-26 resumable imports: carry through if the
-                # additive migration already added it (it runs before
-                # this rebuild). Humanizer-era DBs without the column
-                # land here as NULL → treated as "atomic-create / done"
-                # implicitly, same as legacy novels.
-                "import_status",
-                # 2026-05-28 durable reading position: carry through so a
-                # one-time humanizer-era rebuild doesn't reset the reader's
-                # resume point. Absent on humanizer-era DBs → NULL.
-                "last_read_chapter_num",
-                "last_read_at",
-            ):
-                if col in n_cols_now:
-                    select_cols.append(col)
-                    insert_cols.append(col)
-            insert_sql = (
-                f"INSERT INTO novels__new ({', '.join(insert_cols)}) "
-                f"SELECT {', '.join(select_cols)} FROM novels"
-            )
-            await conn.execute(insert_sql)
+            await conn.execute("DROP TABLE IF EXISTS novels__new")
+            await conn.execute(_render_table_ddl(_NOVELS_TABLE_DDL, "novels__new"))
+            await _copy_shared_columns(conn, "novels", "novels__new")
             await conn.execute("DROP TABLE novels")
             await conn.execute("ALTER TABLE novels__new RENAME TO novels")
 
         # ----- style_edits rebuild (drop variant) -----
         s_cols = await _style_edits_columns(conn)
         if "variant" in s_cols:
+            await conn.execute("DROP TABLE IF EXISTS style_edits__new")
             await conn.execute(
-                """
-                CREATE TABLE style_edits__new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
-                    chapter_id INTEGER REFERENCES chapters(id) ON DELETE SET NULL,
-                    before_text TEXT NOT NULL,
-                    after_text TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                )
-                """
+                _render_table_ddl(_STYLE_EDITS_TABLE_DDL, "style_edits__new")
             )
-            await conn.execute(
-                "INSERT INTO style_edits__new (id, novel_id, chapter_id, before_text, after_text, created_at) "
-                "SELECT id, novel_id, chapter_id, before_text, after_text, created_at FROM style_edits"
-            )
+            await _copy_shared_columns(conn, "style_edits", "style_edits__new")
             await conn.execute("DROP TABLE style_edits")
             await conn.execute("ALTER TABLE style_edits__new RENAME TO style_edits")
             await conn.execute(
