@@ -214,7 +214,7 @@ def load_refinement(key: str) -> str | None:
         _STATS["refiner_misses"] += 1
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         _STATS["refiner_hits"] += 1
         return text
     except Exception as e:
@@ -235,7 +235,9 @@ def _write_atomic(path: Path, content: str) -> None:
             prefix=path.stem + ".", suffix=".tmp", dir=path.parent
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            # newline="" prevents Windows CRLF doubling for raw-text payloads;
+            # see docs/gotchas.md.
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             os.replace(tmp_path, path)
         except BaseException:

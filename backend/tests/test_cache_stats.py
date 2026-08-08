@@ -71,3 +71,29 @@ def test_reset_stats_clears_counters(tmp_path, monkeypatch):
     assert llm_cache.get_stats()["translator"]["misses"] == 1
     llm_cache.reset_stats()
     assert llm_cache.get_stats()["translator"]["misses"] == 0
+
+
+def test_store_refinement_preserves_crlf(tmp_path, monkeypatch):
+    """CRLF line endings in refinement text must round-trip identically.
+    On Windows, text-mode I/O without newline='' translates \r\n to \r\r\n
+    on write, then back to \n\n on read, corrupting the stored text. This
+    test verifies that store_refinement and load_refinement preserve the
+    exact bytes including \r\n and \r\n\r\n."""
+    monkeypatch.setenv("LLM_CACHE_ROOT", str(tmp_path))
+    key = "crlf-test-key"
+
+    # Test content with CRLF within a paragraph and between paragraphs
+    content = "First line\r\nstill first para.\r\n\r\nSecond paragraph here."
+
+    # Store and load
+    llm_cache.store_refinement(key, content)
+    loaded = llm_cache.load_refinement(key)
+
+    # Must be byte-identical
+    assert loaded == content
+    assert loaded is not None
+    assert "\r\r\n" not in loaded  # No CRLF doubling
+    assert "\n\n" not in loaded  # No doubled newlines
+    s = llm_cache.get_stats()
+    assert s["refiner"]["hits"] == 1
+    assert s["refiner"]["misses"] == 0
