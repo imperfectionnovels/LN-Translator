@@ -17,7 +17,10 @@ The payoff contracts:
   - the refiner merge keeps human rows and materializes refined_text from
     the merged set; retry-refinement no longer nulls refined_text; stale
     refinement-stage drift observations are replaced on a clean
-    re-refinement.
+    re-refinement;
+  - editor writes are refused for the duration of the refine window (the
+    same mid-transition window get_segments refuses to rebuild in), while
+    work confirmed before it still rides the merge verbatim.
 """
 
 from __future__ import annotations
@@ -933,24 +936,48 @@ async def test_prefill_survives_refinement(monkeypatch):
     assert _paras(ch["refined_text"])[1] == canon
 
 
-async def test_refine_interleave_editor_write_survives(monkeypatch):
-    """An editor write that lands WHILE the refiner call is in flight (the
-    worker holds no write transaction across the LLM await) must survive
-    the refine merge: the merge re-reads human rows inside its commit
-    transaction."""
+async def test_refine_window_refuses_writes_and_keeps_confirmed_work(
+    monkeypatch,
+):
+    """An editor write attempted WHILE the refiner call is in flight is
+    REFUSED (409 'chapter_translating'), the same window get_segments
+    refuses to rebuild in. The worker holds no write transaction across the
+    LLM await, so a save whose read straddles the refine commit would
+    rematerialize the body from a stale variant and then be discarded by the
+    next text-authoritative rebuild: a 200 the paragraph does not survive.
+    Refusing it keeps the failure honest and visible.
+
+    Work confirmed BEFORE the window still rides the merge verbatim (the
+    merge re-reads human rows inside its commit transaction), which is the
+    durability payoff the window guard must not cost."""
     await _seed_translator_provider()
     refiner_id = await _seed_refiner_provider()
     novel_id, (chapter_id,) = await _seed_novel(
         [_SRC], refinement_provider_id=refiner_id
     )
     _stub_translate(monkeypatch, "one")
+    _stub_refine(monkeypatch, "r1")
     await _translate(novel_id, chapter_id)
+    await _refine(novel_id, chapter_id)
 
-    mid_edit = "MID WINDOW EDITOR WRITE SURVIVES."
+    confirmed = "CONFIRMED BEFORE THE REFINE WINDOW."
+    await _segment_action(novel_id, 1, 1, "save_and_confirm", confirmed)
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET refinement_status = 'pending' WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+
+    refused: list[str] = []
 
     async def _refine_with_interleave(draft, provider, glossary=None,
                                       expected_paragraph_count=None, **kw):
-        await _segment_action(novel_id, 1, 1, "save_and_confirm", mid_edit)
+        with pytest.raises(segments_svc.SegmentStaleError) as excinfo:
+            await _segment_action(
+                novel_id, 1, 1, "save", "MID WINDOW EDITOR WRITE."
+            )
+        refused.append(excinfo.value.kind)
         n = len([p for p in draft.split("\n\n") if p.strip()])
         return "\n\n".join(
             f"Refined ix paragraph number {i + 1} of the polished body."
@@ -961,12 +988,15 @@ async def test_refine_interleave_editor_write_survives(monkeypatch):
     )
     await _refine(novel_id, chapter_id)
 
+    assert refused == ["chapter_translating"]
     ch = await _chapter(chapter_id)
     assert ch["refinement_status"] == "done"
-    assert _paras(ch["refined_text"])[1] == mid_edit
+    # The refused write left no trace; the pre-window confirmation rode the
+    # merge verbatim.
+    assert _paras(ch["refined_text"])[1] == confirmed
     rows = await _rows(chapter_id)
     assert rows[1]["status"] == "confirmed"
-    assert rows[1]["target_text"] == mid_edit
+    assert rows[1]["target_text"] == confirmed
     joined = "\n\n".join(r["target_text"] for r in rows if r["target_text"])
     assert joined == ch["refined_text"]
 

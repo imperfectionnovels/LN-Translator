@@ -312,8 +312,9 @@ async def build_segments_from_alignment(
         longer carries the user's endorsement, and the provenance-gated
         feeds stop treating it as a human edit until a later save/confirm
         restores origin='human'.
-      - When the alignment fails (below the <50% gate, empty split, or a
-        human row's source paragraph vanished), every row is RETAINED
+      - When the alignment fails (below the <50% gate, empty split, a human
+        row's source paragraph vanished, or the alignment left a human row's
+        slot EMPTY, which would erase its text), every row is RETAINED
         untouched and the chapter is stamped 'unaligned' (rows kept). Only
         human-row-free chapters keep the Phase 2 zero-row behavior.
 
@@ -367,6 +368,23 @@ async def build_segments_from_alignment(
     if anchors is None:
         return await _retain_rows_stamp_unaligned(
             conn, chapter_id, rev, "human row's source paragraph vanished"
+        )
+    # The aligner legitimately hands back ("", False) slots (a merge2
+    # follow-on row, a bare del). Writing one into an anchored human row
+    # would ERASE the user's paragraph, and because join_paragraphs skips
+    # empties the loss would be silent: the body still reproduces, but the
+    # paragraph is gone from every body the store materializes afterwards.
+    # Refusing the whole rebuild (rows kept, read-only until a retranslate)
+    # is the deliberate conservative call: a partial rebuild is not worth
+    # erasing user text.
+    human_by_id = {r["id"]: r for r in human_rows}
+    if any(
+        human_by_id[row_id]["target_text"] and not entries[j][0]
+        for row_id, j in anchors.items()
+    ):
+        return await _retain_rows_stamp_unaligned(
+            conn, chapter_id, rev,
+            "alignment produced no paragraph for an edited/confirmed row",
         )
 
     # B12 mirror: a DIVERGENT machine row (tm_exact prefill; machine_text
@@ -600,7 +618,12 @@ async def _load_editable_chapter(
 
     Raises SegmentNotFoundError (missing chapter), SegmentStaleError
     'chapter_translating' (not status='done' yet: pending, translating, or
-    errored), 'stale_chapter' (client rev does not match the displayed body,
+    errored, or a refinement pass is mid-flight: the refine commit's merge
+    would rematerialize the body from refined-derived targets and the next
+    GET would text-authoritatively rebuild over the just-saved paragraph,
+    so the write is refused rather than 200-ed and silently discarded; the
+    same mid-transition window get_segments refuses to rebuild in),
+    'stale_chapter' (client rev does not match the displayed body,
     the chapter is 'unaligned' so segment writes cannot rematerialize the
     body, or `expected_chapter_id` (the chapter row id the page loaded)
     no longer matches the row (novel_id, chapter_num) resolves to, i.e. a
@@ -622,6 +645,16 @@ async def _load_editable_chapter(
             "chapter_translating",
             f"chapter is not editable while its translation status is "
             f"'{row['status']}'. Wait for it to finish, then reload.",
+        )
+    if (row["refinement_status"] or "none") in ("pending", "in_progress"):
+        # Same mid-transition window get_segments refuses to rebuild in: the
+        # refine commit is about to re-stamp the store and the displayed
+        # body, so a save landing now would be rematerialized away (a 200
+        # the user's paragraph does not survive).
+        raise SegmentStaleError(
+            "chapter_translating",
+            "chapter is being refined right now. Wait for the refinement "
+            "to finish, then reload.",
         )
     variant, body = displayed_body(row)
     if not body.strip():
@@ -1130,7 +1163,10 @@ async def apply_machine_translation(
         machine_text refreshes only from a confident slot (else the prior
         rendering is kept), the aligned column takes the entry's flag, and
         an unconfident slot demotes segments_state to 'partial' like any
-        machine row would.
+        machine row would. A human row whose stored target is EMPTY (only
+        the pre-fix rebuild produced one) is healed from the slot's fresh
+        machine text, origin='reprojected', rather than dropping the
+        paragraph out of the merged body.
       - Machine rows: regenerated from the new text (target_text +
         machine_text), origin=`kind`; missing rows insert; a chapter with no
         store at all gets a fresh full build.
@@ -1236,14 +1272,31 @@ async def apply_machine_translation(
                 machine_text = new_machine
             else:
                 machine_text = row["machine_text"] or ""
+            # An EMPTY stored human target is pathological: only the
+            # pre-fix rebuild (an aligner "" slot written over an anchored
+            # human row) produced one on live DBs. Keeping it verbatim would
+            # drop the paragraph from the merged body for good, because
+            # join_paragraphs skips empties, so heal the row from this
+            # slot's fresh machine text instead. Origin becomes
+            # 'reprojected' (the text is not user-authored); status is
+            # untouched, so the row stays visible as human work. When the
+            # slot is empty too there is nothing to heal with and the row
+            # stays as it is.
+            heal = not row["target_text"] and bool(new_machine)
+            new_target = row["target_text"] or new_machine
+            # One of two hard-coded SQL tokens, never user input: 'origin'
+            # keeps the stored provenance on the (normal) verbatim path,
+            # where new_target is the row's own unchanged target_text.
+            origin_expr = "'reprojected'" if heal else "origin"
             await conn.execute(
                 "UPDATE chapter_segments SET seg_index = ?, source_text = ?, "
-                "source_hash = ?, machine_text = ?, aligned = ?, "
+                "source_hash = ?, machine_text = ?, target_text = ?, "
+                f"origin = {origin_expr}, aligned = ?, "
                 "updated_at = datetime('now') WHERE id = ?",
-                (j, src_paras[j], new_hashes[j], machine_text,
+                (j, src_paras[j], new_hashes[j], machine_text, new_target,
                  1 if entry_aligned else 0, row_id),
             )
-            merged[j] = row["target_text"]
+            merged[j] = new_target
             # State computation no longer force-treats human rows as
             # aligned (B14): an unconfident slot demotes the chapter to
             # 'partial' even when a human row occupies it.
