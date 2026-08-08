@@ -23,6 +23,8 @@ The brief-candidate signals reuse the pure scorer from the batch CLI
 
 from __future__ import annotations
 
+import re
+
 import aiosqlite
 
 from backend.scripts.ingest_edited_chapter import _aggregate_signals
@@ -33,32 +35,52 @@ from backend.services import segments as segments_svc
 def _detect_casing_changes(pairs: list[tuple[str, str]], glossary) -> list[dict]:
     """Per-novel glossary terms the user recased (same letters, different case).
 
-    For each entry whose term_en occurs in both the before and after text, if the
-    after rendering carries a different casing, that is a recase the glossary
-    should absorb so the term renders consistently everywhere. One proposal per
-    entry (first occurrence wins). Robust for multi-word terms because it matches
-    the full term_en, not single tokens.
+    For each entry whose term_en occurs, word-bounded and case-insensitive, in
+    both the before and after text, collect every bounded match in the after
+    text. A recase is proposed only when at least one match differs in casing
+    from the stored term_en AND every differing match agrees on the same
+    variant; that variant becomes proposed_en. Disagreeing matches (some
+    recased one way, some another) propose nothing for that entry, since the
+    signal is ambiguous. One proposal per entry. Word-bounded (not \\b, since
+    term_en can start or end with a non-word character) so a short term like
+    "Qi" does not match inside an unrelated longer word like "qigong".
+
+    Patterns are compiled once per entry (not once per entry per pair): a
+    live glossary can carry thousands of entries, and recompiling every
+    entry's pattern inside the pairs loop dominated build_proposal's cost at
+    that cardinality.
     """
+    candidates: list[tuple[int, str, str, re.Pattern[str]]] = []
+    for g in glossary:
+        entry_id = getattr(g, "id", None)
+        en = (g.term_en or "").strip()
+        if entry_id is None or len(en) < 2:
+            continue
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9_])" + re.escape(en) + r"(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        )
+        candidates.append((entry_id, en, g.term_zh, pattern))
+
     seen: dict[int, dict] = {}
     for before, after in pairs:
-        bl, al = (before or "").lower(), (after or "").lower()
-        for g in glossary:
-            entry_id = getattr(g, "id", None)
-            en = (g.term_en or "").strip()
-            if entry_id is None or len(en) < 2:
+        before = before or ""
+        after = after or ""
+        for entry_id, en, term_zh, pattern in candidates:
+            if entry_id in seen:
                 continue
-            enl = en.lower()
-            if entry_id in seen or enl not in bl or enl not in al:
+            if not pattern.search(before) or not pattern.search(after):
                 continue
-            idx = al.find(enl)
-            after_cased = after[idx:idx + len(en)]
-            if after_cased != en and after_cased.lower() == enl:
+            differing = {
+                m.group(0) for m in pattern.finditer(after) if m.group(0) != en
+            }
+            if len(differing) == 1:
                 seen[entry_id] = {
                     "id": f"gloss-{entry_id}",
                     "entry_id": entry_id,
-                    "term_zh": g.term_zh,
+                    "term_zh": term_zh,
                     "term_en": en,
-                    "proposed_en": after_cased,
+                    "proposed_en": next(iter(differing)),
                     "default": False,
                 }
     return list(seen.values())

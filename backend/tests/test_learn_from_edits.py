@@ -19,7 +19,22 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.models import GlossaryEntry
+from backend.services.learn_from_edits import _detect_casing_changes
+
 DB_PATH = Path(os.environ["DB_PATH"])
+
+
+def _entry(entry_id: int, term_zh: str, term_en: str) -> GlossaryEntry:
+    return GlossaryEntry(
+        id=entry_id,
+        term_zh=term_zh,
+        term_en=term_en,
+        category="other",
+        notes=None,
+        auto_detected=False,
+        locked=True,
+    )
 
 
 @pytest.fixture
@@ -205,3 +220,72 @@ def test_missing_chapter_404(client):
     assert client.post(
         f"/api/novels/{nid}/chapters/99/learn-edits/commit", json={}
     ).status_code == 404
+
+
+# _detect_casing_changes word-bounded matching (regression for the bare
+# substring-membership bug: a short term_en like "Qi" used to match inside an
+# unrelated longer word like "qigong", and the first-occurrence-anywhere index
+# could land on that unrelated match rather than the recased one).
+
+
+def test_casing_no_proposal_when_bounded_occurrence_matches_stored_case():
+    """"qigong" contains "qi" as a substring but is not a bounded match, so the
+    only bounded occurrence of "Qi" in the after text is "his Qi settled",
+    which already carries the stored casing. No proposal."""
+    glossary = [_entry(1, "气", "Qi")]
+    pairs = [(
+        "His qi was unstable.",
+        "He circulated qigong through the meridians, then his Qi settled.",
+    )]
+    assert _detect_casing_changes(pairs, glossary) == []
+
+
+def test_casing_proposes_recase_when_every_bounded_occurrence_agrees():
+    glossary = [_entry(1, "气", "Qi")]
+    pairs = [(
+        "His qi flow was calm.",
+        "He gathered qi and channeled qi again.",
+    )]
+    out = _detect_casing_changes(pairs, glossary)
+    assert len(out) == 1
+    assert out[0]["entry_id"] == 1
+    assert out[0]["term_en"] == "Qi"
+    assert out[0]["proposed_en"] == "qi"
+
+
+def test_casing_no_proposal_when_bounded_occurrences_disagree():
+    """One bounded occurrence recased to "qi", another to "QI": the signal is
+    ambiguous, so the conservative behavior is no proposal at all."""
+    glossary = [_entry(1, "气", "Qi")]
+    pairs = [(
+        "His qi was steady.",
+        "His qi surged, then the QI dispersed.",
+    )]
+    assert _detect_casing_changes(pairs, glossary) == []
+
+
+def test_casing_multi_word_term_recase_still_detected():
+    glossary = [_entry(1, "金丹", "Golden Core")]
+    pairs = [(
+        "His Golden Core pulsed with energy.",
+        "His golden core pulsed, and the golden core grew brighter.",
+    )]
+    out = _detect_casing_changes(pairs, glossary)
+    assert len(out) == 1
+    assert out[0]["term_en"] == "Golden Core"
+    assert out[0]["proposed_en"] == "golden core"
+
+
+def test_casing_term_ending_in_non_word_char_matches_bounded_without_crash():
+    """term_en can end in a non-word character (e.g. a trailing parenthetical
+    like "talent(s)"); \\b would not bound it correctly, hence the lookaround
+    construction. Must not raise and must still detect the recase."""
+    glossary = [_entry(1, "天赋", "Talent(s)")]
+    pairs = [(
+        "His Talent(s) awakened.",
+        "His talent(s) awakened, unlocking new talent(s).",
+    )]
+    out = _detect_casing_changes(pairs, glossary)
+    assert len(out) == 1
+    assert out[0]["term_en"] == "Talent(s)"
+    assert out[0]["proposed_en"] == "talent(s)"
