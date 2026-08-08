@@ -234,3 +234,79 @@ def test_insert_out_of_range_rejected(client: TestClient) -> None:
 def test_insert_unknown_novel_404(client: TestClient) -> None:
     r = _insert(client, 999, after=0, text=f"x\n{BODY}")
     assert r.status_code == 404, r.text
+
+
+# --------------------------------------------------------------------------- #
+# Regression: prologue-heavy novels persist a legitimate negative chapter_num.
+#
+# parser.reconcile_chapter_numbers counts leading numberless prologues
+# backward from the first numbered chapter, so a novel opening with two
+# untitled prologues before chapter 1 stores rows at -1 and 0. A mid-novel
+# insert that needs to shift the tail must not disturb those rows: the
+# two-phase negative-shift used to flip EVERY negative chapter_num in phase 2,
+# which also flipped the legitimate -1 row positive and collided with the row
+# it displaced (a 500, full rollback, on every such novel).
+# --------------------------------------------------------------------------- #
+
+
+def test_insert_after_prologues_preserves_negative_numbering(client: TestClient) -> None:
+    """Novel opens with two numberless prologues (-1, 0) ahead of chapters 1
+    and 2. Inserting right after the second prologue (target=1, colliding
+    with the existing chapter 1) must shift only the real chapters, leaving
+    the prologues at -1 and 0."""
+    nid = _make_novel(client, ["楔子", "序章", "第一章 甲", "第二章 乙"])
+    assert _nums(nid) == [-1, 0, 1, 2]
+    _exec("UPDATE novels SET last_read_chapter_num=2 WHERE id=?", (nid,))
+
+    r = _insert(client, nid, after=0, text=f"新章\n{BODY}", title="新章")
+    assert r.status_code == 200, r.text
+    assert r.json()["added_chapters"] == 1
+    assert r.json()["first_new_chapter"] == 1
+
+    assert _nums(nid) == [-1, 0, 1, 2, 3]
+    assert len(set(_nums(nid))) == 5  # UNIQUE holds, no collision
+    titles = {
+        row["chapter_num"]: row["title_zh"]
+        for row in _rows(
+            "SELECT chapter_num, title_zh FROM chapters WHERE novel_id=?", (nid,)
+        )
+    }
+    assert titles[-1] == "楔子"
+    assert titles[0] == "序章"
+    assert titles[1] == "新章"
+    assert titles[2] == "第一章 甲"
+    assert titles[3] == "第二章 乙"
+
+    # Reader was on old chapter 2 (>= target 1), so it bumps by the insert
+    # count to keep pointing at the same actual chapter (now numbered 3).
+    lr = _rows("SELECT last_read_chapter_num FROM novels WHERE id=?", (nid,))[0]
+    assert lr["last_read_chapter_num"] == 3
+
+
+def test_insert_after_prologues_deeper_target_leaves_prologues_untouched(
+    client: TestClient,
+) -> None:
+    """Same prologue-heavy novel; inserting after chapter 1 (target=2,
+    colliding with existing chapter 2) shifts only chapter 2 upward and
+    leaves the prologues AND chapter 1 untouched."""
+    nid = _make_novel(client, ["楔子", "序章", "第一章 甲", "第二章 乙"])
+    assert _nums(nid) == [-1, 0, 1, 2]
+
+    r = _insert(client, nid, after=1, text=f"插入\n{BODY}", title="插入")
+    assert r.status_code == 200, r.text
+    assert r.json()["added_chapters"] == 1
+    assert r.json()["first_new_chapter"] == 2
+
+    assert _nums(nid) == [-1, 0, 1, 2, 3]
+    assert len(set(_nums(nid))) == 5  # UNIQUE holds, no collision
+    titles = {
+        row["chapter_num"]: row["title_zh"]
+        for row in _rows(
+            "SELECT chapter_num, title_zh FROM chapters WHERE novel_id=?", (nid,)
+        )
+    }
+    assert titles[-1] == "楔子"  # untouched
+    assert titles[0] == "序章"  # untouched
+    assert titles[1] == "第一章 甲"  # untouched
+    assert titles[2] == "插入"
+    assert titles[3] == "第二章 乙"

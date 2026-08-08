@@ -1297,6 +1297,17 @@ async def insert_parsed_chapters(
     is shifted up by `count`. The shift uses a two-phase negative rewrite so it
     never trips UNIQUE(novel_id, chapter_num) mid-statement (a plain
     `chapter_num + count` UPDATE can collide with a not-yet-moved row).
+
+    Negative chapter_num is legitimate persisted state, not just a transient
+    parking value: parser.reconcile_chapter_numbers counts leading numberless
+    prologues backward from the first numbered chapter, so a novel opening
+    with two untitled prologues before chapter 1 stores rows at -1 and 0. The
+    park offset (`base`, computed from MIN(chapter_num) so every parked value
+    sits strictly below every pre-existing row, negative rows included) lets
+    phase 2 target exactly the rows phase 1 parked, so those legitimate
+    negative rows ride through untouched instead of getting flipped positive
+    and colliding with the row they'd displace.
+
     novels.last_read_chapter_num is bumped in lockstep so the saved reading
     position keeps pointing at the same actual chapter.
 
@@ -1332,18 +1343,45 @@ async def insert_parsed_chapters(
         )
         occupied = await cur.fetchone() is not None
         if occupied:
-            # Two-phase negative shift: park the tail in the negative range
-            # (unique, can't collide with positive rows), then flip it back
-            # with the +count offset applied.
+            # Two-phase negative shift: park the tail in the negative range,
+            # then flip it back with the +count offset applied. A bare
+            # `chapter_num < 0` flip in phase 2 is not safe: negative
+            # chapter_num can be legitimate persisted state (leading
+            # numberless prologues counted backward by
+            # parser.reconcile_chapter_numbers land at -1, 0, ...), and
+            # flipping those too collides with the row they'd displace.
+            #
+            # `base` pushes every parked value strictly below every
+            # pre-existing row (negative rows included), so phase 2's
+            # predicate can target exactly the rows phase 1 parked.
+            #
+            # Proof that the phase-2 predicate never matches a legitimate
+            # (untouched) row, only a parked one:
+            #   base = count + max(0, -min_num) + 1
+            #   Parked:    p = -(v + base)            for original v >= target
+            #   Unparked:  -p - (base - count) = v + count   (the intended shift)
+            #   Every parked p satisfies p <= -(target + base) (v >= target).
+            #   Every untouched row L (original chapter_num < target, so never
+            #   selected by phase 1) satisfies L >= min_num, and because
+            #   target >= 1 and count >= 1 (so target + count + 1 > 0):
+            #     L >= min_num > min_num - (target + count + 1) = -(target + base)
+            #   so L can never satisfy `chapter_num <= -(target + base)`.
+            cur = await conn.execute(
+                "SELECT MIN(chapter_num) FROM chapters WHERE novel_id = ?",
+                (novel_id,),
+            )
+            min_row = await cur.fetchone()
+            min_num = int(min_row[0]) if min_row and min_row[0] is not None else 0
+            base = count + max(0, -min_num) + 1
             await conn.execute(
                 "UPDATE chapters SET chapter_num = -(chapter_num + ?) "
                 "WHERE novel_id = ? AND chapter_num >= ?",
-                (count, novel_id, target),
+                (base, novel_id, target),
             )
             await conn.execute(
-                "UPDATE chapters SET chapter_num = -chapter_num "
-                "WHERE novel_id = ? AND chapter_num < 0",
-                (novel_id,),
+                "UPDATE chapters SET chapter_num = -chapter_num - ? "
+                "WHERE novel_id = ? AND chapter_num <= ?",
+                (base - count, novel_id, -(target + base)),
             )
         rows = [
             (novel_id, target + i, ch.title_zh, ch.original_text)
