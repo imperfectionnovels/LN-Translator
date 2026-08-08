@@ -7,6 +7,9 @@ Covers queue.cancel_translate + the CancelledError handler in _run_translate:
 - Cancelling a retranslate of an already-done chapter preserves the prior
   translation (row reverts to 'done', keeps translated_text).
 - cancel_translate is a no-op (returns False) when no task is registered.
+- D1 (bug hunt 2026-08-08): a second _spawn_translate call for a chapter
+  that already has a live task registered must be a no-op, so cancel keeps
+  targeting the real worker instead of a freshly spawned idle duplicate.
 """
 
 from __future__ import annotations
@@ -144,3 +147,81 @@ async def test_cancel_retranslate_preserves_prior_translation(monkeypatch):
 
 async def test_cancel_with_no_task_is_noop():
     assert await queue_svc.cancel_translate(999999) is False
+
+
+async def test_second_spawn_is_noop_while_first_task_is_live(monkeypatch):
+    """D1: a rapid double Retranslate (or any second _spawn_translate call
+    for a chapter that is already covered by a live task) must NOT replace
+    the registered task. Before the fix, the unconditional
+    `_translate_tasks[chapter_id] = task` assignment overwrote the real
+    worker's slot with a second, idle task; cancel_translate would then
+    cancel the harmless newcomer while the real, billed LLM call ran to
+    completion uncancelled."""
+    await _seed_translator_provider()
+    novel_id, chapter_id = await _make_chapter()
+    _block_translate(monkeypatch)
+
+    queue_svc._spawn_translate(novel_id, chapter_id)
+    await _wait_for_status(chapter_id, "translating")
+    live_task = queue_svc._translate_tasks.get(chapter_id)
+    assert live_task is not None and not live_task.done()
+
+    # Second spawn for the SAME chapter id, mirroring a second Retranslate
+    # click landing while the first worker is still running.
+    queue_svc._spawn_translate(novel_id, chapter_id)
+    assert queue_svc._translate_tasks.get(chapter_id) is live_task, (
+        "a second spawn for an already-covered chapter must not replace "
+        "the live task"
+    )
+
+    # Cancel must reach the ORIGINAL (real) worker, not a duplicate.
+    assert await queue_svc.cancel_translate(chapter_id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await live_task
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT status, translate_queued FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+    assert not row["translate_queued"]
+
+
+async def test_spawn_after_task_completes_registers_a_fresh_task(monkeypatch):
+    """The D1 guard only blocks a spawn while the existing task is live.
+    Once that task is done, a later spawn for the same chapter id must
+    register normally (a genuinely new translate run, e.g. a subsequent
+    retranslate after the first one finished)."""
+    await _seed_translator_provider()
+    novel_id, chapter_id = await _make_chapter()
+    _block_translate(monkeypatch)
+
+    queue_svc._spawn_translate(novel_id, chapter_id)
+    await _wait_for_status(chapter_id, "translating")
+    first_task = queue_svc._translate_tasks.get(chapter_id)
+    assert await queue_svc.cancel_translate(chapter_id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+    assert first_task.done()
+
+    # Re-flag the row as queued (mirrors what the retranslate route does
+    # before spawning) and spawn again.
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'pending', translate_queued = 1 "
+            "WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+    queue_svc._spawn_translate(novel_id, chapter_id)
+    await _wait_for_status(chapter_id, "translating")
+    second_task = queue_svc._translate_tasks.get(chapter_id)
+    assert second_task is not None
+    assert second_task is not first_task
+
+    # Clean up: cancel the second task so it doesn't leak into other tests.
+    assert await queue_svc.cancel_translate(chapter_id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await second_task

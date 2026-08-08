@@ -203,7 +203,34 @@ _translate_tasks: dict[int, asyncio.Task] = {}
 def _spawn_translate(novel_id: int, chapter_id: int) -> None:
     """Spawn a translate worker and register it under its chapter id so it can
     be cancelled mid-flight. Uses the shared registry for the strong-ref
-    bookkeeping, plus a per-chapter cancellation slot."""
+    bookkeeping, plus a per-chapter cancellation slot.
+
+    D1 (bug hunt 2026-08-08): if a live (not-done) task is already
+    registered under this chapter id, do nothing. Before this guard, a
+    second spawn for the same chapter (e.g. a rapid double-click on
+    Retranslate: reset_chapters_for_retranslate's WHERE status != 'translating'
+    guard lets an already-queued PENDING chapter through a second time)
+    unconditionally overwrote `_translate_tasks[chapter_id]` with the new,
+    idle task. cancel_translate then cancelled that idle newcomer while the
+    real, already-running (or already-claimed) worker kept going and
+    committed a billed LLM call AFTER the user believed they had cancelled
+    it.
+    No orphaned flag results from skipping the spawn: every chapter that is
+    translate_queued=1 either (a) already has a live task registered right
+    here under its own id, which this function leaves untouched, or (b) has
+    no live task registered under its id because some other live task
+    re-keyed away from it (claim-at-lock, audit 3.2) after claiming a
+    higher-priority row instead, in which case `_translate_tasks.get(chapter_id)`
+    is None or done, so the guard below does NOT fire and a fresh task is
+    spawned normally. Every queued chapter therefore always has exactly one
+    live task that either owns it directly or will claim it via the
+    priority-ordered SELECT the next time any task acquires the lock. As a
+    last-resort backstop, drain_on_startup re-spawns every translate_queued
+    row still flagged at the next server start, so even a scenario this
+    reasoning missed cannot orphan a flag past a restart."""
+    existing = _translate_tasks.get(chapter_id)
+    if existing is not None and not existing.done():
+        return
 
     def _done(t: asyncio.Task) -> None:
         # Clear every slot that still points at THIS task: the claim-at-lock
@@ -572,6 +599,34 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
                         "WHERE id = ? AND status = 'translating'",
                         (run_chapter_id,),
                     )
+                    # D2 (bug hunt 2026-08-08): a cancel can also land INSIDE
+                    # the chained refine call (same lock acquisition, see this
+                    # function's docstring), after _refine_chapter_in_db's
+                    # pending -> in_progress claim already committed. By that
+                    # point chapter status is already 'done' (the translate
+                    # stage committed it before refine ever started), so the
+                    # status='translating' UPDATE above never touches this
+                    # row. Without this second UPDATE, refinement_status
+                    # would stay 'in_progress' forever (until a server
+                    # restart): retry-refinement 409s on that state, the
+                    # segment store refuses to rebuild, the QA panel's
+                    # recheck raises busy, and glossary find/replace skips
+                    # the chapter. Land it in the same terminal 'error' state
+                    # a failed refine call produces, which is the shape
+                    # retry-refinement already accepts. refined_text /
+                    # refined_at are left untouched (not nulled): a retry
+                    # keeps the prior refined_text through the retry window
+                    # by design (see the retry-refinement route), and this
+                    # cancel is not a retranslate. A plain cancel-during-
+                    # translate (no chained refine reached yet, or no
+                    # refiner configured) simply finds refinement_status !=
+                    # 'in_progress' here and this UPDATE is a no-op.
+                    await recovery.execute(
+                        "UPDATE chapters SET refinement_status = 'error', "
+                        "refinement_error = 'refinement cancelled by user' "
+                        "WHERE id = ? AND refinement_status = 'in_progress'",
+                        (run_chapter_id,),
+                    )
                     await recovery.commit()
             except Exception:
                 logger.exception(
@@ -603,6 +658,27 @@ async def _run_translate(novel_id: int, chapter_id: int) -> None:
                 )
 
 
+async def _fetch_muted_observer_kinds(
+    conn: aiosqlite.Connection, novel_id: int
+) -> set[str]:
+    """Read novels.disabled_observers and parse it into the muted-kind set
+    via the shared parse_disabled_observers helper.
+
+    D3 (bug hunt 2026-08-08): factored out so every observation-writing
+    site reads the SAME per-novel mute, instead of each site re-issuing its
+    own SELECT + parse (or, as the TM-inconsistency emitter did, skipping
+    the mute check entirely). Used by the translate-stage observation
+    persist, the refinement-stage drift observation, and
+    _emit_tm_inconsistency_observations below."""
+    cur = await conn.execute(
+        "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
+    )
+    mute_row = await cur.fetchone()
+    return parse_disabled_observers(
+        mute_row["disabled_observers"] if mute_row else None
+    )
+
+
 async def _emit_tm_inconsistency_observations(
     conn: aiosqlite.Connection,
     novel_id: int,
@@ -616,7 +692,14 @@ async def _emit_tm_inconsistency_observations(
     land atomically with the chapter UPDATE. Idempotent against re-runs:
     the chapter's observation rows were just cleared by the
     DELETE+INSERT cycle above, so we won't double-write.
+
+    D3 (bug hunt 2026-08-08): honors the per-novel disabled_observers mute
+    the same way the translate-stage and refinement-stage observation
+    writers do. Before this fix, a muted 'tm_inconsistency' kind still got
+    inserted here via raw SQL, bypassing the mute the reader's QA panel
+    otherwise respects for every other observer kind.
     """
+    muted = await _fetch_muted_observer_kinds(conn, novel_id)
     # Pull this chapter's TM rows; for each, query the full set of distinct
     # target_text values sharing the source_hash across the novel. If > 1,
     # emit an observation.
@@ -640,6 +723,8 @@ async def _emit_tm_inconsistency_observations(
             paragraph_index=r["paragraph_index"],
             renderings=renderings,
         )
+        if obs.kind in muted:
+            continue
         await conn.execute(
             "INSERT INTO chapter_observations "
             "(chapter_id, kind, severity, paragraph_index, excerpt) "
@@ -1251,13 +1336,7 @@ async def _translate_chapter_in_db(
         # observation list before persistence. Lets users mute false-
         # positive observer categories per-novel without losing the
         # other observers' signal.
-        cur = await conn.execute(
-            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
-        )
-        mute_row = await cur.fetchone()
-        muted = parse_disabled_observers(
-            mute_row["disabled_observers"] if mute_row else None
-        )
+        muted = await _fetch_muted_observer_kinds(conn, novel_id)
         if muted:
             normalized_observations = [
                 o for o in normalized_observations if o.kind not in muted
@@ -1694,13 +1773,7 @@ async def _refine_chapter_in_db(
             got=refined_count, expected=expected_paragraphs,
             stage="refinement",
         )
-        cur = await conn.execute(
-            "SELECT disabled_observers FROM novels WHERE id = ?", (novel_id,),
-        )
-        mute_row = await cur.fetchone()
-        muted = parse_disabled_observers(
-            mute_row["disabled_observers"] if mute_row else None
-        )
+        muted = await _fetch_muted_observer_kinds(conn, novel_id)
         if drift_observation.kind in muted:
             drift_observation = None
     if drift_observation is not None:

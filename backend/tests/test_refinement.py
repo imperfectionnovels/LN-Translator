@@ -11,9 +11,15 @@ Covers:
 - drain_on_startup resets stuck in_progress rows → pending and re-spawns workers.
 - retry-refinement route flips error → pending and re-spawns worker.
 - Refiner cache: identical (provider, draft) hits cache; different provider misses.
+- D2 (bug hunt 2026-08-08): a cancel landing INSIDE the chained refine call
+  (after its pending -> in_progress claim already committed) must land the
+  chapter in a terminal, retryable refinement_status instead of stranding
+  it at 'in_progress' forever.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -828,3 +834,135 @@ async def test_drain_holds_refinements_when_kill_switch_off(monkeypatch):
     monkeypatch.setattr(config, "PROMPT_INCLUDE_REFINER", True)
     await queue_svc.drain_on_startup()
     assert spawned == [(novel_id, chapter_id)]
+
+
+# ----- D2 (bug hunt 2026-08-08): cancel landing inside the chained refine ---
+
+async def test_cancel_during_chained_refine_lands_terminal_error(monkeypatch):
+    """A cancel that lands INSIDE the chained refine call (same lock
+    acquisition as the translate stage; see _run_translate's docstring)
+    interrupts _refine_chapter_in_db AFTER its pending -> in_progress claim
+    already committed. Simulate that by having the refiner raise
+    CancelledError directly: this is exactly what a real task.cancel()
+    delivers at that await point, without needing to race a real asyncio
+    cancellation through the LLM call. Regression: previously the
+    CancelledError handler in _run_translate only repaired
+    status='translating' rows, so refinement_status stayed 'in_progress'
+    forever (until a server restart) -- retry-refinement would 409, the
+    segment store would refuse to rebuild, and the QA recheck would raise
+    busy."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    _stub_translate(monkeypatch)
+
+    async def _cancelled_refine(*a, **kw):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr("backend.services.queue.refine_chapter", _cancelled_refine)
+
+    with pytest.raises(asyncio.CancelledError):
+        await queue_svc._run_translate(novel_id, chapter_id)
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT status, translated_text, refinement_status, "
+            "refinement_error, refined_text, refined_at "
+            "FROM chapters WHERE id = ?", (chapter_id,),
+        )
+        row = await cur.fetchone()
+    # The translate stage had already committed before refine ever started.
+    assert row["status"] == "done"
+    assert row["translated_text"] == _FIXTURE_DRAFT_BODY
+    # Refinement must land terminal + retryable, never stuck 'in_progress'.
+    assert row["refinement_status"] == "error"
+    assert row["refinement_error"] == "refinement cancelled by user"
+    # Not nulled: a fresh translate already cleared these to NULL before
+    # refine ever ran, and the cancel-recovery UPDATE must not touch them
+    # (a retry keeps prior refined_text through the retry window by design).
+    assert row["refined_text"] is None
+    assert row["refined_at"] is None
+
+
+async def test_cancel_during_translate_stage_leaves_refinement_untouched(monkeypatch):
+    """Sanity check the D2 addition doesn't change the plain cancel-during-
+    translate path: refinement_status never reached 'pending' or
+    'in_progress' in this scenario (the translate success commit never
+    ran), so the new UPDATE (WHERE refinement_status = 'in_progress') must
+    be a no-op and the existing recovery (status -> 'pending') must still
+    apply exactly as before."""
+    await _seed_translator_provider()
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+
+    async def _blocked_translate(*a, **kw):
+        await asyncio.Event().wait()
+    monkeypatch.setattr("backend.services.queue.translate_chapter", _blocked_translate)
+
+    task = asyncio.ensure_future(queue_svc._run_translate(novel_id, chapter_id))
+    # Wait for the claim (pending -> translating) to land.
+    for _ in range(250):
+        async with open_conn() as conn:
+            cur = await conn.execute(
+                "SELECT status FROM chapters WHERE id = ?", (chapter_id,)
+            )
+            row = await cur.fetchone()
+        if row and row["status"] == "translating":
+            break
+        await asyncio.sleep(0.02)
+    else:
+        raise AssertionError("chapter never reached status='translating'")
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT status, refinement_status, translate_queued "
+            "FROM chapters WHERE id = ?", (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+    assert row["refinement_status"] == "none"
+    assert not row["translate_queued"]
+
+
+async def test_retry_refinement_accepts_cancelled_refine_state(quiet_app):
+    """The state a mid-refine cancel now lands on ('error' with the
+    cancellation message) must be one retry-refinement accepts, so the
+    user has a way forward without waiting for a server restart."""
+    refiner_id = await _seed_refiner_provider()
+    novel_id, chapter_id = await _make_novel_with_chapter(
+        refinement_provider_id=refiner_id,
+    )
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET status = 'done', translated_text = 'd', "
+            "refinement_status = 'error', "
+            "refinement_error = 'refinement cancelled by user' "
+            "WHERE id = ?",
+            (chapter_id,),
+        )
+        await conn.commit()
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(quiet_app) as client:
+        resp = client.post(
+            f"/api/novels/{novel_id}/chapters/1/retry-refinement"
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "queued"}
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT refinement_status, refinement_error FROM chapters WHERE id = ?",
+            (chapter_id,),
+        )
+        row = await cur.fetchone()
+    assert row["refinement_status"] == "pending"
+    assert row["refinement_error"] is None
