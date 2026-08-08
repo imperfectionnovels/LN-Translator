@@ -840,3 +840,129 @@ async def test_apply_in_place_translating_count_excludes_archived_novels():
     assert result.chapters_updated == 1
     assert result.skipped_translating == 0
     assert await _chapter_body(active_id, 1) == "Lord Bai walked."
+
+
+# ---- Race fix (2026-08-08): read-substitute-write is one write transaction
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_conn_in_transaction_before_scope_select(monkeypatch):
+    """Pin the ordering: `BEGIN IMMEDIATE` must run BEFORE
+    `_select_chapters_for_scope`, not merely before the first UPDATE. A bare
+    SELECT opens no transaction under aiosqlite's default deferred
+    isolation, so observing `conn.in_transaction is True` at the top of the
+    scope-select call is proof the explicit BEGIN IMMEDIATE already ran.
+    Before the fix, no transaction was open at this point at all."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    real_select = fr._select_chapters_for_scope
+    seen_in_transaction: list[bool] = []
+
+    async def _select_and_record(conn, query):
+        seen_in_transaction.append(conn.in_transaction)
+        return await real_select(conn, query)
+
+    monkeypatch.setattr(fr, "_select_chapters_for_scope", _select_and_record)
+
+    async with open_conn() as conn:
+        assert conn.in_transaction is False
+        await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+    assert seen_in_transaction == [True]
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_holds_write_lock_across_the_whole_read_write_sequence(
+    monkeypatch,
+):
+    """The load-bearing guarantee itself, proven against a REAL second
+    connection rather than a mock: while apply_in_place_for_glossary_term is
+    between its scope SELECT and its final commit, a second connection
+    racing to write the same row must hit SQLITE_BUSY instead of being free
+    to land a write in the gap. That gap is exactly what used to let a
+    translate/refine worker's freshly committed body get silently
+    overwritten by a stale pre-substitution snapshot (and left the
+    fr_snapshots before-image stale too, so undo could not recover it
+    either). A short probe timeout makes the test fail fast instead of
+    masking a regression by waiting out a long busy_timeout."""
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+    real_select = fr._select_chapters_for_scope
+    busy_seen = False
+
+    async def _select_and_probe(conn, query):
+        nonlocal busy_seen
+        rows = await real_select(conn, query)
+        probe = sqlite3.connect(DB_PATH, timeout=0.2)
+        try:
+            probe.execute(
+                "UPDATE chapters SET translated_text = 'INTRUDER' "
+                "WHERE novel_id = ?",
+                (novel_id,),
+            )
+            probe.commit()
+        except sqlite3.OperationalError as e:
+            busy_seen = "lock" in str(e).lower() or "busy" in str(e).lower()
+        finally:
+            probe.close()
+        return rows
+
+    monkeypatch.setattr(fr, "_select_chapters_for_scope", _select_and_probe)
+
+    async with open_conn() as conn:
+        result = await fr.apply_in_place_for_glossary_term(
+            conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+        )
+
+    assert busy_seen, (
+        "expected the concurrent writer to hit SQLITE_BUSY while "
+        "apply_in_place_for_glossary_term held its write lock; if this "
+        "fails, the BEGIN IMMEDIATE guarantee has regressed"
+    )
+    assert result.chapters_updated == 1
+    # The intruder's write was rejected by the lock, so our own
+    # substitution is the only thing that actually landed.
+    assert await _chapter_body(novel_id, 1) == "Lord Bai walked."
+
+
+@pytest.mark.asyncio
+async def test_apply_in_place_rolls_back_cleanly_on_mid_transaction_failure(
+    monkeypatch,
+):
+    """If anything inside the transaction raises, the whole write must roll
+    back (no partial UPDATE survives) and the write lock must be released,
+    not just left open on a connection nobody commits. Proven by making the
+    segment-reproject hook explode after the chapter UPDATE has already run,
+    then confirming both the body and a fresh connection's ability to write
+    are intact afterward."""
+    from backend.services import segments as segments_svc
+
+    novel_id = await _seed_novel_with_chapters([
+        (1, "Bai Xiaochun walked.", None),
+    ])
+
+    async def _boom(conn, chapter_id):
+        raise RuntimeError("simulated mid-transaction failure")
+
+    monkeypatch.setattr(segments_svc, "reproject_from_body", _boom)
+
+    async with open_conn() as conn:
+        with pytest.raises(RuntimeError):
+            await fr.apply_in_place_for_glossary_term(
+                conn, old_en="Bai Xiaochun", new_en="Lord Bai", novel_id=novel_id,
+            )
+
+    # The UPDATE was rolled back: original text survives untouched.
+    assert await _chapter_body(novel_id, 1) == "Bai Xiaochun walked."
+    # The write lock was released (rollback ran), so a fresh writer proceeds
+    # without hitting a stale lock left open by the failed attempt.
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE chapters SET translated_text = ? WHERE novel_id = ?",
+            ("Bai Xiaochun walked, confirmed unlocked.", novel_id),
+        )
+        await conn.commit()
+    assert await _chapter_body(novel_id, 1) == "Bai Xiaochun walked, confirmed unlocked."

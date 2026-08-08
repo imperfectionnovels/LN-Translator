@@ -684,18 +684,48 @@ async def apply_in_place_for_glossary_term(
     edit), and detecting the already-applied state is not decidable from text
     alone. Do not loop this function over the same rename.
 
+    TRANSACTION GUARANTEE (race fixed 2026-08-08). The scope read
+    (`_select_chapters_for_scope`), the refining-skip check, every UPDATE, and
+    the snapshot write all run inside ONE `BEGIN IMMEDIATE` transaction opened
+    right before the scope SELECT. SQLite serializes writers, so a translate
+    worker's claim/success UPDATE or a refiner's commit can no longer land
+    in the window between this function's read and its write: whichever
+    transaction starts first runs to completion, and the other blocks (up to
+    `PRAGMA busy_timeout`) until it can proceed against the
+    post-transaction state. A worker's freshly committed body can therefore
+    never be overwritten by a stale pre-substitution snapshot computed before
+    that commit landed, and the `fr_snapshots` before-image recorded here can
+    never go stale either. Precedent: `uploads.py::_append_with_offset`
+    (docs/gotchas.md, "Concurrent appends") closes an analogous read-then-write
+    race the same way. `commit_preview` in this file instead uses a
+    hash-based drift check, because ITS preview/commit split spans a
+    user-visible pause that no held transaction can cover; this function's
+    read and write happen back to back inside one call, so the stronger,
+    cheaper transactional guarantee is available here instead. The
+    per-chapter loop is pure DB and CPU work (regex substitution,
+    `reproject_from_body`, `record_snapshot`); it makes no LLM or network
+    call, so the write-lock hold stays short. The workers' own multi-minute
+    LLM calls happen OUTSIDE their transactions (see
+    `queue.py::_translate_chapter_in_db`'s claim/success split), so briefly
+    blocking on a worker's short claim or success UPDATE, or the reverse, is
+    the expected and bounded cost of this fix.
+
     SKIPS, and how the user finds out. Chapters mid-refinement
     (refinement_status pending/in_progress) are skipped ENTIRELY, body and
     title: the refiner's commit rematerializes the body from its own merge, so
     a rewrite landing now would be clobbered on machine rows. Chapters
-    mid-translate are already invisible here (the scope SELECT pins
-    status='done'). Both are counted so the caller can say so out loud instead
-    of silently under-delivering. There is deliberately NO auto re-apply
-    queue: the editing surface already re-flags these chapters, because the
-    consistency glossary tier recomputes live against the current glossary on
-    every request and a PATCH implicitly locks the edited entry, so a skipped
-    chapter surfaces in the EDITOR'S MISSING-LOCKED TIER on its next open.
-    Discovery is automatic; the fix stays a deliberate user action.
+    mid-translate are out of scope (the scope SELECT pins status='done'), and
+    the transaction above holds the write lock for the SELECT's entire
+    lifetime, so a chapter's status or refinement_status cannot flip while
+    this function is running either; the refining-claim race that used to
+    exist between the scope SELECT and the per-chapter UPDATE is closed for
+    the same reason. Both counters exist so the caller can say so out loud
+    instead of silently under-delivering. There is deliberately NO auto
+    re-apply queue: the editing surface already re-flags these chapters,
+    because the consistency glossary tier recomputes live against the current
+    glossary on every request and a PATCH implicitly locks the edited entry,
+    so a skipped chapter surfaces in the EDITOR'S MISSING-LOCKED TIER on its
+    next open. Discovery is automatic; the fix stays a deliberate user action.
 
     The two skip counts are deliberately asymmetric:
       * `skipped_refining` counts only chapters the rewrite WOULD have
@@ -708,11 +738,6 @@ async def apply_in_place_for_glossary_term(
         count would report zero for exactly the chapters most likely to emerge
         containing the old rendering. Over-reporting is recoverable; silently
         under-reporting defeats the purpose of the counter.
-
-    A pending chapter can also be claimed into in_progress in the milliseconds
-    between the scope SELECT and the UPDATE. That race is accepted: the worst
-    case is one rewrite lost on machine rows of one chapter, which the
-    missing-locked tier then re-flags.
 
     Records one find_replace_snapshots row per touched novel before the
     commit, so a rename is undoable from the existing Find/Replace History
@@ -774,98 +799,112 @@ async def apply_in_place_for_glossary_term(
         case_sensitive=True,
         word_boundary=True,
     )
-    rows = await _select_chapters_for_scope(conn, query)
-    rows_translated = 0
-    rows_refined = 0
-    rows_titles = 0
-    skipped_refining = 0
-    skipped_refining_ids: list[int] = []
-    chapters_touched: set[int] = set()
-    body_changed_ids: list[int] = []
-    snapshot_payloads: dict[int, dict[str, dict]] = {}
-    for r in rows:
-        translated = r["translated_text"]
-        refined = r["refined_text"]
-        title_en = r["title_en"]
-        new_translated, change_translated = _sub(translated)
-        new_refined, change_refined = _sub(refined)
-        new_title, change_title = _sub(title_en)
-        if not (change_translated or change_refined or change_title):
-            continue
-        if r["refinement_status"] in ("pending", "in_progress"):
-            # Skip the chapter whole: a partial write here would be undone by
-            # the refiner's merge anyway. Counted only because it WOULD have
-            # changed, which keeps the id list a usable worklist.
-            skipped_refining += 1
-            skipped_refining_ids.append(r["id"])
-            continue
-        chapters_touched.add(r["id"])
-        if change_translated or change_refined:
-            body_changed_ids.append(r["id"])
-        # Capture the pre-substitution values for restore; only the columns
-        # this run actually changes go in, which keeps the payload small.
-        before: dict[str, str | None] = {}
-        if change_translated:
-            before["translated_before"] = translated
-        if change_refined:
-            before["refined_before"] = refined
-        if change_title:
-            before["title_before"] = title_en
-        snapshot_payloads.setdefault(r["novel_id"], {})[str(r["id"])] = before
-        # One UPDATE per chapter; assemble the SET clause from whichever
-        # columns actually changed so we don't rewrite untouched bodies.
-        set_parts: list[str] = []
-        set_values: list = []
-        if change_translated:
-            set_parts.append("translated_text = ?")
-            set_values.append(new_translated)
-        if change_refined:
-            set_parts.append("refined_text = ?")
-            set_values.append(new_refined)
-        if change_title:
-            set_parts.append("title_en = ?")
-            set_values.append(new_title)
-        set_values.append(r["id"])
-        await conn.execute(
-            f"UPDATE chapters SET {', '.join(set_parts)} WHERE id = ?",
-            set_values,
-        )
-        if change_translated:
-            rows_translated += 1
-        if change_refined:
-            rows_refined += 1
-        if change_title:
-            rows_titles += 1
-    # CAT Phase 3: status-preserving segment re-sync in the same transaction
-    # (title-only changes never touch the displayed body, so they skip it).
-    from backend.services import segments as segments_svc  # noqa: PLC0415
-    for cid in body_changed_ids:
-        await segments_svc.reproject_from_body(conn, cid)
+    # BEGIN IMMEDIATE opens the write lock BEFORE the scope SELECT (race fixed
+    # 2026-08-08). The read, the refining-skip check, every UPDATE, and the
+    # snapshot write below all ride this ONE transaction; see the
+    # "TRANSACTION GUARANTEE" section of this docstring for the full
+    # rationale. Everything from here to the matching commit/rollback is
+    # pure DB and CPU work (no LLM/network await), so the hold is short.
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = await _select_chapters_for_scope(conn, query)
+        rows_translated = 0
+        rows_refined = 0
+        rows_titles = 0
+        skipped_refining = 0
+        skipped_refining_ids: list[int] = []
+        chapters_touched: set[int] = set()
+        body_changed_ids: list[int] = []
+        snapshot_payloads: dict[int, dict[str, dict]] = {}
+        for r in rows:
+            translated = r["translated_text"]
+            refined = r["refined_text"]
+            title_en = r["title_en"]
+            new_translated, change_translated = _sub(translated)
+            new_refined, change_refined = _sub(refined)
+            new_title, change_title = _sub(title_en)
+            if not (change_translated or change_refined or change_title):
+                continue
+            if r["refinement_status"] in ("pending", "in_progress"):
+                # Skip the chapter whole: a partial write here would be undone by
+                # the refiner's merge anyway. Counted only because it WOULD have
+                # changed, which keeps the id list a usable worklist.
+                skipped_refining += 1
+                skipped_refining_ids.append(r["id"])
+                continue
+            chapters_touched.add(r["id"])
+            if change_translated or change_refined:
+                body_changed_ids.append(r["id"])
+            # Capture the pre-substitution values for restore; only the columns
+            # this run actually changes go in, which keeps the payload small.
+            before: dict[str, str | None] = {}
+            if change_translated:
+                before["translated_before"] = translated
+            if change_refined:
+                before["refined_before"] = refined
+            if change_title:
+                before["title_before"] = title_en
+            snapshot_payloads.setdefault(r["novel_id"], {})[str(r["id"])] = before
+            # One UPDATE per chapter; assemble the SET clause from whichever
+            # columns actually changed so we don't rewrite untouched bodies.
+            set_parts: list[str] = []
+            set_values: list = []
+            if change_translated:
+                set_parts.append("translated_text = ?")
+                set_values.append(new_translated)
+            if change_refined:
+                set_parts.append("refined_text = ?")
+                set_values.append(new_refined)
+            if change_title:
+                set_parts.append("title_en = ?")
+                set_values.append(new_title)
+            set_values.append(r["id"])
+            await conn.execute(
+                f"UPDATE chapters SET {', '.join(set_parts)} WHERE id = ?",
+                set_values,
+            )
+            if change_translated:
+                rows_translated += 1
+            if change_refined:
+                rows_refined += 1
+            if change_title:
+                rows_titles += 1
+        # CAT Phase 3: status-preserving segment re-sync in the same transaction
+        # (title-only changes never touch the displayed body, so they skip it).
+        from backend.services import segments as segments_svc  # noqa: PLC0415
+        for cid in body_changed_ids:
+            await segments_svc.reproject_from_body(conn, cid)
 
-    # One snapshot per touched novel, inside the same transaction as the
-    # UPDATEs so a crash between them can't leave un-restorable changes. One
-    # token across all novels keeps a multi-novel global apply one logical
-    # undo group, matching commit_preview's per-commit token.
-    from backend.services.fr_snapshots import record_snapshot  # noqa: PLC0415
-    commit_token = f"glossary-{secrets.token_urlsafe(16)}"
-    snapshot_ids: list[int] = []
-    for touched_novel_id, payload in snapshot_payloads.items():
-        sid = await record_snapshot(
-            conn,
-            novel_id=touched_novel_id,
-            commit_token=commit_token,
-            find_pattern=old_en,
-            replace_pattern=new_en,
-            target="both",
-            scope="novel" if novel_id is not None else "all",
-            chapters_changed=len(payload),
-            payload=payload,
-        )
-        if sid is not None:
-            snapshot_ids.append(sid)
+        # One snapshot per touched novel, inside the same transaction as the
+        # UPDATEs so a crash between them can't leave un-restorable changes. One
+        # token across all novels keeps a multi-novel global apply one logical
+        # undo group, matching commit_preview's per-commit token.
+        from backend.services.fr_snapshots import record_snapshot  # noqa: PLC0415
+        commit_token = f"glossary-{secrets.token_urlsafe(16)}"
+        snapshot_ids: list[int] = []
+        for touched_novel_id, payload in snapshot_payloads.items():
+            sid = await record_snapshot(
+                conn,
+                novel_id=touched_novel_id,
+                commit_token=commit_token,
+                find_pattern=old_en,
+                replace_pattern=new_en,
+                target="both",
+                scope="novel" if novel_id is not None else "all",
+                chapters_changed=len(payload),
+                payload=payload,
+            )
+            if sid is not None:
+                snapshot_ids.append(sid)
 
-    skipped_translating = await _count_translating_in_scope(conn, novel_id)
-    await conn.commit()
+        skipped_translating = await _count_translating_in_scope(conn, novel_id)
+        await conn.commit()
+    except Exception:
+        # Exception (not BaseException) so signal-driven shutdown propagates
+        # immediately without a cooperative rollback round-trip, matching
+        # uploads.py::create_novel_and_chapters / append_with_offset.
+        await conn.rollback()
+        raise
     return CommitResult(
         chapters_updated=len(chapters_touched),
         rows_updated_translated=rows_translated,
