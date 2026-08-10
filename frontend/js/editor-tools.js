@@ -44,6 +44,11 @@ onNovelChange(novelId, d => {
       refreshGlossarySurfaces();
       if (typeof editing !== "undefined" && !editing) loadSegments();
     });
+  } else if (d.type === "appended" || d.type === "inserted") {
+    // Cross-tab import: another tab's bulk/insert changed this novel's
+    // chapter list. Without this the ch-select, prev/next, and a concordance
+    // jump keep using the stale list this tab booted with.
+    refreshChaptersCache();
   }
 });
 
@@ -54,15 +59,47 @@ function refreshGlossarySurfaces() {
   if (seg && typeof renderGlossaryChips === "function") renderGlossaryChips(seg);
 }
 
+// Re-fetch the chapter list and rebuild the ch-select + nav chrome around
+// whatever chapter is currently open (bootEditor's own option markup, so a
+// cross-tab import repaints identically to a fresh page load). Shared by the
+// onNovelChange handler above and jumpToSegment's absent-chapter guard below.
+// Resolves null on a failed fetch so callers can fall back honestly.
+async function refreshChaptersCache() {
+  let chapters;
+  try {
+    chapters = await api.chapters(novelId);
+  } catch (_) {
+    return null;
+  }
+  chaptersCache = chapters;
+  chSelect.innerHTML = chapters.map(c => {
+    const title = c.title_en || c.title_zh || "";
+    return `<option value="${c.chapter_num}">Ch. ${c.chapter_num}${title ? ` · ${escapeHtml(title)}` : ""}</option>`;
+  }).join("");
+  updateBar(); // re-selects currentCh (a no-op when it is no longer present) + prev/next
+  return chapters;
+}
+
 // Jump to a segment row, crossing chapters when needed. renderState selects
 // rowFor(focusSeg) once the payload lands, so setting focusSeg right after
 // gotoChapter() (which starts the async load) is enough for the cross-chapter
 // case.
-function jumpToSegment(ch, idx) {
+async function jumpToSegment(ch, idx) {
   if (ch === currentCh) {
     const row = Number.isFinite(idx) ? rowFor(idx) : null;
     if (row) selectRow(row);
     return;
+  }
+  // Concordance hits and missing-locked-term rows can name a chapter this
+  // tab's chaptersCache no longer has (a mid-novel insert renumbered it in
+  // another tab). Validate first: an unvalidated gotoChapter would strand
+  // the nav bar on an unknown chapter instead of just failing honestly.
+  if (chapterIndex(ch) < 0) {
+    await refreshChaptersCache();
+    if (chapterIndex(ch) < 0) {
+      showToast("That chapter is no longer in this novel.", "err");
+      return;
+    }
   }
   gotoChapter(ch);
   if (Number.isFinite(idx)) {
@@ -102,8 +139,14 @@ const OBSERVATION_KIND_LABELS = {
 // instead of the plain GET. Falls back to the GET with a small note while
 // the chapter is translating (409 chapter_translating: the queue owns the
 // rows until its success commit).
+// Four concurrent callers (open, the Re-check button, the post-save
+// debounce below, and dismiss) can each have a call in flight at once; a
+// slow one landing after a faster, later one would blast stale rows over
+// the fresh paint. obsRenderSeq stamps the call allowed to paint.
+let obsRenderSeq = 0;
 async function loadAndRenderObservations({ recheck = false } = {}) {
   if (!obsList) return;
+  const seq = ++obsRenderSeq;
   obsList.innerHTML = '<p class="muted">Loading…</p>';
   let rows;
   let note = "";
@@ -123,9 +166,11 @@ async function loadAndRenderObservations({ recheck = false } = {}) {
       rows = await api.chapterObservations(novelId, currentCh);
     }
   } catch (e) {
+    if (seq !== obsRenderSeq) return;
     obsList.innerHTML = `<p class="status err">Failed to load: ${escapeHtml(e.message)}</p>`;
     return;
   }
+  if (seq !== obsRenderSeq) return;
   const noteHtml = note ? `<p class="muted">${escapeHtml(note)}</p>` : "";
   if (!rows || !rows.length) {
     obsList.innerHTML = noteHtml
@@ -326,7 +371,7 @@ if (insertChapterDialog) {
       insertTextArea.value = "";
       insertStatus.textContent = "";
     }
-    insertChapterDialog.showModal();
+    if (!insertChapterDialog.open) insertChapterDialog.showModal();
   });
   insertCancel?.addEventListener("click", () => {
     stashInsertDraft();
@@ -379,7 +424,7 @@ if (styleNoteDialog) {
   document.getElementById("editor-style-note")?.addEventListener("click", async () => {
     styleNoteText.value = "";
     styleNoteStatus.textContent = "Loading…";
-    styleNoteDialog.showModal();
+    if (!styleNoteDialog.open) styleNoteDialog.showModal();
     try {
       const novel = await api.novel(novelId);
       styleNoteOriginal = (novel.style_note || "").trim();
@@ -708,14 +753,28 @@ tfSave?.addEventListener("click", async () => {
         termFormDialog.close();
         return;
       }
+      // Re-fetch the server-current term_en BEFORE the PATCH, only when a
+      // rename is actually happening: this dialog's snapshot (termFormEntry)
+      // was taken when it opened, and if another tab renamed this entry
+      // while it sat open, the snapshot's oldEn no longer exists in the
+      // stored chapters, and the in-place rewrite below would hunt for text
+      // that isn't there, diverging the corpus silently.
+      let liveOldEn = oldEn;
+      if (patch.term_en) {
+        try {
+          const fresh = await api.glossary(novelId);
+          const freshEntry = (fresh || []).find(g => g.id === entry.id);
+          if (freshEntry) liveOldEn = (freshEntry.term_en || "").trim();
+        } catch (_) { /* network hiccup: fall back to the dialog's snapshot */ }
+      }
       await api.updateGlossary(entry.id, patch);
       let applied = null;
-      if (patch.term_en && oldEn) {
+      if (patch.term_en && liveOldEn && liveOldEn !== en) {
         // In-place rewrite across this novel's chapters (the WTR-lab flow the
         // reader's term-edit popover had). The backend reprojects the segment
         // store in the same transaction; reload so the grid shows the rewrite.
         try {
-          applied = await api.glossaryApplyInPlace(entry.id, oldEn, en);
+          applied = await api.glossaryApplyInPlace(entry.id, liveOldEn, en);
         } catch (_) {
           showToast("Glossary updated, but in-place rewrite failed. Try the Glossary page.", "err");
         }
@@ -782,6 +841,15 @@ function gridSelection() {
   return { text, rect, inZh: cell.classList.contains("seg-src") };
 }
 
+// EN-side comparison key: lowercase + fold the curly (U+2019) and modifier
+// (U+02BC) apostrophes to the straight one. Mirrors term-marks.js's enKey
+// (chapter text and glossary rows spell apostrophes differently), so
+// selecting an already-marked term offers Revise instead of minting a
+// duplicate through Add. zh stays exact: no apostrophe ambiguity on that side.
+function enCompareKey(s) {
+  return String(s == null ? "" : s).replace(/[’ʼ]/g, "'").toLowerCase();
+}
+
 async function showSelPopover() {
   clearSelPop();
   const found = gridSelection();
@@ -793,10 +861,10 @@ async function showSelPopover() {
   // Alias-aware match (slash-split, both sides): selecting one surface form
   // of an entry ("筑基" when the row is "筑基 / 築基") must offer Revise,
   // not push a duplicate through Add.
-  const lc = text.toLowerCase();
+  const lc = enCompareKey(text);
   const existing = (entries || []).find(g => inZh
     ? zhAliases(g.term_zh).includes(text)
-    : zhAliases(g.term_en).some(a => a.toLowerCase() === lc));
+    : zhAliases(g.term_en).some(a => enCompareKey(a) === lc));
 
   selPop = document.createElement("div");
   selPop.className = "sel-pop";
@@ -913,6 +981,12 @@ async function refreshMissingLockedTier() {
 // here" listing (click to revise), not a warning, so naive matching is fine.
 function renderChapterTermTiers() {
   if (!chapterTermsEl) return;
+  // Gate on the rail's open state (mirrors editor-assist's scheduleAssist):
+  // with the rail closed this scan and refreshMissingLockedTier's real GET
+  // are invisible work, a full O(glossary x segments) pass plus a network
+  // round trip on every save/confirm. setAssistOpen is wrapped below to
+  // repaint the moment the rail opens, so nothing is missed, just deferred.
+  if (!assistOpen) return;
   scheduleMissingLockedTier();
   const segs = currentData && currentData.segments ? currentData.segments : [];
   if (!segs.length) {
@@ -981,8 +1055,30 @@ chapterTermsEl?.addEventListener("click", async (e) => {
   if (entry) openTermForm(entry, null);
 });
 
+// editor:segment-updated fires on every save/confirm (potentially several
+// per minute while proofreading); debounce it so a burst of saves runs the
+// scan once after things settle, not once per save. editor:segments-loaded
+// (once per chapter open) stays undebounced.
+let chapterTermTiersDebounce = null;
+function scheduleChapterTermTiers() {
+  if (!assistOpen) return;
+  if (chapterTermTiersDebounce) clearTimeout(chapterTermTiersDebounce);
+  chapterTermTiersDebounce = setTimeout(renderChapterTermTiers, 400);
+}
+
 document.addEventListener("editor:segments-loaded", renderChapterTermTiers);
-document.addEventListener("editor:segment-updated", renderChapterTermTiers);
+document.addEventListener("editor:segment-updated", scheduleChapterTermTiers);
+
+// Rail-open repaint: editor-assist.js owns setAssistOpen (the toggle button
+// AND the 'a' keyboard shortcut both funnel through it), so wrapping it here
+// is the one hook that covers both entry points. Without this, a rail that
+// was closed while the gate above skipped every render would stay blank
+// forever after the user opens it.
+const _baseSetAssistOpen = setAssistOpen;
+setAssistOpen = function (on) {
+  _baseSetAssistOpen(on);
+  if (on) renderChapterTermTiers();
+};
 
 // Boot paint (segments usually land later and repaint via the event).
 renderChapterTermTiers();
