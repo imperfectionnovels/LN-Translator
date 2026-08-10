@@ -48,7 +48,10 @@ const CATS = [
 const CAT_LABEL = Object.fromEntries(CATS.map(c => [c.id, c.label]));
 const CAT_GLYPH = Object.fromEntries(CATS.map(c => [c.id, c.glyph]));
 
-function escapeAttr(s) { return String(s || "").replace(/"/g, "&quot;"); }
+// Attributes and text both interpolate through escapeHtml from utils.js. It
+// escapes & as well, so a term containing a literal entity sequence round-trips
+// through value="..." byte-identical instead of coming back mangled on the next
+// blur (and popping an apply dialog for a rename the user never made).
 
 // showToast is window.showToast from utils.js (audit 6.6).
 
@@ -81,8 +84,20 @@ const applyChoiceDlg = document.getElementById("apply-choice-dialog");
 const applyChoiceBody = document.getElementById("apply-choice-body");
 const applyChoiceMeta = document.getElementById("apply-choice-meta");
 
+// One apply-choice flow at a time. The [data-choice] buttons are shared page
+// markup, so a second open would stack a second handler set on them and one
+// click would fire BOTH apply-in-place calls concurrently, leaving the corpus
+// part-old, part-new. Two quick term_en edits do exactly that: the second blur
+// lands while the first PATCH is in flight, so both resolve against the same
+// stale prevEntry. The flag covers the whole call, dialog plus the async work
+// that follows it, and the caller falls back to the plain Saved toast so the
+// skipped save is still acknowledged.
+let applyChoiceBusy = false;
+
 function openApplyChoiceDialog(entry, oldTermEn) {
-  if (!applyChoiceDlg) return;
+  if (!applyChoiceDlg) return false;
+  if (applyChoiceBusy || applyChoiceDlg.open) return false;
+  applyChoiceBusy = true;
   applyChoiceBody.innerHTML =
     `<p>Glossary term updated:</p>
      <p><strong>${escapeHtml(entry.term_zh)}</strong>: ${escapeHtml(oldTermEn)} → <strong>${escapeHtml(entry.term_en)}</strong></p>
@@ -96,51 +111,55 @@ function openApplyChoiceDialog(entry, oldTermEn) {
     handlers.forEach(({ btn, fn }) => btn.removeEventListener("click", fn));
     applyChoiceDlg.removeEventListener("cancel", onCancelEvt);
   }
-  const onCancelEvt = () => cleanup();
+  const onCancelEvt = () => { cleanup(); applyChoiceBusy = false; };
 
   applyChoiceDlg.querySelectorAll("[data-choice]").forEach(btn => {
     const fn = async () => {
       const choice = btn.dataset.choice;
       cleanup();
       applyChoiceDlg.close();
-      if (choice === "none") {
-        showToast("Glossary updated. Existing chapters unchanged.", "ok");
-        return;
-      }
-      if (choice === "apply") {
-        try {
-          const res = await api.glossaryApplyInPlace(entry.id, oldTermEn, entry.term_en);
-          showToast(glossaryApplyToastText(res), "ok");
-          broadcastNovelChange(novelId, "glossary");
-        } catch (e) {
-          showToast(`Apply failed: ${e.message}`, "err");
-        }
-        return;
-      }
-      if (choice === "retranslate") {
-        let affected;
-        try { affected = await api.affectedChapters(entry.id); }
-        catch (e) { showToast(`Couldn't list affected chapters: ${e.message}`, "err"); return; }
-        if (!affected || !affected.length) {
-          showToast(`No chapters contain “${entry.term_zh}”.`, "info");
+      try {
+        if (choice === "none") {
+          showToast("Glossary updated. Existing chapters unchanged.", "ok");
           return;
         }
-        const ok = await confirmDialog({
-          title: `Re-translate ${affected.length} chapter${affected.length === 1 ? "" : "s"}?`,
-          body: `<p>Affected chapters use <strong>${escapeHtml(entry.term_zh)}</strong>.</p>
-                 <p class="muted">Existing polished text for these chapters will be cleared when they're re-translated.</p>`,
-          meta: `<strong>Chapters:</strong> ${affectedChapterLinks(affected)}`,
-          okText: "Re-translate",
-        });
-        if (!ok) return;
-        try {
-          const res = await api.retranslateAffected(entry.id);
-          const queued = res.queued_count || 0;
-          showToast(`Queued ${queued} chapter${queued === 1 ? "" : "s"} for re-translation.`, "ok");
-          broadcastNovelChange(novelId, "glossary");
-        } catch (e) {
-          showToast(`Re-translate failed: ${e.message}`, "err");
+        if (choice === "apply") {
+          try {
+            const res = await api.glossaryApplyInPlace(entry.id, oldTermEn, entry.term_en);
+            showToast(glossaryApplyToastText(res), "ok");
+            broadcastNovelChange(novelId, "glossary");
+          } catch (e) {
+            showToast(`Apply failed: ${e.message}`, "err");
+          }
+          return;
         }
+        if (choice === "retranslate") {
+          let affected;
+          try { affected = await api.affectedChapters(entry.id); }
+          catch (e) { showToast(`Couldn't list affected chapters: ${e.message}`, "err"); return; }
+          if (!affected || !affected.length) {
+            showToast(`No chapters contain “${entry.term_zh}”.`, "info");
+            return;
+          }
+          const ok = await confirmDialog({
+            title: `Re-translate ${affected.length} chapter${affected.length === 1 ? "" : "s"}?`,
+            body: `<p>Affected chapters use <strong>${escapeHtml(entry.term_zh)}</strong>.</p>
+                   <p class="muted">Existing polished text for these chapters will be cleared when they're re-translated.</p>`,
+            meta: `<strong>Chapters:</strong> ${affectedChapterLinks(affected)}`,
+            okText: "Re-translate",
+          });
+          if (!ok) return;
+          try {
+            const res = await api.retranslateAffected(entry.id);
+            const queued = res.queued_count || 0;
+            showToast(`Queued ${queued} chapter${queued === 1 ? "" : "s"} for re-translation.`, "ok");
+            broadcastNovelChange(novelId, "glossary");
+          } catch (e) {
+            showToast(`Re-translate failed: ${e.message}`, "err");
+          }
+        }
+      } finally {
+        applyChoiceBusy = false;
       }
     };
     btn.addEventListener("click", fn);
@@ -148,6 +167,7 @@ function openApplyChoiceDialog(entry, oldTermEn) {
   });
   applyChoiceDlg.addEventListener("cancel", onCancelEvt);
   applyChoiceDlg.showModal();
+  return true;
 }
 
 /* ============================================================
@@ -226,6 +246,25 @@ async function loadHealth() {
   } catch (e) {
     healthRibbon.classList.add("hidden");
   }
+}
+
+// The header line and the health report are both snapshots of entries taken at
+// load(). Every mutation moves them, so without this the ribbon and the health
+// dialog keep reporting phantoms the user already fixed. Health is a server
+// round-trip, so it is debounced: a run of per-field blurs collapses into one
+// request. Nulling the cache is what forces the dialog to refetch rather than
+// re-render the stale report it already has.
+let healthTimer = null;
+
+function updateHeadCounts() {
+  headSub.textContent = `${entries.length} terms · ${entries.filter(e => e.locked).length} locked.`;
+}
+
+function afterMutation() {
+  updateHeadCounts();
+  healthCache = null;
+  if (healthTimer) clearTimeout(healthTimer);
+  healthTimer = setTimeout(loadHealth, 1000);
 }
 
 function renderHealthRibbon() {
@@ -342,7 +381,7 @@ function renderPlate(e) {
     : `<div class="usage empty" data-id="${e.id}" title="Add a usage note — injected into every translation prompt">No usage note · <em>click to add</em></div>`;
   return `
     <div class="plate ${isSel ? "selected" : ""} ${isEditing ? "editing" : ""}" data-id="${e.id}">
-      <div class="sel" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeAttr(e.term_en || e.term_zh)}" title="Select for bulk actions"></div>
+      <div class="sel" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeHtml(e.term_en || e.term_zh)}" title="Select for bulk actions"></div>
       <div class="head">
         <div class="han-block">${escapeHtml(e.term_zh)}</div>
         <div class="badges">${badges.join("")}</div>
@@ -360,10 +399,10 @@ function renderPlate(e) {
         <span class="meta-text"></span>
         <span class="spacer"></span>
         <span class="row-acts">
-          <button type="button" class="ico ${e.locked ? "cin on" : ""}" data-act="toggle-lock" title="${e.locked ? "Unlock this term" : "Lock this term (won't be auto-overwritten)"}" aria-label="${e.locked ? "Unlock" : "Lock"} ${escapeAttr(e.term_en || e.term_zh)}">鎖</button>
-          <button type="button" class="ico jade" data-act="retranslate" title="Re-translate every chapter that uses this term" aria-label="Retranslate chapters using ${escapeAttr(e.term_en || e.term_zh)}">↻</button>
-          <button type="button" class="ico" data-act="edit" title="Edit term" aria-label="Edit ${escapeAttr(e.term_en || e.term_zh)}">✎</button>
-          <button type="button" class="ico" data-act="menu" title="More actions" aria-label="More actions for ${escapeAttr(e.term_en || e.term_zh)}">⋯</button>
+          <button type="button" class="ico ${e.locked ? "cin on" : ""}" data-act="toggle-lock" title="${e.locked ? "Unlock this term" : "Lock this term (won't be auto-overwritten)"}" aria-label="${e.locked ? "Unlock" : "Lock"} ${escapeHtml(e.term_en || e.term_zh)}">鎖</button>
+          <button type="button" class="ico jade" data-act="retranslate" title="Re-translate every chapter that uses this term" aria-label="Retranslate chapters using ${escapeHtml(e.term_en || e.term_zh)}">↻</button>
+          <button type="button" class="ico" data-act="edit" title="Edit term" aria-label="Edit ${escapeHtml(e.term_en || e.term_zh)}">✎</button>
+          <button type="button" class="ico" data-act="menu" title="More actions" aria-label="More actions for ${escapeHtml(e.term_en || e.term_zh)}">⋯</button>
         </span>
       </div>
     </div>
@@ -376,7 +415,7 @@ function renderPlateEditZone(e) {
     <div class="edit-zone">
       <div class="field">
         <label>English</label>
-        <input data-edit="term_en" value="${escapeAttr(e.term_en)}">
+        <input data-edit="term_en" value="${escapeHtml(e.term_en)}">
       </div>
       <div class="field-row">
         <div class="field">
@@ -399,7 +438,7 @@ function renderPlateEditZone(e) {
       </div>
       <div class="field">
         <label>Notes (yours only. Not sent to translator)</label>
-        <input data-edit="notes" value="${escapeAttr(e.notes || "")}" placeholder="Private notes">
+        <input data-edit="notes" value="${escapeHtml(e.notes || "")}" placeholder="Private notes">
       </div>
       <div class="toolbar">
         <span class="hint">Saves on change · close with <span class="kbd">esc</span></span>
@@ -466,10 +505,10 @@ function renderListRow(e) {
   const usage = isEditing
     ? `<div class="use-cell">usage_note · editing below</div>`
     : (e.usage_note && e.usage_note.trim()
-        ? `<div class="use-cell" data-act="edit-usage" title="${escapeAttr(e.usage_note)}">${escapeHtml(e.usage_note)}</div>`
+        ? `<div class="use-cell" data-act="edit-usage" title="${escapeHtml(e.usage_note)}">${escapeHtml(e.usage_note)}</div>`
         : `<div class="use-cell empty" data-act="edit-usage">no usage note · <span class="add-cta">click to add</span></div>`);
   const enCell = isEditing
-    ? `<div class="en-cell"><input data-edit="term_en" value="${escapeAttr(e.term_en)}"></div>`
+    ? `<div class="en-cell"><input data-edit="term_en" value="${escapeHtml(e.term_en)}"></div>`
     : `<div class="en-cell">${escapeHtml(e.term_en)}</div>`;
   const catCell = isEditing
     ? `<div class="cat-cell"><select data-edit="category">${["character","place","technique","item","idiom","other"].map(c => `<option value="${c}" ${c === cat ? "selected" : ""}>${c}</option>`).join("")}</select></div>`
@@ -487,7 +526,7 @@ function renderListRow(e) {
     </div>` : "";
   return `
     <div class="list-row ${isSel ? "selected" : ""} ${isEditing ? "editing" : ""}" data-id="${e.id}">
-      <div class="sel-cell" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeAttr(e.term_en || e.term_zh)}"></div>
+      <div class="sel-cell" data-act="toggle-select" role="checkbox" aria-checked="${isSel ? "true" : "false"}" tabindex="0" aria-label="Select ${escapeHtml(e.term_en || e.term_zh)}"></div>
       <div class="han-cell"><div class="zh">${escapeHtml(e.term_zh)}</div></div>
       ${enCell}
       ${catCell}
@@ -661,23 +700,38 @@ async function saveField(id, field, value) {
   const prevEntry = entries.find(x => x.id === id);
   if (!prevEntry) return;
   const oldTermEn = prevEntry.term_en;
-  if (prevEntry[field] === value) return; // nothing to do
+  // No-change guard. A null usage_note / notes renders as "", so an exact
+  // compare would treat clicking into an empty field and back out as a real
+  // edit, PATCH "" and implicitly LOCK an auto entry (lock-on-edit is the
+  // backend contract). Normalize both sides for the text fields; booleans
+  // (the lock checkbox) still compare exactly.
+  const prevValue = prevEntry[field];
+  const unchanged = typeof value === "boolean"
+    ? prevValue === value
+    : String(prevValue ?? "") === String(value ?? "");
+  if (unchanged) return; // nothing to do
   try {
     const updated = await api.updateGlossary(id, { [field]: value });
     const idx = entries.findIndex(x => x.id === id);
     if (idx >= 0) entries[idx] = updated;
     renderCatRail();
-    render();
+    // A full render() rewrites rowsEl wholesale, which tears down the open
+    // edit zone: focus is lost, anything typed since the blur goes with it,
+    // and under the Auto source filter the just-locked row is filtered out
+    // from under the editor. Skip while a zone is open: closeEdit renders
+    // unconditionally, and it reads from entries, so the row's display side
+    // catches up the moment the zone closes.
+    if (editingId == null) render();
+    afterMutation();
     broadcastNovelChange(novelId, "glossary");
-    if (
+    const askedToApply =
       field === "term_en"
       && oldTermEn != null
       && oldTermEn !== updated.term_en
       && oldTermEn.trim()
       && updated.term_en.trim()
-    ) {
-      openApplyChoiceDialog(updated, oldTermEn);
-    } else {
+      && openApplyChoiceDialog(updated, oldTermEn);
+    if (!askedToApply) {
       showToast(`Saved “${updated.term_zh}”.`, "ok");
     }
   } catch (e) {
@@ -724,6 +778,8 @@ function openEdit(id, focusField) {
 function closeEdit() {
   if (editingId == null) return;
   editingId = null;
+  // Unconditional: mid-edit saves skip their own render, so this is where
+  // the row's display side picks up what was saved while the zone was open.
   render();
 }
 
@@ -843,6 +899,7 @@ async function promoteOne(id) {
     entries = entries.filter(x => x.id !== id);
     renderCatRail();
     render();
+    afterMutation();
     // Promotion moves the entry OUT of this novel and INTO the cross-novel
     // global glossary, so its effect isn't scoped to this novel: broadcast
     // with a null novel_id (Block 2, 2026-08-07), same as glossary-global.js.
@@ -873,6 +930,7 @@ async function deleteOne(id) {
     selected.delete(id);
     renderCatRail();
     render();
+    afterMutation();
     broadcastNovelChange(novelId, "glossary");
     showToast(`Deleted “${entry.term_zh}”.`, "ok");
   } catch (e) {
@@ -898,6 +956,7 @@ async function bulkLockAction(locked) {
     selected.clear();
     renderCatRail();
     render();
+    afterMutation();
     broadcastNovelChange(novelId, "glossary");
     showToast(`${locked ? "Locked" : "Unlocked"} ${ids.length} entr${ids.length === 1 ? "y" : "ies"}.`, "ok");
   } catch (e) {
@@ -951,6 +1010,7 @@ document.getElementById("gloss-bulk-delete")?.addEventListener("click", async ()
     selected.clear();
     renderCatRail();
     render();
+    afterMutation();
     broadcastNovelChange(novelId, "glossary");
     showToast(`Deleted ${n} entr${n === 1 ? "y" : "ies"}.`, "ok");
   } catch (e) {
@@ -992,7 +1052,12 @@ function wireAddCard() {
   });
 }
 
+// A second "Add & lock" click while the create is in flight would post the
+// same term twice; the loser comes back as a 409 the user reads as a failure.
+let addInFlight = false;
+
 async function submitAdd(lockIt) {
+  if (addInFlight) return;
   const card = rowsEl.querySelector("[data-add-card]");
   if (!card) return;
   const zh = card.querySelector('[data-add="term_zh"]').value.trim();
@@ -1001,6 +1066,9 @@ async function submitAdd(lockIt) {
   const usage = card.querySelector('[data-add="usage_note"]').value.trim();
   const notes = card.querySelector('[data-add="notes"]').value.trim();
   if (!zh || !en) { showToast("Chinese and English are required.", "err"); return; }
+  const addBtns = card.querySelectorAll("[data-act='add'], [data-act='add-lock']");
+  addInFlight = true;
+  addBtns.forEach(b => { b.disabled = true; });
   try {
     const created = await api.createGlossary(novelId, {
       term_zh: zh, term_en: en, category: cat,
@@ -1018,12 +1086,18 @@ async function submitAdd(lockIt) {
     closeAddCard();
     renderCatRail();
     render();
+    afterMutation();
     broadcastNovelChange(novelId, "glossary");
     const row = rowsEl.querySelector(`[data-id="${final.id}"]`);
     if (row) { row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1500); }
     showToast(`Added “${final.term_zh}”.`, "ok");
   } catch (e) {
     showToast(e.message, "err");
+  } finally {
+    addInFlight = false;
+    // On success closeAddCard() already re-rendered these away; re-enabling
+    // the detached nodes is a no-op, and on failure the live card is usable.
+    addBtns.forEach(b => { b.disabled = false; });
   }
 }
 
@@ -1068,6 +1142,11 @@ function switchView(v) {
    Keyboard shortcuts (page-level).
    ============================================================ */
 document.addEventListener("keydown", (ev) => {
+  // An open modal owns the keyboard. Without this, Esc aimed at the apply
+  // dialog also collapses the edit zone behind it, and n / v / ⌘K act on a
+  // page the user can't even see.
+  if (document.querySelector("dialog[open]")) return;
+
   const tag = (ev.target.tagName || "").toUpperCase();
   const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || ev.target.isContentEditable;
 
@@ -1112,7 +1191,7 @@ async function load() {
       crumbNovel.href = `/reader?novel=${novelId}`;
     }
     entries = await api.glossary(novelId);
-    headSub.textContent = `${entries.length} terms · ${entries.filter(e => e.locked).length} locked.`;
+    updateHeadCounts();
     renderCatRail();
     render();
     _maybeFocusEntry();
