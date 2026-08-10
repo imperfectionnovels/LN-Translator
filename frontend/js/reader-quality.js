@@ -30,7 +30,7 @@ function _ensureQualityPop() {
 
 function _paintQualityPop() {
   const d = _qualityData;
-  if (!d) return;
+  if (!d || d._ch !== currentCh) return;  // no data, or it belongs to a chapter we've left
   const pop = _ensureQualityPop();
   const rules = Object.entries(d.fixup_rules || {})
     .map(([n, c]) => `<div class="qp-row"><span class="qp-k">${escapeHtml(n)}</span><span class="qp-v">${c}</span></div>`)
@@ -45,7 +45,7 @@ function _paintQualityPop() {
     <div class="qp-row"><span class="qp-k">Observer hits</span><span class="qp-v">${d.observer_hits}</span></div>
     <div class="qp-row"><span class="qp-k">Fixup churn</span><span class="qp-v">${d.fixup_total}</span></div>
     ${rules}
-    <div class="qp-actions"><a class="qp-link" href="/editor?novel=${novelId}&ch=${currentCh}">Triage in the CAT editor →</a></div>`;
+    <div class="qp-actions"><a class="qp-link" href="/editor?novel=${novelId}&ch=${d._ch}">Triage in the CAT editor →</a></div>`;
   // Anchor under the badge, kept on-screen.
   const r = _qualityBadge.getBoundingClientRect();
   pop.style.top = `${r.bottom + 6}px`;
@@ -54,12 +54,23 @@ function _paintQualityPop() {
 
 function _openQualityPop() {
   _paintQualityPop();
-  if (_qualityPop) _qualityPop.hidden = false;
-  _qualityBadge?.setAttribute("aria-expanded", "true");
+  const opened = !!(_qualityData && _qualityData._ch === currentCh);
+  if (opened && _qualityPop) _qualityPop.hidden = false;
+  _qualityBadge?.setAttribute("aria-expanded", opened ? "true" : "false");
 }
 function _closeQualityPop() {
   if (_qualityPop) _qualityPop.hidden = true;
   _qualityBadge?.setAttribute("aria-expanded", "false");
+}
+
+// Clear any painted badge/popover state. Called on every non-done render path
+// so a stale score from a previously rendered chapter never lingers on a
+// pending/translating/error chapter. Idempotent, safe before any chapter has
+// rendered (nothing to null, badge and pop are already absent/hidden).
+function resetQualityBadge() {
+  _qualityData = null;
+  if (_qualityBadge) _qualityBadge.hidden = true;
+  _closeQualityPop();
 }
 
 _qualityBadge?.addEventListener("click", (ev) => {
@@ -89,7 +100,8 @@ async function renderQualityBadge(ch) {
   try {
     const d = await api.chapterQuality(novelId, ch.chapter_num);
     if (currentCh !== ch.chapter_num) return;  // stale response guard
-    if (!d || !d.scored) { _qualityBadge.hidden = true; return; }
+    if (!d || !d.scored) { _qualityBadge.hidden = true; _closeQualityPop(); return; }
+    d._ch = ch.chapter_num;  // stamp so the popover/triage link can't cross-wire chapters
     _qualityData = d;
     _qualityBadgeScore.textContent = d.violations;
     _qualityBadge.dataset.band = _qualityBand(d.rate);
