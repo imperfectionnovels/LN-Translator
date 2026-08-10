@@ -300,18 +300,24 @@ nothing. The element renders as a phantom: empty-looking chrome that is still
 clickable (Playwright happily clicks it while `el.hidden` reads `true`, which
 makes test results look impossible).
 
-Whenever a styled container is toggled via the `hidden` property or attribute,
-pair the display rule with an explicit restore:
+RESOLVED at the root 2026-08-10 (52c90d0): `base.css` now declares, early,
 
 ```css
-.thing { display: flex; }
-.thing[hidden] { display: none; }
+[hidden]:not([hidden="until-found"]) { display: none !important; }
 ```
 
-Found 2026-06-11 on `.app-toast` (caught in review) and `.fr-undo-bar` (latent
-since the undo bar shipped: it rendered a permanently visible phantom Undo
-strip). Grep candidates: any class with `display:` that JS toggles with
-`.hidden =` or `setAttribute("hidden", ...)`.
+so the attribute wins over any component `display` rule app-wide, and the
+per-selector `.thing[hidden] { display: none; }` restores are no longer
+needed for new components (the ten legacy ones remain, harmlessly). The
+trap had been re-patched selector-by-selector ten times and four live
+phantoms existed when the global rule landed. Two things keep it closed:
+do not remove that rule, and do not introduce markup that RELIES on CSS
+showing an element whose `hidden` attribute is set (nothing does today;
+`hidden="until-found"` is unused and deliberately excluded).
+
+History: found 2026-06-11 on `.app-toast` (caught in review) and
+`.fr-undo-bar` (latent phantom Undo strip); still biting on 2026-08-10
+(`.seg-grid-head`, `.continue-card`, `.quality-badge`, `.ac-cmd`).
 
 ## Explicit `locked: false` in a glossary PATCH defeats lock-on-edit
 

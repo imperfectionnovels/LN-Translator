@@ -1129,3 +1129,92 @@ mechanical ones. Judgment calls worth pinning:
   someone writes a bookmarks rebuild). The tm_inconsistency mute check
   skips the insert but still pays the detection SELECTs on muted
   novels (mute has no UI writer today).
+
+## 2026-08-10: Frontend-focused sweep; ~50 verified fixes in 21 file-disjoint blocks
+
+Five parallel finders (S-series backlog triage, lifecycle pages, corpus
+pages, shared modules + small pages, reader/editor hot-zone delta); every
+finding orchestrator-verified against the code and the settled list before
+the fix list; commits ed56754..52c90d0 plus test-pin follow-up 7d8d6d7.
+First sweep ever to cover library/home/settings/glossary/find-replace/
+queue/stats/quality/spine/theme/command-palette/utils/api. Judgment calls
+and lessons worth pinning:
+
+- **The 2026-08-04 S-series frontend batch had never shipped.** Batches 1-2
+  (B/F-series) were committed and logged; Batch 3 (S1-S15) had no commit
+  and no decisions entry, and re-verification found most items still live,
+  including both HIGH ones (stale quality badge, stale assist Apply). The
+  recon claim that S9/S10 were "independently fixed" was WRONG (those
+  dialog guards live in different handlers). Lesson: a planned batch is not
+  a shipped batch; close the loop in decisions.md per batch, not per plan.
+- **Phantom [hidden] became a root fix** (52c90d0). No stylesheet carried a
+  bare [hidden] rule; the trap had been re-patched per-selector ten times
+  and four live phantoms existed. One early
+  `[hidden]:not([hidden="until-found"]) { display: none !important; }` in
+  base.css closes the class; all 27 `.hidden = false` sites verified safe
+  (assigning false removes the attribute). The ten legacy per-selector
+  restores stay (harmless; removing them is churn). Verified live in a
+  fresh Playwright context: editor grid header / continue card / reader
+  quality badge now actually hide.
+- **Stacked apply-choice dialogs fired both renames with one click**
+  (a75537c, a8a7501). Both glossary pages attached per-call handlers to
+  shared [data-choice] buttons with no open guard; the global page's slow
+  usage scan made the window wide. Busy-flag held from call start through
+  the handler's async work; skipped call falls back to the Saved toast.
+  Same class as the 2026-08-08 mini-form lesson: EVERY corpus-mutation
+  surface needs a re-entrancy story, not just an in-flight button guard.
+- **Find/replace commits now bind to the previewed form** (65cac58). The
+  token froze the query but the danger-confirm read the LIVE scope select,
+  so switching all->novel after previewing committed library-wide with no
+  confirm. Any form change invalidates the preview; confirm + broadcast
+  derive from scope captured at preview time. F/R also joined the
+  cross-tab bus (it rewrote corpus text with no broadcast at all).
+- **Scrape jobs were strandable in 'running' forever** (c623931), bricking
+  the import page across restarts (LS-persisted job id + poll that only
+  ends on done/error). Root-fixed in the backend (cancel/resume/orphan
+  paths terminate the job; startup sweep self-heals stranded rows) AND
+  hardened client-side (unknown statuses terminal, 10-min stall bail-out,
+  always-rendered Dismiss). Bonus real bug found while fixing: an
+  unconditional mark_done after the fill loop overwrote a per-chapter
+  failure's error with a false done. Status vocabulary call: no new
+  'cancelled' status (the frontend terminates only on done/error);
+  error_kind carries cancelled/orphaned/unresumable.
+- **Provider secret status now probes reality** (837b898). The card
+  inferred "token stored" from secret_ref being non-null, and editing any
+  Claude provider blind-wrote that ref, making the amber needs-a-token
+  state unreachable. secret_present (a real resolve_secret probe) ships on
+  provider responses; edits stop writing the ref without a token.
+- **novel_defaults had NO writer, ever** (837b898). CLAUDE.md and
+  settings.js's own header described a Settings defaults section; git
+  history shows none ever existed, so uploads.py read a key nothing could
+  write. Restored as a lean two-select section (translator + refinement
+  provider), exactly the whitelist uploads.py reads. Genre and source
+  language stay OFF the page: the 2026-05-25 whitelist removal was
+  deliberate (genre is picked at import, language auto-detected), and a
+  control that looks app-wide but changes nothing is the same defect class
+  as the secret_ref lie. Do not re-add without reversing that decision in
+  uploads.py first.
+- **Verdict reversals from re-verification**: S6's editorNext-half is
+  OBSOLETED (next_chapter_to_edit excludes the confirming chapter by
+  construction); S8's glossary-half was already fixed by the 2026-08-07
+  round; only their live halves shipped. The para= handoff stays
+  deliberately approximate (unchanged pin); it is now also ANCHORED to its
+  chapter on both surfaces so it can never fire on the wrong one.
+- **Editor TDZ lint parametrized over both pages** (426ada6) with
+  synthetic-source self-tests and a proven-teeth injection check. The
+  editor trio had the identical freeze-on-boot hazard with no gate.
+- **Version pins in tests must be floors, not literals** (7d8d6d7). The
+  cross-tab-bus test asserted the literal utils.js?v=2 and tripped on this
+  sweep's legitimate v=3 bump; the sibling reader-glossary pin already had
+  the right shape (parse the integer, assert >= floor).
+- **Implementer-review catches worth remembering**: a haiku implementer
+  shipped an apostrophe-fold regex with mangled codepoints (duplicate
+  straight quote + U+02CE instead of U+2019), a silent no-op; caught by
+  hex-dumping the line in review. When a fix hinges on specific non-ASCII
+  codepoints, verify bytes, not rendered glyphs. Write-only state and
+  "Fix:" review-speak comments from implementers were stripped in review.
+- **Poll-loop etiquette pinned** (07657ef): poll paths never toast
+  (queue-panel's silence was already deliberate; queue.js now matches with
+  an inline stale note after 3 consecutive failures); manual refresh
+  buttons toast. Byte-identical snapshot skips must fold a clock bucket in
+  when the render carries relative timestamps.
