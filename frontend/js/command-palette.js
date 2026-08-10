@@ -192,8 +192,14 @@
   }
 
   document.addEventListener("keydown", (e) => {
-    // Cmd/Ctrl+K opens.
+    // Cmd/Ctrl+K opens (or refocuses) the palette.
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // Guard against a stray dialog already open (insert-chapter draft,
+      // import preview, purge confirm): showModal over it would orphan
+      // focus and stack modals. The palette's OWN dialog doesn't count, so
+      // Ctrl/Cmd+K still works while the palette itself is open.
+      const openDialog = document.querySelector("dialog[open]");
+      if (openDialog && openDialog !== dialog) return;
       e.preventDefault();
       open();
       return;
@@ -225,6 +231,10 @@
   };
 
   document.addEventListener("keydown", (e) => {
+    // A stray g-chord while any modal is open (insert-chapter draft, import
+    // preview, purge confirm) must not navigate the page away and destroy
+    // the user's in-progress work.
+    if (document.querySelector("dialog[open]")) return;
     if (e.target.matches?.("input, textarea, select, [contenteditable]")) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = (e.key || "").toLowerCase();

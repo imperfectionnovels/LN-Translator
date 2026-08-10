@@ -295,6 +295,19 @@ document.addEventListener("mousedown", (e) => {
     if (!d.contains(e.target)) d.open = false;
   });
 });
+// Also close when the click lands ON a menu item (most items open a dialog),
+// so the details doesn't stay expanded behind the modal and after it closes.
+// This has to be a separate "click" listener, not folded into the mousedown
+// closer above: closing on mousedown would collapse the <details> content
+// before the item's own click handler runs, since the item's listener is
+// attached directly to the item and fires during the click's target phase,
+// before this document-level bubble listener sees the event.
+document.addEventListener("click", (e) => {
+  const item = e.target.closest(".util-menu-item");
+  if (!item) return;
+  const d = item.closest("details.util-menu, details.download-menu");
+  if (d) d.open = false;
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     document.querySelectorAll(_MENU_DETAILS_SEL).forEach(d => { d.open = false; });

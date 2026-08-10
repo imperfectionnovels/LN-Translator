@@ -255,6 +255,21 @@ p { margin: 0 0 1em; }
   font-family: var(--font-family-sans);
   font-size: 0.88em;
 }
+
+/* Root fix (2026-08-10): the UA stylesheet's bare `[hidden] { display: none }`
+ * rule sits at normal author-vs-UA specificity, so any component class that
+ * sets its own `display` value silently defeats the `hidden` ATTRIBUTE: the
+ * element stays visible and clickable even though el.hidden reads true. This
+ * exact trap has been patched after the fact more than ten times, one
+ * selector at a time (.app-toast[hidden] below, .fr-undo-bar[hidden],
+ * .add-entry-form[hidden], and others across the page sheets). Declaring it
+ * once, early, with !important closes the whole class of bug instead of the
+ * next instance of it. `:not([hidden="until-found"])` reserves the one
+ * legitimate non-boolean hidden value (find-in-page reveal); nothing in this
+ * app uses it today.
+ */
+[hidden]:not([hidden="until-found"]) { display: none !important; }
+
 .hidden { display: none !important; }
 
 code {
