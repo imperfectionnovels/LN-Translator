@@ -49,6 +49,9 @@ const els = {
   secretValue: document.getElementById("secret-value"),
   secretExplainer: document.getElementById("secret-explainer"),
   tocList: document.getElementById("settings-toc-list"),
+  defTranslator: document.getElementById("defaults-translator"),
+  defRefinement: document.getElementById("defaults-refinement"),
+  defStatus: document.getElementById("defaults-status"),
 };
 
 // Provider type catalog. Fetched once per page load from
@@ -379,12 +382,18 @@ function providerStatus(p) {
   const needsSecret = entry
     ? entry.auth === "api_key"
     : (p.provider_type === "gemini" || p.provider_type === "deepseek");
+  //
+  // Both branches below key "stored" off `p.secret_present`, the backend's
+  // probe of whether the ref actually resolves (keychain, then env var),
+  // NOT off `p.secret_ref` being non-null. A ref is only a NAME: the row
+  // can carry one with nothing behind it, and reading the name as proof
+  // of a stored secret painted a green light over an empty keychain.
   if (!needsSecret) {
     // Subscription types that accept an optional token (Claude after the
     // credit-pool change): reflect whether one is stored, so a "Key" button
     // never sits next to a misleading "no secret needed".
     if (entry?.subscription_token_ref) {
-      return p.secret_ref
+      return p.secret_present
         ? { kind: "ok", hint: "Subscription token stored (Click Key to rotate)" }
         : { kind: "warn", hint: "Needs a subscription token. Edit and run `claude setup-token`" };
     }
@@ -393,7 +402,10 @@ function providerStatus(p) {
       : "No secret needed (subscription / local auth)";
     return { kind: "ok", hint };
   }
-  if (p.secret_ref) return { kind: "ok", hint: `Secret resolves via ${p.secret_ref}` };
+  if (p.secret_present) return { kind: "ok", hint: `Secret resolves via ${p.secret_ref}` };
+  if (p.secret_ref) {
+    return { kind: "warn", hint: `${p.secret_ref} is named but resolves to nothing. Click Key to store it` };
+  }
   return { kind: "warn", hint: "Needs an API key. Click Set API key" };
 }
 
@@ -592,8 +604,102 @@ async function refresh() {
   try {
     const providers = await api.providers();
     await renderProviders(providers);
+    // Same fetch feeds the novel-defaults dropdowns, so adding, renaming,
+    // or deleting a provider keeps them in step without a second round-trip.
+    _populateDefaultsProviders(providers);
   } catch (e) {
     els.list.innerHTML = `<div class="empty-state">Failed to load providers: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ============================================================
+// §02 · Novel defaults (config_kv['novel_defaults'])
+// ============================================================
+// Written here, read at novel-creation time by
+// services/uploads.py::_resolve_novel_defaults. That reader whitelists
+// translator_provider_id and refinement_provider_id only, so those are the
+// only two keys this writer emits. Genre and source language are per-novel
+// properties (genre is picked at import or set by the scrape recipe; source
+// language is auto-detected from the first chapter) and the reader drops
+// them on purpose, so putting them on this page would be a control that
+// looks app-wide and changes nothing.
+//
+// Existing novels are never backfilled: the blob only applies to the INSERT
+// path for novels created after it is saved.
+const _DEFAULTS_KEY = "novel_defaults";
+const _DEFAULTS_FIELDS = ["translator_provider_id", "refinement_provider_id"];
+
+// Last blob read from (or written to) the server. Kept so re-populating the
+// dropdowns after a provider refresh can restore the current selection.
+let _novelDefaults = {};
+
+function _flashDefaults(msg, kind = "ok") {
+  if (!els.defStatus) { showToast(msg, kind); return; }
+  els.defStatus.textContent = msg;
+  els.defStatus.dataset.kind = kind;
+  setTimeout(() => {
+    if (els.defStatus.textContent === msg) els.defStatus.textContent = "";
+  }, 4000);
+}
+
+function _populateDefaultsProviders(providers) {
+  if (!els.defTranslator || !els.defRefinement) return;
+  const defaultName = (providers.find(p => p.is_default) || {}).name;
+  const options = providers
+    .map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
+    .join("");
+  els.defTranslator.innerHTML =
+    `<option value="">Use the default provider${defaultName ? ` (${escapeHtml(defaultName)})` : ""}</option>`
+    + options;
+  els.defRefinement.innerHTML = `<option value="">Off</option>` + options;
+  _applyDefaultsToForm();
+}
+
+function _applyDefaultsToForm() {
+  // Idempotent, and safe to call before either the options or the blob have
+  // arrived: whichever of the two async loads finishes last calls this and
+  // wins. A stored ID whose provider was since deleted has no matching
+  // <option>, so the select falls back to its neutral first entry.
+  if (!els.defTranslator || !els.defRefinement) return;
+  const t = _novelDefaults.translator_provider_id;
+  const r = _novelDefaults.refinement_provider_id;
+  els.defTranslator.value = t != null && t !== "" ? String(t) : "";
+  els.defRefinement.value = r != null && r !== "" ? String(r) : "";
+}
+
+async function _loadNovelDefaults() {
+  try {
+    const res = await api.getConfig(_DEFAULTS_KEY);
+    const parsed = JSON.parse(res.value);
+    _novelDefaults = (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      ? parsed : {};
+  } catch (e) {
+    // 404 means the key was never set, which is the normal first-run state
+    // and reads as "all defaults". A malformed blob reads the same way
+    // rather than wedging the section.
+    _novelDefaults = {};
+  }
+  _applyDefaultsToForm();
+}
+
+async function _saveNovelDefaults() {
+  // Emit only the whitelisted keys the reader honors, and only when set:
+  // the reader skips null / "" anyway, so an empty selection is an absent
+  // key rather than a stored blank.
+  const picked = {
+    translator_provider_id: els.defTranslator.value,
+    refinement_provider_id: els.defRefinement.value,
+  };
+  const blob = {};
+  for (const key of _DEFAULTS_FIELDS) {
+    if (picked[key]) blob[key] = Number(picked[key]);
+  }
+  try {
+    await api.putConfig(_DEFAULTS_KEY, JSON.stringify(blob));
+    _novelDefaults = blob;
+    _flashDefaults("Saved. Applies to novels imported from now on.");
+  } catch (err) {
+    _flashDefaults(`Save failed: ${err.message}`, "err");
   }
 }
 
@@ -694,8 +800,27 @@ async function handleListClick(e) {
   }
 }
 
+// Guards the provider form against a double-click racing two POSTs. Without
+// it the second create loses on the UNIQUE(name) constraint and pops
+// "Save failed: UNIQUE constraint failed: providers.name" over a list that
+// already shows the row the first click created.
+let _providerSubmitInFlight = false;
+
 async function handleFormSubmit(e) {
   e.preventDefault();
+  if (_providerSubmitInFlight) return;
+  _providerSubmitInFlight = true;
+  const submitBtn = els.form?.querySelector("button[type=submit]");
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    await _submitProviderForm();
+  } finally {
+    _providerSubmitInFlight = false;
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function _submitProviderForm() {
   const id = els.fId.value ? Number(els.fId.value) : null;
   // model_id resolution: if the user picked a curated option, fModelSelect
   // holds the actual ID. If they picked "Other (custom ID)…", the sentinel
@@ -703,20 +828,37 @@ async function handleFormSubmit(e) {
   // input that became visible. fModel is kept in sync by the select-change
   // handler, so reading it works in both cases.
   const modelId = (els.fModel.value || els.fModelSelect.value || "").trim();
+  const keyVal = (els.fSecretValue.value || "").trim();
+  const entry = _catalogByType.get(els.fType.value);
+  const subToken = entry?.auth === "subscription"
+    ? (entry.subscription_token_ref || null)
+    : null;
   const fields = {
     name: els.fName.value.trim(),
     provider_type: els.fType.value,
     model_id: modelId,
     base_url: els.fBaseUrl.value.trim() || null,
-    secret_ref: els.fSecret.value.trim() || null,
   };
+  // secret_ref for a subscription-token type is machine-set by
+  // applyTypeDefaults into a HIDDEN field, so PATCHing it on every save
+  // stamped a ref name onto rows whose keychain entry never existed,
+  // enough, before secret_present, to flip the card green. Send it only
+  // when the user actually typed a token this submit (set-secret needs the
+  // ref written first). On an edit with an empty token box, omit the key
+  // entirely so the stored value, null or set, survives untouched. Create
+  // keeps writing it: the ref is what makes the per-row Key button
+  // available for storing the token later. api_key types own the visible
+  // name field, so they always send it.
+  const omitSecretRef = Boolean(subToken) && id != null && !keyVal;
+  if (!omitSecretRef) {
+    fields.secret_ref = els.fSecret.value.trim() || null;
+  }
   try {
     if (id == null) {
       // First provider on a fresh install auto-elects as default so
       // chapters can route. After that, default is a list-level choice.
       const isFirstProvider = (els.list.querySelectorAll(".prov-card").length === 0);
       const created = await api.createProvider({ ...fields, is_default: isFirstProvider });
-      const keyVal = (els.fSecretValue.value || "").trim();
       if (keyVal && created && created.id != null) {
         try { await api.setProviderSecret(created.id, keyVal); }
         catch (secretErr) {
@@ -729,7 +871,6 @@ async function handleFormSubmit(e) {
       // (Claude) show the token field on edit; api_key types hide it, so this
       // is a no-op for them. updateProvider set secret_ref first, so the
       // set-secret route resolves it.
-      const keyVal = (els.fSecretValue.value || "").trim();
       if (keyVal) {
         try { await api.setProviderSecret(id, keyVal); }
         catch (secretErr) {
@@ -829,7 +970,7 @@ function renderThemes() {
 // ============================================================
 // §04 · Sticky TOC + J/K/Enter navigation
 // ============================================================
-const _TOC_SECTIONS = ["providers", "themes", "keyboard", "about"];
+const _TOC_SECTIONS = ["providers", "defaults", "themes", "keyboard", "about"];
 
 function _setTocCount(key, value) {
   const el = els.tocList?.querySelector(`[data-cnt="${key}"]`);
@@ -857,6 +998,9 @@ function _wireSectionNav() {
   // Keyboard nav: J / K cycle active; Enter jumps to active section.
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // An open dialog owns the keyboard: J / K / Enter inside the Add
+    // Provider or Set-secret form must not scroll the page behind it.
+    if (document.querySelector("dialog[open]")) return;
     const t = document.activeElement;
     if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     if (!["j", "k", "Enter"].includes(e.key)) return;
@@ -993,7 +1137,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // Warm the catalog cache so the dialog opens instantly the first time.
   loadCatalog();
 
-  refresh();
+  // Saving on change keeps the section to two controls and no Save button;
+  // the aria-live status line is the confirmation.
+  els.defTranslator?.addEventListener("change", _saveNovelDefaults);
+  els.defRefinement?.addEventListener("change", _saveNovelDefaults);
+
+  refresh();          // also fills the novel-defaults provider dropdowns
+  _loadNovelDefaults();
   renderThemes();
   document.addEventListener("themechange", renderThemes);
 

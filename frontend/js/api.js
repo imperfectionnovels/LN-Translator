@@ -312,6 +312,17 @@ const api = {
   providerActivity: (id, limit = 6) =>
     apiFetch(`/api/providers/${id}/activity?limit=${limit}`),
 
+  // ----- App config key/value (routes/config_kv.py) -----
+  // App-level state only (first_run_complete, novel_defaults). Per-novel
+  // state belongs on the novels table. GET returns {key, value} and 404s
+  // when the key was never set, which callers treat as "use the default"
+  // rather than as an error. PUT upserts and echoes the value back.
+  getConfig: (key) => apiFetch(`/api/config/${encodeURIComponent(key)}`),
+  putConfig: (key, value) => apiFetch(`/api/config/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: JSON.stringify({ value }),
+  }),
+
   // ----- Diagnostics (About card on /settings) -----
   diagnostics: () => apiFetch("/api/diagnostics"),
   diagnosticsLogFolder: () => apiFetch("/api/diagnostics/log-folder"),

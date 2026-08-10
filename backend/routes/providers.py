@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
@@ -25,6 +26,8 @@ from backend.models import (
 from backend.services import providers as providers_svc
 from backend.services.translators.factory import invalidate_provider_cache
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -36,6 +39,33 @@ class SetSecretBody(BaseModel):
     value: str = Field(min_length=1, max_length=500)
 
 
+def _secret_present(p: providers_svc.Provider) -> bool:
+    """Does this provider's `secret_ref` actually resolve to a value?
+
+    Probes the real resolver (OS keychain first, `os.environ[secret_ref]`
+    second) rather than inferring presence from `secret_ref` being non-null.
+    A row can carry a ref NAME with nothing stored behind it, and the
+    settings card treated that as proof of a stored token, so editing any
+    Claude provider (even just to switch models) painted a green
+    "Subscription token stored" over an empty keychain and the amber
+    "needs a token" state became unreachable.
+
+    Wrapped in try/except so a keyring hiccup degrades to False for that
+    one row instead of 500-ing the whole provider list. The value never
+    carries the secret itself, only the boolean.
+    """
+    if not p.secret_ref:
+        return False
+    try:
+        return bool(providers_svc.resolve_secret(p))
+    except Exception as e:  # pragma: no cover - defensive, resolver catches its own
+        logger.debug(
+            "secret presence probe failed for provider %s (%r): %s",
+            p.id, p.secret_ref, e,
+        )
+        return False
+
+
 def _to_model(p: providers_svc.Provider) -> ProviderModel:
     return ProviderModel(
         id=p.id,
@@ -45,6 +75,7 @@ def _to_model(p: providers_svc.Provider) -> ProviderModel:
         model_id=p.model_id,
         params=p.params,
         secret_ref=p.secret_ref,
+        secret_present=_secret_present(p),
         is_default=p.is_default,
         last_tested_at=p.last_tested_at,
         created_at=p.created_at,

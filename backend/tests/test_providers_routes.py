@@ -467,3 +467,106 @@ def test_delete_secret_404(client):
     resp = client.delete("/api/providers/99999/secret")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "provider not found"
+
+
+# ----- secret_present: probed, never inferred from secret_ref -----
+#
+# `secret_ref` is only a NAME. Before this field the settings card read a
+# non-null ref as proof a secret was stored, so writing the ref (which the
+# provider form did on every Claude edit) flipped the card to a green
+# "Subscription token stored" over an empty keychain and the amber
+# "needs a token" state became unreachable.
+#
+# These tests drive the ENV-VAR arm of the resolver so they need no real
+# credential store in CI. The ref name is deliberately one no keychain
+# would hold, so the keyring arm misses and the env arm decides.
+
+_PROBE_REF = "LN_TRANSLATOR_TEST_SECRET_PROBE"
+
+
+def test_secret_present_false_when_ref_resolves_to_nothing(client, monkeypatch):
+    """A ref name with nothing behind it must read as absent, on both the
+    list and the single-provider response."""
+    monkeypatch.delenv(_PROBE_REF, raising=False)
+    p = _create(client, name="unstored", secret_ref=_PROBE_REF)
+
+    assert p["secret_ref"] == _PROBE_REF
+    assert p["secret_present"] is False
+
+    got = client.get(f"/api/providers/{p['id']}").json()
+    assert got["secret_present"] is False
+
+    listed = client.get("/api/providers").json()
+    assert [r["secret_present"] for r in listed] == [False]
+
+
+def test_secret_present_true_when_env_var_is_set(client, monkeypatch):
+    """With the named env var populated, the resolver finds a value and the
+    field flips to True. Same row, same ref: only the stored value changed."""
+    monkeypatch.delenv(_PROBE_REF, raising=False)
+    p = _create(client, name="stored", secret_ref=_PROBE_REF)
+    assert client.get(f"/api/providers/{p['id']}").json()["secret_present"] is False
+
+    monkeypatch.setenv(_PROBE_REF, "sk-live-value")
+
+    got = client.get(f"/api/providers/{p['id']}").json()
+    assert got["secret_present"] is True
+    # The value itself is never echoed back, only the boolean.
+    assert "sk-live-value" not in got.values()
+    assert got["secret_ref"] == _PROBE_REF
+
+    listed = client.get("/api/providers").json()
+    assert [r["secret_present"] for r in listed] == [True]
+
+
+def test_secret_present_false_when_no_secret_ref(client):
+    """No ref configured (the subscription / local-auth shape) means nothing
+    to probe: False without touching the resolver."""
+    p = _create(client, name="no-ref", secret_ref=None)
+    assert p["secret_ref"] is None
+    assert p["secret_present"] is False
+
+
+def test_secret_present_survives_resolver_failure(client, monkeypatch):
+    """A keyring hiccup must degrade that ONE row to 'not present', never
+    500 the whole provider list. Without the try/except a locked or broken
+    credential store takes the entire settings page down."""
+    _create(client, name="boom", secret_ref=_PROBE_REF)
+
+    def _explode(provider):
+        raise RuntimeError("credential store unavailable")
+
+    monkeypatch.setattr(providers_route.providers_svc, "resolve_secret", _explode)
+
+    resp = client.get("/api/providers")
+    assert resp.status_code == 200
+    assert [r["secret_present"] for r in resp.json()] == [False]
+
+
+def test_secret_present_helper_is_pure_and_ref_gated(monkeypatch):
+    """Unit-level pin on the helper: no ref short-circuits before the
+    resolver runs, so a NULL-ref row costs nothing per response."""
+    calls = {"n": 0}
+
+    def _counting(provider):
+        calls["n"] += 1
+        return "value"
+
+    monkeypatch.setattr(providers_route.providers_svc, "resolve_secret", _counting)
+
+    def _mk(secret_ref):
+        return providers_route.providers_svc.Provider(
+            id=1,
+            name="probe",
+            provider_type="gemini",
+            base_url=None,
+            model_id="m",
+            secret_ref=secret_ref,
+            created_at="2026-08-10T00:00:00",
+            updated_at="2026-08-10T00:00:00",
+        )
+
+    assert providers_route._secret_present(_mk(None)) is False
+    assert calls["n"] == 0
+    assert providers_route._secret_present(_mk("SOME_REF")) is True
+    assert calls["n"] == 1

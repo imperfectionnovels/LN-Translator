@@ -34,6 +34,9 @@
         <a href="#sec-providers" data-sec="providers" class="on">
           <span class="han">譯</span><span class="lbl">Providers</span><span class="cnt" data-cnt="providers"></span>
         </a>
+        <a href="#sec-defaults" data-sec="defaults">
+          <span class="han">預</span><span class="lbl">Novel defaults</span><span class="cnt" data-cnt="defaults"></span>
+        </a>
         <a href="#sec-themes" data-sec="themes">
           <span class="han">易</span><span class="lbl">Themes</span><span class="cnt" data-cnt="themes"></span>
         </a>
@@ -66,6 +69,41 @@
             <div class="s">Useful for A/B testing: route one novel through Gemini, another through DeepSeek, and compare. The default still handles novels without an override.</div>
           </div>
           <button type="button" class="btn-primary" id="add-provider-btn">＋ Add provider</button>
+        </div>
+      </section>
+
+      <!-- Writer for config_kv['novel_defaults'], read at novel-creation
+           time by services/uploads.py::_resolve_novel_defaults. That
+           reader whitelists translator_provider_id and
+           refinement_provider_id ONLY, so those are the two controls
+           here. Genre and source language are per-novel properties (genre
+           is picked at import or set by the scrape recipe; source
+           language is auto-detected from the first chapter's text) and
+           are deliberately dropped by the reader, so a control for them
+           on this page would look app-wide and change nothing. -->
+      <section class="settings-section" id="sec-defaults">
+        <header class="section-head">
+          <h2><span class="han">預</span>Novel defaults</h2>
+          <p class="sub">Which providers a newly imported novel starts with. Applies to novels created from here on; existing novels keep what they have, and each novel's own page stays the place to override. Genre and source language are set per novel at import, not here.</p>
+        </header>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="defaults-translator">Translator</label>
+            <select id="defaults-translator">
+              <option value="">Use the default provider</option>
+            </select>
+            <span class="secret-hint">Leave on "Use the default provider" to follow whichever provider is flagged default above.</span>
+          </div>
+          <div class="form-row">
+            <label for="defaults-refinement">Refinement</label>
+            <select id="defaults-refinement">
+              <option value="">Off</option>
+            </select>
+            <span class="secret-hint">An optional second pass over the draft. Off means one translation call per chapter.</span>
+          </div>
+        </div>
+        <div class="about-acts">
+          <span class="muted" id="defaults-status" aria-live="polite"></span>
         </div>
       </section>
 
@@ -200,6 +238,7 @@
 <script src="/static/js/theme.js"></script>
 <script src="/static/js/spine.js"></script>
 <script src="/static/js/command-palette.js"></script>
+<script src="/static/js/queue-panel.js"></script>
 <script src="/static/js/utils.js?v=2"></script>
 <script src="/static/js/settings.js"></script>
 </body>

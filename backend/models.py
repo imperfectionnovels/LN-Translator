@@ -744,6 +744,13 @@ class Provider(BaseModel):
     model_id: str
     params: dict[str, Any] = Field(default_factory=dict)
     secret_ref: str | None = None
+    # Whether `secret_ref` actually resolves to a stored value right now
+    # (OS keychain first, env var second). Computed per response by
+    # routes/providers.py::_secret_present, never a column. The settings
+    # card used to infer "token stored" from secret_ref being non-null,
+    # which turned a bare ref name into a green light over an empty
+    # keychain; this field is the honest answer to that question.
+    secret_present: bool = False
     is_default: bool = False
     # Stamped by /providers/{id}/test on success; NULL means "never tested".
     last_tested_at: str | None = None
