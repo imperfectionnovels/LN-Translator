@@ -78,6 +78,10 @@ let _genreCatalog = []; // [{key,name,description}] from /api/genres
 let _pipelineClean = null;
 let _metaClean = null;
 
+// Last source_language value confirmed persisted by the backend (falls back
+// to the select's post-render value on a failed PATCH).
+let _sourceLangSynced = "zh";
+
 function _pipelineSig() {
   return JSON.stringify({
     translator: els.translator ? els.translator.value : "",
@@ -330,6 +334,19 @@ function renderHeader(novel) {
   els.statsBtn.href = `/stats?novel=${novelId}`;
 }
 
+// The metadata PATCH response carries no aggregate fields
+// (total_chapters/done_chapters), so a full renderHeader() off it flashes
+// "No chapters yet" and drops the Read button to ch=1. Patch only the text
+// nodes a metadata save can actually change; the caller still follows up
+// with a full api.novel() refetch for the authoritative repaint.
+function _patchHeaderText(novel) {
+  els.crumb.textContent = novel.title;
+  document.title = `${novel.title} · LN Translator`;
+  els.title.textContent = novel.title;
+  els.author.textContent = novel.author ? `by ${novel.author}` : "Author unknown";
+  els.originalTitle.textContent = novel.original_title ? `· ${novel.original_title}` : "";
+}
+
 function firstCJK(s) {
   const m = String(s || "").match(/[㐀-鿿]/);
   return m ? m[0] : (String(s || "").trim()[0] || "書");
@@ -426,16 +443,25 @@ els.addGenreBtn.addEventListener("click", async () => {
 
 /* ---- Source language ---- */
 function renderSourceLang(lang) {
-  els.sourceLangSelect.value = lang || "zh";
+  _sourceLangSynced = lang || "zh";
+  els.sourceLangSelect.value = _sourceLangSynced;
 }
 
 els.sourceLangSelect.addEventListener("change", async () => {
+  const prev = _sourceLangSynced;
   const v = els.sourceLangSelect.value;
+  els.sourceLangSelect.disabled = true;
   try {
     await api.updateNovel(novelId, { source_language: v });
+    _sourceLangSynced = v;
     flash(els.sourceLangStatus, `Updated to ${v}.`);
   } catch (err) {
+    // The select was already showing the failed value; restore the
+    // last-persisted one so it doesn't keep lying after the flash fades.
+    els.sourceLangSelect.value = prev;
     flash(els.sourceLangStatus, err.message, "err");
+  } finally {
+    els.sourceLangSelect.disabled = false;
   }
 });
 
@@ -519,10 +545,13 @@ els.metaSave.addEventListener("click", async () => {
     _metaClean = _metaSig();
     _refreshDirty();
     flash(els.metaStatus, "Saved.");
-    renderHeader({ ...updated, total_chapters: 0, done_chapters: 0 });
+    _patchHeaderText(updated);
     // Re-load full novel to refresh chapter counts (PATCH response
-    // doesn't include aggregates).
-    api.novel(novelId).then(n => renderHeader(n)).catch(() => {});
+    // doesn't include aggregates). This refetch is the authoritative
+    // repaint; surface a failure instead of swallowing it.
+    api.novel(novelId).then(n => renderHeader(n)).catch(err => {
+      flash(els.metaStatus, `Saved, but refresh failed: ${err.message}`, "err");
+    });
   } catch (err) {
     flash(els.metaStatus, err.message, "err");
   }
@@ -536,6 +565,10 @@ els.metaSave.addEventListener("click", async () => {
 // the novel-overview page doesn't need to import the library's confirm
 // helper.
 els.archiveBtn.addEventListener("click", async () => {
+  // Disable at click time so a double-click can't fire showModal()
+  // twice (InvalidStateError on the second call, plus a leaked listener
+  // set on the confirm dialog).
+  els.archiveBtn.disabled = true;
   let counts = null;
   try { counts = await api.deleteCounts(novelId); }
   catch { counts = null; }
@@ -569,10 +602,18 @@ els.archiveBtn.addEventListener("click", async () => {
     els.archiveDlg.addEventListener("cancel", onCancelEvt);
     els.archiveDlg.showModal();
   });
-  if (!ok) return;
-  els.archiveBtn.disabled = true;
+  if (!ok) {
+    els.archiveBtn.disabled = false;
+    return;
+  }
   try {
     await api.deleteNovel(novelId);
+    // Clear the dirty snapshots so the beforeunload guard doesn't
+    // throw up a "Leave site?" prompt on this redirect over an unsaved
+    // Pipeline/Metadata edit; the novel is already soft-deleted either way,
+    // and dismissing that prompt would just strand the user here.
+    _pipelineClean = _pipelineSig();
+    _metaClean = _metaSig();
     flash(els.archiveStatus, "Archived. Redirecting…");
     setTimeout(() => { location.href = "/library"; }, 600);
   } catch (err) {
