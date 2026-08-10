@@ -418,10 +418,16 @@ def test_cross_tab_bus_and_shared_toast_copy():
     ):
         assert needed in utils, f"utils.js missing the shared cross-tab bus piece: {needed!r}"
 
-    reader_html = (FRONTEND / "reader.html").read_text(encoding="utf-8")
-    editor_html = (FRONTEND / "editor.html").read_text(encoding="utf-8")
-    assert "utils.js?v=2" in reader_html
-    assert "utils.js?v=2" in editor_html
+    # Floor pin, not an exact pin: the bus shipped in utils.js?v=2, so any
+    # version at or past 2 busts the pre-bus cache. Later bumps move forward.
+    for page in ("reader.html", "editor.html"):
+        html = (FRONTEND / page).read_text(encoding="utf-8")
+        m = re.search(r"utils\.js\?v=(\d+)", html)
+        assert m, f"{page} must reference utils.js with a ?v= integer"
+        assert int(m.group(1)) >= 2, (
+            f"{page} references utils.js?v={m.group(1)}, older than the "
+            "cross-tab-bus version (v=2); stale caches would miss the bus"
+        )
 
 
 def test_reader_glossary_version_bumped_past_history():
