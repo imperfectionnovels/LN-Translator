@@ -81,10 +81,7 @@
     const btn = e.target.closest("[data-theme-pick] button");
     if (!btn) return;
     const v = btn.dataset.themeVal;
-    if (!VALID.includes(v)) return;
-    document.documentElement.setAttribute("data-theme", v);
-    localStorage.setItem("theme", v);
-    syncButtons();
+    window.__setTheme(v);
   });
 
   // Follow OS theme changes as long as the user hasn't explicitly picked.

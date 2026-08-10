@@ -47,7 +47,8 @@
   aside.innerHTML = SPINE_HTML;
 
   const params = new URLSearchParams(location.search);
-  const urlNovel = params.get("novel");
+  // Fall back to ?id only on /novel page (novel-overview convention).
+  const urlNovel = params.get("novel") || (location.pathname.startsWith("/novel") ? params.get("id") : null);
   if (urlNovel) {
     try { localStorage.setItem("ink:lastNovel", urlNovel); } catch (e) { /* ignore */ }
   }
