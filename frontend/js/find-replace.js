@@ -24,8 +24,30 @@ const previewSummary = document.getElementById("fr-preview-summary");
 const previewTruncated = document.getElementById("fr-preview-truncated");
 const previewRows = document.getElementById("fr-preview-rows");
 let currentToken = null;
+// Frozen scope captured at Preview time,
+// used by the commit-time danger confirm and cross-tab broadcast instead of
+// the live scope/novel selects.
+let currentPreviewScopeKind = null;
+let currentPreviewNovelId = null;
+// Novel id -> title, built once the novel
+// list loads; used to label each history row with the novel it belongs to.
+let novelTitleById = new Map();
 
 // showToast is window.showToast from utils.js (audit 6.6).
+
+/* Any control in the form changing after a Preview invalidates it.
+ * Without this, a stale token could be committed against a form (scope,
+ * novel, target, flags, find/replace text) that no longer matches what was
+ * previewed. Delegated on the form so every control is covered without
+ * touching the scope/novel listeners' existing loadHistory() calls below. */
+function _invalidatePreview() {
+  currentToken = null;
+  currentPreviewScopeKind = null;
+  currentPreviewNovelId = null;
+  previewSection.hidden = true;
+}
+form.addEventListener("input", _invalidatePreview);
+form.addEventListener("change", _invalidatePreview);
 
 /* ---- I4: client-side regex validation ---- */
 const regexErrorEl = document.createElement("div");
@@ -61,6 +83,7 @@ regexEl.addEventListener("change", validateRegex);
 async function loadNovels() {
   try {
     const novels = await api.novels();
+    novelTitleById = new Map(novels.map(n => [n.id, n.title]));
     novelSelectEl.innerHTML =
       '<option value="">Pick a novel…</option>' +
       novels.map(n => `<option value="${n.id}">${escapeHtml(n.title)}</option>`).join("");
@@ -116,11 +139,12 @@ form.addEventListener("submit", async (ev) => {
   try {
     const result = await api.findPreview(body);
     currentToken = result.token;
+    currentPreviewScopeKind = body.scope_kind;
+    currentPreviewNovelId = body.scope_kind === "novel" ? body.scope_ids[0] : null;
     renderPreview(result);
   } catch (e) {
     showToast(`Preview failed: ${e.message}`, "err");
-    currentToken = null;
-    previewSection.hidden = true;
+    _invalidatePreview();
   } finally {
     previewBtn.disabled = false;
     previewBtn.textContent = "Preview matches";
@@ -165,22 +189,27 @@ const undoTimer = document.getElementById("fr-undo-timer");
 let _undoExpiryTimer = null;
 let _undoTickTimer = null;
 let _undoSnapshotIds = [];
+let _undoNovelId = null; // novel to broadcast on Undo; null = global/multi.
 
 function _hideUndoBar() {
   undoBar.hidden = true;
   if (_undoExpiryTimer) { clearTimeout(_undoExpiryTimer); _undoExpiryTimer = null; }
   if (_undoTickTimer) { clearInterval(_undoTickTimer); _undoTickTimer = null; }
   _undoSnapshotIds = [];
+  _undoNovelId = null;
 }
 
 /* Shows the undo bar for any scope.
  * snapshotIds: array of snapshot ids from the commit response.
  * summaryText: the human-readable summary string to display.
+ * novelId: the affected novel when the commit was novel-scoped, null for
+ * global/multi-novel commits (cross-tab broadcast on Undo).
  */
-function _showUndoBar(snapshotIds, summaryText) {
+function _showUndoBar(snapshotIds, summaryText, novelId = null) {
   if (!snapshotIds || !snapshotIds.length) return;
   _hideUndoBar();
   _undoSnapshotIds = snapshotIds.slice();
+  _undoNovelId = novelId;
   const now = Date.now();
   const expiresAt = now + 10 * 60_000;
   undoMsg.textContent = summaryText;
@@ -199,6 +228,7 @@ undoBtn.addEventListener("click", async () => {
   undoBtn.disabled = true;
   undoBtn.textContent = "Reverting…";
   const ids = _undoSnapshotIds.slice();
+  const novelIdForBroadcast = _undoNovelId;
   try {
     let restored = 0;
     const failures = [];
@@ -215,6 +245,9 @@ undoBtn.addEventListener("click", async () => {
       showToast(`Reverted ${restored} snapshot(s).`, "ok");
       _hideUndoBar();
     }
+    // Reverted chapter text just changed underneath any open reader/
+    // editor tab.
+    if (restored > 0) broadcastNovelChange(novelIdForBroadcast, "glossary");
     loadHistory();
   } finally {
     undoBtn.disabled = false;
@@ -229,7 +262,12 @@ commitBtn.addEventListener("click", async () => {
   }
 
   // Fix A: require confirmation when scope is not a single novel.
-  const isGlobalScope = scopeKindEl.value !== "novel";
+  // Derive this from the FROZEN preview scope, not the live select:
+  // the form can't have drifted since Preview (any change invalidates
+  // currentToken), and driving both the confirm and the broadcast off the
+  // same captured state keeps them in lockstep by construction.
+  const isGlobalScope = currentPreviewScopeKind !== "novel";
+  const affectedNovelId = currentPreviewScopeKind === "novel" ? currentPreviewNovelId : null;
   if (isGlobalScope) {
     const summaryText = previewSummary ? previewSummary.textContent : "all matched chapters";
     const ok = await confirmDialog({
@@ -252,19 +290,20 @@ commitBtn.addEventListener("click", async () => {
     _hideUndoBar();
     // Fix A: undo bar now works for all scopes via snapshot_ids from the response.
     const ids = Array.isArray(result.snapshot_ids) ? result.snapshot_ids : [];
-    _showUndoBar(ids, summary);
-    currentToken = null;
-    previewSection.hidden = true;
+    _showUndoBar(ids, summary, affectedNovelId);
+    // Stored chapter text just changed underneath any open reader/
+    // editor tab; null matches every listener when the commit was
+    // global/multi-novel.
+    broadcastNovelChange(affectedNovelId, "glossary");
+    _invalidatePreview();
     loadHistory();
   } catch (e) {
     if (e.message && e.message.startsWith("410")) {
       showToast("Preview expired. Re-run Preview before applying.", "err");
-      currentToken = null;
-      previewSection.hidden = true;
+      _invalidatePreview();
     } else if (e.message && e.message.startsWith("409")) {
       showToast("Some chapters changed since the preview. Re-run Preview against the new state.", "err");
-      currentToken = null;
-      previewSection.hidden = true;
+      _invalidatePreview();
     } else {
       showToast(`Apply failed: ${e.message}`, "err");
     }
@@ -275,8 +314,7 @@ commitBtn.addEventListener("click", async () => {
 });
 
 cancelBtn.addEventListener("click", () => {
-  currentToken = null;
-  previewSection.hidden = true;
+  _invalidatePreview();
 });
 
 clearBtn.addEventListener("click", () => {
@@ -289,8 +327,7 @@ clearBtn.addEventListener("click", () => {
   regexEl.checked = false;
   caseEl.checked = true;
   wordBoundaryEl.checked = false;
-  currentToken = null;
-  previewSection.hidden = true;
+  _invalidatePreview();
 });
 
 /* ---- Fix B: commit history panel ---- */
@@ -300,6 +337,8 @@ function fmtWhen(iso) {
   const s = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
   return new Date(s).toLocaleString();
 }
+
+let _historySeq = 0;
 
 async function loadHistory() {
   const historySection = document.getElementById("fr-history");
@@ -312,13 +351,21 @@ async function loadHistory() {
     return;
   }
 
+  // Fix 2: guard against a fast novel switch letting a slow response paint
+  // over a faster later one (the stale rows would belong to a different
+  // novel than the one now selected, so a Restore click there would revert
+  // the wrong novel's chapters).
+  const seq = ++_historySeq;
+
   let snapshots;
   try {
     snapshots = await api.frSnapshots(novelId);
   } catch (e) {
+    if (seq !== _historySeq) return;
     historySection.hidden = true;
     return;
   }
+  if (seq !== _historySeq) return;
 
   historySection.hidden = false;
 
@@ -334,10 +381,11 @@ async function loadHistory() {
     const when = fmtWhen(s.committed_at);
     const target = escapeHtml(s.target || "");
     const chapters = s.chapters_changed;
-    const meta = `${chapters} chapter${chapters === 1 ? "" : "s"} · ${target} · ${escapeHtml(when)}`;
+    const novelLabel = escapeHtml(novelTitleById.get(s.novel_id) || `Novel ${s.novel_id}`);
+    const meta = `${novelLabel} · ${chapters} chapter${chapters === 1 ? "" : "s"} · ${target} · ${escapeHtml(when)}`;
     const actionCell = s.restored_at
       ? `<span class="muted fr-history-restored">Restored</span>`
-      : `<button type="button" class="btn-ghost fr-history-restore-btn" data-restore="${s.id}">Restore</button>`;
+      : `<button type="button" class="btn-ghost fr-history-restore-btn" data-restore="${s.id}" data-novel-id="${s.novel_id}">Restore</button>`;
     return `<div class="fr-history-row">
       <span class="fr-history-pair">${find} &rarr; ${repl}</span>
       <span class="muted fr-history-meta">${meta}</span>
@@ -354,6 +402,7 @@ if (historyRowsEl) {
     if (!btn) return;
     const id = Number(btn.dataset.restore);
     if (!id) return;
+    const novelId = Number(btn.dataset.novelId) || null;
 
     // Find the row data for the confirm dialog.
     const rowEl = btn.closest(".fr-history-row");
@@ -374,6 +423,9 @@ if (historyRowsEl) {
     try {
       await api.restoreFrSnapshot(id);
       showToast("Reverted.", "ok");
+      // Fix 3: restored chapter text just changed underneath any open
+      // reader/editor tab for this novel.
+      broadcastNovelChange(novelId, "glossary");
       loadHistory();
     } catch (e) {
       showToast(`Restore failed: ${escapeHtml(e.message)}`, "err");
