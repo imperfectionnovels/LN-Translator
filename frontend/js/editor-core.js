@@ -83,6 +83,11 @@ let chaptersCache = []; // ChapterSummary list, ordered by chapter_num
 let currentData = null; // last fetched segments payload
 let pollTimer = null;
 let loadSeq = 0; // stale-response guard for fast chapter switches
+// Bumped every time currentData is REPLACED (any load outcome). A PATCH
+// closure captures it at creation; a response whose generation moved is
+// dropped, because "same chapter number" is not the same payload after a
+// navigate-away-and-back round trip (see applyPatchResponse).
+let dataGen = 0;
 let readOnly = true; // true until a loaded chapter proves editable
 
 // Term marks (Block 4, 2026-08-07): the glossary entries rowHtml wraps
@@ -169,6 +174,14 @@ function renderProgress(p) {
   progressFill.style.width =
     p.total ? `${((100 * p.confirmed) / p.total).toFixed(1)}%` : "0";
 }
+// Idempotent confirmed count, read straight off the rows. Optimistic flips
+// recompute instead of incrementing a counter, so a flip that interleaves
+// with a server response (which stamps the server's own count) can never
+// leave the display off by one.
+function countConfirmed() {
+  if (!currentData) return 0;
+  return currentData.segments.filter(s => s.status === "confirmed").length;
+}
 function updateActions() {
   const p = currentData ? currentData.progress : null;
   confirmRestBtn.disabled =
@@ -179,15 +192,22 @@ function updateActions() {
 // --- Continue card (Phase 5): shown when every segment is confirmed ---
 let continueSeq = 0; // stale-response guard
 let continueForCh = null; // chapter the visible card was fetched for
+// Tear the card down and invalidate any in-flight editorNext response. Also
+// called at the top of every load: the card's Read link and Continue button
+// are baked to the chapter it was built for, so it must never stay painted
+// across a chapter switch.
+function resetContinueCard() {
+  continueSeq++;
+  continueForCh = null;
+  continueEl.hidden = true;
+  continueEl.innerHTML = "";
+}
 function updateContinueCard() {
   const p = currentData ? currentData.progress : null;
   const fullyConfirmed = !!p && p.total > 0 && p.confirmed >= p.total
     && currentData.chapter_status === "done";
   if (!fullyConfirmed) {
-    continueSeq++;
-    continueForCh = null;
-    continueEl.hidden = true;
-    continueEl.innerHTML = "";
+    resetContinueCard();
     return;
   }
   if (continueForCh === currentCh && !continueEl.hidden) return; // already up
@@ -267,6 +287,11 @@ function segIndexForDisplayedOrdinal(k) {
 // Term-mark spans (TermMarks.wrapText) NEVER enter contenteditable: startEdit
 // resets the target cell from seg.target_text (plain data, not this markup),
 // so a live edit always starts from bare text.
+// The TM and "kept" chips both open the AI-suggests dialog, whose only
+// action routes to revertSegment, so both carry revertSegment's own
+// divergence predicate: with the stored AI rendering equal to (or absent
+// behind) a machine row's text there is nothing the dialog can apply, and a
+// chip that silently no-ops is worse than no chip.
 function rowHtml(s) {
   const failed = failedSaves.has(`${currentCh}:${s.index}`);
   const pat = termPat();
@@ -283,7 +308,7 @@ function rowHtml(s) {
       }</div>
       <div class="seg-meta">
         <span class="seg-badge seg-badge-${escapeHtml(s.status)}">${statusLabel(s.status)}</span>
-        ${s.origin === "tm_exact" ? `<button type="button" class="seg-chip-tm" data-act="ai-suggest" title="Pre-filled from translation memory, exact source match. Click to view the AI's own rendering.">TM</button>` : ""}
+        ${s.origin === "tm_exact" && (s.status !== "machine" || s.machine_differs) ? `<button type="button" class="seg-chip-tm" data-act="ai-suggest" title="Pre-filled from translation memory, exact source match. Click to view the AI's own rendering.">TM</button>` : ""}
         ${s.status !== "machine" && s.machine_differs ? `<button type="button" class="seg-chip-kept" data-act="ai-suggest" title="Your text kept through retranslate; the AI suggests differently">kept</button>` : ""}
         ${s.aligned ? "" : `<span class="seg-chip-review" title="Automatic alignment could not pin this row to a single source paragraph. Check it against the source.">needs review</span>`}
         ${failed ? `<button type="button" class="seg-save-retry" data-act="retry">Save failed. Retry</button>` : ""}
@@ -378,8 +403,14 @@ function sendPatch(chapterNum, segIndex, action, after, fallback) {
   saveChain = p.catch(() => {});
   return p;
 }
-function applyPatchResponse(chapterNum, resp) {
+// `gen` is the dataGen captured when this write's closure was created. The
+// chapter-number guard alone is not enough: navigating away and back before
+// a slow PATCH lands leaves chapterNum === currentCh while currentData is a
+// FRESH payload, and stamping the stale rev / progress / segments_state onto
+// it 409s the next save.
+function applyPatchResponse(chapterNum, resp, gen) {
   if (chapterNum !== currentCh || !currentData) return;
+  if (gen != null && gen !== dataGen) return;
   const i = currentData.segments.findIndex(s => s.index === resp.segment.index);
   if (i >= 0) currentData.segments[i] = resp.segment;
   currentData.chapter_rev = resp.chapter_rev;
@@ -493,6 +524,7 @@ function finishEdit({ confirm = false, cancel = false } = {}) {
 // response (or failure chip) lands wherever the row is now.
 function commitSave(ed, after, action) {
   const key = `${ed.chapterNum}:${ed.segIndex}`;
+  const gen = dataGen; // the payload this write was composed against
   const liveCell = ed.chapterNum === currentCh
     ? rowFor(ed.segIndex)?.querySelector(".seg-tgt")
     : null;
@@ -500,7 +532,7 @@ function commitSave(ed, after, action) {
   return sendPatch(ed.chapterNum, ed.segIndex, action, after, ed)
     .then(resp => {
       failedSaves.delete(key);
-      applyPatchResponse(ed.chapterNum, resp);
+      applyPatchResponse(ed.chapterNum, resp, gen);
       if (ed.chapterNum === currentCh) {
         const cell = rowFor(ed.segIndex)?.querySelector(".seg-tgt");
         if (cell) {
@@ -637,6 +669,7 @@ function gotoNextUnconfirmed(fromIdx) {
 function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
   if (!canEdit()) return;
   const chapterNum = currentCh;
+  const gen = dataGen; // the payload `prev` snapshots, and the response targets
   const seg = segByIndex(idx);
   if (!seg || seg.status === "confirmed") return;
   if (!seg.target_text) {
@@ -646,7 +679,7 @@ function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
   const prev = { ...seg };
   if (optimistic) {
     seg.status = "confirmed";
-    currentData.progress.confirmed += 1;
+    currentData.progress.confirmed = countConfirmed();
     renderProgress(currentData.progress);
     updateRow(seg);
     updateActions();
@@ -654,7 +687,7 @@ function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
   }
   sendPatch(chapterNum, idx, "confirm", null, null)
     .then(resp => {
-      applyPatchResponse(chapterNum, resp);
+      applyPatchResponse(chapterNum, resp, gen);
       if (!optimistic && advance && chapterNum === currentCh) {
         gotoNextUnconfirmed(idx);
       }
@@ -665,14 +698,14 @@ function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
         return;
       }
       // Roll back the optimistic flip, but only while still on the
-      // chapter the flip happened in.
-      if (chapterNum === currentCh && currentData) {
+      // chapter the flip happened in AND still on the payload it happened
+      // to: a reload (or a navigate away and back) already discarded the
+      // flip, and `prev` is a row snapshot from a payload that is gone.
+      if (chapterNum === currentCh && gen === dataGen && currentData) {
         const cur = segByIndex(idx);
         if (cur) {
           Object.assign(cur, prev);
-          currentData.progress.confirmed = Math.max(
-            0, currentData.progress.confirmed - 1,
-          );
+          currentData.progress.confirmed = countConfirmed();
           renderProgress(currentData.progress);
           updateRow(cur);
           updateActions();
@@ -684,10 +717,11 @@ function confirmSegment(idx, { optimistic = true, advance = false } = {}) {
 function unconfirmSegment(idx) {
   if (!canEdit()) return;
   const chapterNum = currentCh;
+  const gen = dataGen;
   const seg = segByIndex(idx);
   if (!seg || seg.status !== "confirmed") return;
   sendPatch(chapterNum, idx, "unconfirm", null, null)
-    .then(resp => applyPatchResponse(chapterNum, resp))
+    .then(resp => applyPatchResponse(chapterNum, resp, gen))
     .catch(err => {
       if (isConflict(err)) {
         if (chapterNum === currentCh) reloadAfterConflict();
@@ -708,8 +742,12 @@ function revertSegment(idx) {
     danger: true,
   }).then(ok => {
     if (!ok || chapterNum !== currentCh) return;
+    // Captured here, not before the dialog: a reload while the dialog was
+    // open leaves the write valid (rev resolves at send time), so only the
+    // generation in force when the PATCH is created matters.
+    const gen = dataGen;
     sendPatch(chapterNum, idx, "revert_machine", null, null)
-      .then(resp => applyPatchResponse(chapterNum, resp))
+      .then(resp => applyPatchResponse(chapterNum, resp, gen))
       .catch(err => {
         if (isConflict(err)) {
           if (chapterNum === currentCh) reloadAfterConflict();
@@ -879,12 +917,19 @@ async function loadSegments() {
   grid.innerHTML = "";
   gridHead.hidden = true;
   clearStatus();
+  // Chrome that belongs to the OUTGOING chapter goes with the grid: the
+  // continue card's Read link and Continue button are baked to it, and its
+  // counts describe a chapter no longer on screen. renderState / the error
+  // branch repaint both from the payload that arrives.
+  resetContinueCard();
+  renderProgress({ confirmed: 0, total: 0 });
   let data;
   try {
     data = await api.chapterSegments(novelId, currentCh);
   } catch (e) {
     if (seq !== loadSeq) return;
     currentData = null;
+    dataGen++;
     readOnly = true;
     grid.setAttribute("aria-busy", "false");
     renderProgress({ confirmed: 0, total: 0 });
@@ -894,6 +939,7 @@ async function loadSegments() {
   }
   if (seq !== loadSeq) return;
   currentData = data;
+  dataGen++;
   grid.setAttribute("aria-busy", "false");
   renderState(data);
   // Assist-rail hook: a fresh chapter payload landed (any state).
@@ -1044,10 +1090,28 @@ async function bootEditor() {
   chaptersCache = chapters;
   if (!chapters.length) {
     grid.setAttribute("aria-busy", "false");
+    // This return skips syncUrl / saveBreadcrumb / updateBar, so the chrome
+    // would otherwise keep its HTML defaults: nav arrows enabled but wired
+    // to nothing, the Reader link still href="#", the crumb still a
+    // placeholder. Point them somewhere honest instead. The chapter select
+    // stays empty: there is nothing to pick.
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    readerLink.href = `/reader?novel=${novelId}`;
+    crumbCh.textContent = "No chapters";
     showStatus("info", "This novel has no chapters yet.");
     return;
   }
-  if (chapterIndex(currentCh) < 0) currentCh = chapters[0].chapter_num;
+  if (chapterIndex(currentCh) < 0) {
+    // The URL (or the breadcrumb) named a chapter this novel does not have.
+    // Falling back bypasses gotoChapter, so drop the anchors it would have
+    // dropped: ?seg= and ?para= were resolved against the chapter that was
+    // asked for, and applying them to a different chapter lands the user on
+    // an unrelated paragraph.
+    currentCh = chapters[0].chapter_num;
+    focusSeg = null;
+    pendingPara = null;
+  }
   chSelect.innerHTML = chapters.map(c => {
     const title = c.title_en || c.title_zh || "";
     return `<option value="${c.chapter_num}">Ch. ${c.chapter_num}${title ? ` · ${escapeHtml(title)}` : ""}</option>`;
