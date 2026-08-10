@@ -50,6 +50,31 @@ logger = logging.getLogger(__name__)
 ProgressFn = Callable[[str, int, int], Awaitable[None]]
 
 
+# Terminal-status vocabulary. The row's `status` column is free-form text,
+# but the frontend poller (frontend/js/home.js::_trackScrapeJob) only stops
+# polling and unlocks the "Fetch & import" button on 'done' or 'error'. A
+# third value like 'cancelled' would be INVISIBLE to it: the poller would
+# spin forever and the button would stay locked across page loads (the job
+# id is persisted in localStorage). So every non-success terminal state
+# lands on status='error' and carries its real cause in `error_kind`:
+#   'cancelled': the user cancelled the import from the library card.
+#   'orphaned': the process died mid-crawl; found by the boot sweep.
+# Neither is a crawl failure, which is why the messages say plainly that
+# the chapters already fetched were kept.
+CANCELLED_KIND = "cancelled"
+ORPHANED_KIND = "orphaned"
+
+CANCELLED_MESSAGE = (
+    "Cancelled. The chapters fetched so far are kept in your library; "
+    "use Resume on the library card to finish the import."
+)
+ORPHANED_MESSAGE = (
+    "Stopped before it finished (the app closed or the import was "
+    "cancelled). The chapters fetched so far are kept in your library; "
+    "use Resume on the library card to finish the import."
+)
+
+
 async def create_job(url: str) -> int:
     """Insert a pending scrape_jobs row and return the new id."""
     async with open_conn() as conn:
@@ -107,6 +132,78 @@ async def mark_error(
             (message, kind or "unknown", job_id),
         )
         await conn.commit()
+
+
+async def mark_cancelled(job_id: int, message: str | None = None) -> None:
+    """Terminal transition for a user-cancelled import. Lands on
+    status='error' (the only non-success value the frontend poller
+    terminates on) with error_kind='cancelled' so the cause stays
+    honest for anything reading the row directly."""
+    await mark_error(job_id, message or CANCELLED_MESSAGE, kind=CANCELLED_KIND)
+
+
+async def mark_orphaned(job_id: int) -> None:
+    """Terminal transition for a job whose runner is gone (process died
+    mid-crawl, or the novel stopped importing without the row being
+    resolved). Same status/kind rationale as `mark_cancelled`."""
+    await mark_error(job_id, ORPHANED_MESSAGE, kind=ORPHANED_KIND)
+
+
+async def find_active_job_for_novel(novel_id: int) -> int | None:
+    """Newest non-terminal job row for a novel, or None.
+
+    The resume path uses this to re-adopt the job row the original import
+    created, so a resume that finishes (or is cancelled) resolves the row
+    the frontend is still polling instead of leaving it 'running' forever.
+    Newest-first because a novel can accumulate several job rows over
+    repeated import attempts; only the latest one is being watched.
+    """
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM scrape_jobs "
+            "WHERE novel_id = ? AND status IN ('pending', 'running') "
+            "ORDER BY id DESC LIMIT 1",
+            (novel_id,),
+        )
+        row = await cur.fetchone()
+        return None if row is None else row["id"]
+
+
+async def sweep_orphaned_jobs() -> int:
+    """Boot-time self-heal: resolve every job row whose runner is gone.
+
+    A job row is orphaned when it is still 'pending' / 'running' but its
+    novel is NOT actively importing (or it never got a novel at all,
+    meaning the process died during catalog discovery). Runners live in
+    the process's event loop, so at lifespan-startup time no non-terminal
+    row can have a live owner: any row this matches is stranded.
+
+    Without this, a stranded row bricks the import page permanently. The
+    frontend persists the job id in localStorage and re-locks the
+    "Fetch & import" button on every page load until the job resolves, so
+    a row stuck at 'running' locks the button forever. This sweep is what
+    unbricks user DBs that already carry such rows.
+
+    Returns the number of rows resolved.
+    """
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "UPDATE scrape_jobs SET status = 'error', error_kind = ?, "
+            "error_message = ?, finished_at = datetime('now') "
+            "WHERE status IN ('pending', 'running') AND ("
+            "  novel_id IS NULL OR novel_id NOT IN ("
+            "    SELECT id FROM novels WHERE import_status = 'in_progress'"
+            "  )"
+            ")",
+            (ORPHANED_KIND, ORPHANED_MESSAGE),
+        )
+        await conn.commit()
+        swept = cur.rowcount or 0
+    if swept:
+        logger.info(
+            "scrape_jobs: swept %d orphaned job row(s) to terminal state", swept,
+        )
+    return swept
 
 
 async def get_job(job_id: int) -> dict | None:

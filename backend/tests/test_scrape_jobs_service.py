@@ -176,6 +176,121 @@ async def test_mark_error_keeps_explicit_kind():
 
 
 # --------------------------------------------------------------------------- #
+# terminal-state helpers + the boot sweep (stranded-row self-heal)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_novel(title: str, import_status: str | None) -> int:
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type, import_status) "
+            "VALUES (?, 'url', ?)",
+            (title, import_status),
+        )
+        await conn.commit()
+        return cur.lastrowid
+
+
+async def _running_job(url: str, novel_id: int | None) -> int:
+    """A job row in the state a live crawl leaves behind."""
+    job_id = await scrape_jobs.create_job(url)
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'running', novel_id = ? "
+            "WHERE id = ?",
+            (novel_id, job_id),
+        )
+        await conn.commit()
+    return job_id
+
+
+async def test_mark_cancelled_uses_error_status_with_cancelled_kind():
+    """A cancel is terminal but not a crawl failure. It lands on
+    status='error' because that is the only non-success value the frontend
+    poller stops on; the real cause rides in error_kind."""
+    job_id = await scrape_jobs.create_job("https://example.com/cancel")
+    await scrape_jobs.mark_cancelled(job_id)
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["status"] == "error"
+    assert job["error_kind"] == "cancelled"
+    assert job["error_message"].startswith("Cancelled.")
+    assert job["finished_at"] is not None
+
+
+async def test_mark_cancelled_accepts_custom_message():
+    job_id = await scrape_jobs.create_job("https://example.com/cancel2")
+    await scrape_jobs.mark_cancelled(job_id, "Cancelled: the novel was deleted.")
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["error_message"] == "Cancelled: the novel was deleted."
+    assert job["error_kind"] == "cancelled"
+
+
+async def test_mark_orphaned_is_terminal_with_orphaned_kind():
+    job_id = await scrape_jobs.create_job("https://example.com/orphan")
+    await scrape_jobs.mark_orphaned(job_id)
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["status"] == "error"
+    assert job["error_kind"] == "orphaned"
+    assert job["finished_at"] is not None
+
+
+async def test_find_active_job_returns_newest_non_terminal_row():
+    """The resume path adopts the latest still-open row for the novel;
+    terminal rows are never adopted."""
+    novel_id = await _seed_novel("Adoptable", "in_progress")
+    finished = await _running_job("https://example.com/old", novel_id)
+    await scrape_jobs.mark_done(finished, novel_id)
+    newest = await _running_job("https://example.com/new", novel_id)
+
+    assert await scrape_jobs.find_active_job_for_novel(novel_id) == newest
+
+    # Once the newest resolves, there is nothing left to adopt.
+    await scrape_jobs.mark_done(newest, novel_id)
+    assert await scrape_jobs.find_active_job_for_novel(novel_id) is None
+
+
+async def test_sweep_resolves_stranded_rows_and_spares_live_ones():
+    """The boot sweep marks every non-terminal row whose novel is not
+    actively importing, and leaves a genuinely in-flight one alone."""
+    stranded_novel = await _seed_novel("Stranded", "paused")
+    live_novel = await _seed_novel("Live", "in_progress")
+    stranded = await _running_job("https://example.com/stranded", stranded_novel)
+    live = await _running_job("https://example.com/live", live_novel)
+    # Died during catalog discovery: never got a novel at all.
+    novel_less = await scrape_jobs.create_job("https://example.com/nonovel")
+
+    swept = await scrape_jobs.sweep_orphaned_jobs()
+    assert swept == 2
+
+    assert (await scrape_jobs.get_job(stranded))["status"] == "error"
+    assert (await scrape_jobs.get_job(stranded))["error_kind"] == "orphaned"
+    assert (await scrape_jobs.get_job(novel_less))["status"] == "error"
+    # The live crawl's row is untouched: its novel is still in_progress.
+    assert (await scrape_jobs.get_job(live))["status"] == "running"
+    assert (await scrape_jobs.get_job(live))["finished_at"] is None
+
+
+async def test_sweep_leaves_already_terminal_rows_untouched():
+    """Idempotent: a second boot must not rewrite a real error message or
+    demote a completed job."""
+    novel_id = await _seed_novel("Settled", "done")
+    ok = await _running_job("https://example.com/ok", novel_id)
+    await scrape_jobs.mark_done(ok, novel_id)
+    failed = await _running_job("https://example.com/failed", novel_id)
+    await scrape_jobs.mark_error(failed, "blocked", kind="cloudflare")
+
+    assert await scrape_jobs.sweep_orphaned_jobs() == 0
+
+    assert (await scrape_jobs.get_job(ok))["status"] == "done"
+    failed_job = await scrape_jobs.get_job(failed)
+    assert failed_job["error_message"] == "blocked"
+    assert failed_job["error_kind"] == "cloudflare"
+
+
+# --------------------------------------------------------------------------- #
 # run_job delegates to import_runner.start_from_recipe (stubbed boundary)
 # --------------------------------------------------------------------------- #
 

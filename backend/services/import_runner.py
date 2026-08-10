@@ -88,6 +88,15 @@ def _spawn(coro) -> asyncio.Task:
     return _registry.spawn(coro)
 
 
+# Outcome of one `_drive_fill` run. The caller needs this to decide the
+# job row's terminal state: only COMPLETED is a success. CANCELLED and
+# FAILED already stamped the job terminal inside the loop, so the caller
+# must NOT stamp 'done' over them.
+FILL_COMPLETED = "completed"
+FILL_CANCELLED = "cancelled"
+FILL_FAILED = "failed"
+
+
 # ============================================================
 # Recipe path: discover + fill, fully resumable.
 # ============================================================
@@ -171,7 +180,7 @@ async def start_from_recipe(
         )
 
         # Phase 3: fill loop.
-        await _drive_fill(
+        outcome = await _drive_fill(
             novel_id=novel_id,
             recipe=recipe,
             cookies=cookies,
@@ -181,9 +190,18 @@ async def start_from_recipe(
             total=len(reconciled_planned),
         )
 
-        # Phase 4: done.
-        await scrape_jobs.mark_done(job_id, novel_id)
-        logger.info("import_runner: novel %d import complete", novel_id)
+        # Phase 4: done, but ONLY for a fill that actually completed.
+        # The cancelled and per-chapter-failed exits already stamped the
+        # job terminal inside the loop; an unconditional mark_done here
+        # used to overwrite that with a false 'done' (a cancelled import
+        # reported success and bounced the user into the reader).
+        if outcome == FILL_COMPLETED:
+            await scrape_jobs.mark_done(job_id, novel_id)
+            logger.info("import_runner: novel %d import complete", novel_id)
+        else:
+            logger.info(
+                "import_runner: novel %d import ended %s", novel_id, outcome,
+            )
 
     except ScrapeError as e:
         await scrape_jobs.mark_error(
@@ -230,6 +248,13 @@ async def resume_recipe_import(novel_id: int) -> None:
     `import_source_url`. Re-derives the recipe + recipe_state from
     `novels.source_url`; no in-memory plan is needed.
 
+    Adopts the novel's live `scrape_jobs` row (if it still has one) so a
+    resume that finishes marks that row done, and a resume that gets
+    cancelled marks it cancelled. Before this, resume always passed
+    `job_id=None`, so even a fully successful resume left the original
+    row at 'running' forever, permanently locking the import page's
+    submit button.
+
     Idempotent — safe to call on a novel that's already done (the fill
     loop sees zero pending chapters and exits cleanly)."""
     async with _novel_lock(novel_id):
@@ -250,6 +275,10 @@ async def resume_recipe_import(novel_id: int) -> None:
                 novel_id, row["import_status"],
             )
             return
+        # Adopt the live job row (if any) BEFORE the early-exit branches
+        # below, so every one of them resolves it instead of stranding it.
+        job_id = await scrape_jobs.find_active_job_for_novel(novel_id)
+
         source_url = row["source_url"]
         if not source_url:
             logger.warning(
@@ -258,6 +287,13 @@ async def resume_recipe_import(novel_id: int) -> None:
             )
             async with open_conn() as conn:
                 await set_novel_import_status(conn, novel_id, "paused")
+            if job_id is not None:
+                await scrape_jobs.mark_error(
+                    job_id,
+                    "This import cannot be resumed automatically: the "
+                    "novel has no source URL to re-crawl.",
+                    kind="unresumable",
+                )
             return
 
         parsed = urllib.parse.urlparse(source_url)
@@ -272,6 +308,13 @@ async def resume_recipe_import(novel_id: int) -> None:
             )
             async with open_conn() as conn:
                 await set_novel_import_status(conn, novel_id, "paused")
+            if job_id is not None:
+                await scrape_jobs.mark_error(
+                    job_id,
+                    f"This import cannot be resumed automatically: no "
+                    f"recipe matches host {hostname!r}.",
+                    kind="unresumable",
+                )
             return
 
         # Reconstruct recipe_state. Every current recipe stuffs the
@@ -296,17 +339,21 @@ async def resume_recipe_import(novel_id: int) -> None:
                 "import_runner: novel %d had 0 pending; marked done",
                 novel_id,
             )
+            if job_id is not None:
+                await scrape_jobs.mark_done(job_id, novel_id)
             return
 
-        await _drive_fill(
+        outcome = await _drive_fill(
             novel_id=novel_id,
             recipe=recipe,
             cookies=None,  # resume path doesn't have the original cookies
             recipe_state=recipe_state,
-            job_id=None,
+            job_id=job_id,
             cover_url=None,
             total=pending,
         )
+        if outcome == FILL_COMPLETED and job_id is not None:
+            await scrape_jobs.mark_done(job_id, novel_id)
 
 
 async def _drive_fill(
@@ -318,7 +365,7 @@ async def _drive_fill(
     job_id: int | None,
     cover_url: str | None,
     total: int,
-) -> None:
+) -> str:
     """Inner fill loop shared by fresh imports and resume.
 
     Reads pending skeleton rows in chapter_num order, calls
@@ -326,6 +373,11 @@ async def _drive_fill(
     Checks `novels.import_status` between iterations — if the user
     cancelled (status flipped to 'paused'), the loop exits cleanly with
     partial state intact.
+
+    Returns one of FILL_COMPLETED / FILL_CANCELLED / FILL_FAILED. The two
+    non-success exits stamp the job row terminal themselves (when a
+    `job_id` is in hand), so callers must key their own `mark_done` on
+    FILL_COMPLETED.
     """
     done_count = 0
     while True:
@@ -346,7 +398,17 @@ async def _drive_fill(
                     novel_id,
                     row["import_status"] if row else "<deleted>",
                 )
-                return
+                # The Library card's Cancel button lands exactly here. The
+                # job row has to be resolved on the way out: leaving it
+                # 'running' bricks the import page's submit button, which
+                # stays locked on every page load until the job resolves.
+                if job_id is not None:
+                    await scrape_jobs.mark_cancelled(
+                        job_id,
+                        None if row is not None
+                        else "Cancelled: the novel was deleted.",
+                    )
+                return FILL_CANCELLED
             cur = await conn.execute(
                 "SELECT id, chapter_num, title_zh, import_source_url "
                 "FROM chapters WHERE novel_id = ? "
@@ -363,7 +425,7 @@ async def _drive_fill(
                 await set_novel_import_status(conn, novel_id, "done")
             if cover_url:
                 await _fetch_and_store_cover(novel_id, cover_url, cookies)
-            return
+            return FILL_COMPLETED
         for ch_row in batch:
             planned = PlannedChapterRef(
                 chapter_num=ch_row["chapter_num"],
@@ -394,7 +456,7 @@ async def _drive_fill(
                         job_id, str(e),
                         kind=getattr(e, "error_kind", "unknown"),
                     )
-                return
+                return FILL_FAILED
             async with open_conn() as conn:
                 filled = await fill_skeleton_chapter(
                     conn, ch_row["id"],
@@ -471,7 +533,16 @@ async def drain_imports_on_startup() -> None:
     - Otherwise (no pending skeleton URLs — implies bulk / EPUB whose
       source is gone), flip to 'paused' so the user sees a paused
       badge instead of an in-flight one that never moves.
+
+    Also sweeps stranded `scrape_jobs` rows first (see
+    `scrape_jobs.sweep_orphaned_jobs`). The sweep runs BEFORE any runner
+    is re-spawned, so it observes a quiet process: nothing it marks
+    terminal can have a live owner, and the rows belonging to novels this
+    function is about to resume are protected by their novel still being
+    'in_progress'.
     """
+    await scrape_jobs.sweep_orphaned_jobs()
+
     async with open_conn() as conn:
         cur = await conn.execute(
             "SELECT id, title, source_url FROM novels "
@@ -510,6 +581,16 @@ async def drain_imports_on_startup() -> None:
                 "import_runner: novel %d had no pending chapters; "
                 "marked %s", novel_id, new_status,
             )
+            # The sweep above spared this novel's job row (the novel was
+            # still 'in_progress' when it ran); now that the novel is
+            # resolved, resolve the row too rather than leave it for the
+            # next boot.
+            job_id = await scrape_jobs.find_active_job_for_novel(novel_id)
+            if job_id is not None:
+                if new_status == "done":
+                    await scrape_jobs.mark_done(job_id, novel_id)
+                else:
+                    await scrape_jobs.mark_orphaned(job_id)
             continue
         # Has pending recipe skeletons → re-spawn the runner.
         logger.info(

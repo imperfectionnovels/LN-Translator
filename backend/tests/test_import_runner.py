@@ -323,6 +323,190 @@ async def test_cancel_during_fill_exits_cleanly(monkeypatch):
     assert total == 10, "skeleton rows must be preserved, not deleted"
 
 
+async def test_cancel_during_fill_marks_job_terminal(monkeypatch):
+    """The job row must be resolved when the fill loop exits via the cancel
+    check. A row left at 'running' bricks the import page: the frontend
+    persists the job id and re-locks the submit button on every load until
+    the job reaches 'done' or 'error'.
+
+    Same deterministic construction as the test above: the cancel fires
+    from inside fetch_chapter, so no scheduling race decides the outcome.
+    """
+
+    class CancelingRecipe(FakeRecipe):
+        async def fetch_chapter(
+            self, planned, *, cookies, fetch, recipe_state,
+        ) -> FetchedChapter:
+            result = await super().fetch_chapter(
+                planned, cookies=cookies, fetch=fetch, recipe_state=recipe_state,
+            )
+            if planned.chapter_num == 2:
+                async with open_conn() as conn:
+                    cur = await conn.execute(
+                        "SELECT id FROM novels WHERE title = 'Test Novel'"
+                    )
+                    nid = (await cur.fetchone())["id"]
+                await import_runner.cancel_import(nid)
+            return result
+
+    _patch_recipe(monkeypatch, CancelingRecipe(chapter_count=6))
+
+    job_id = await scrape_jobs.create_job("https://fake.test/novel/7")
+    await import_runner.start_from_recipe(
+        job_id, "https://fake.test/novel/7", None,
+    )
+
+    job = await scrape_jobs.get_job(job_id)
+    # Terminal, and honest about the cause: a cancelled import must not
+    # report 'done' (that used to bounce the user into the reader as if
+    # the crawl had succeeded).
+    assert job["status"] == "error"
+    assert job["error_kind"] == "cancelled"
+    assert job["error_message"].startswith("Cancelled.")
+    assert job["finished_at"] is not None
+
+
+async def test_failed_fill_keeps_its_error_and_is_not_overwritten(monkeypatch):
+    """A per-chapter ScrapeError stamps the job with the real failure. The
+    success stamp must not run afterwards and overwrite it with 'done'."""
+    _patch_recipe(monkeypatch, FakeRecipe(chapter_count=6, fail_at=3))
+
+    job_id = await scrape_jobs.create_job("https://fake.test/novel/8")
+    await import_runner.start_from_recipe(
+        job_id, "https://fake.test/novel/8", None,
+    )
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["status"] == "error"
+    assert "injected fault at chapter 3" in job["error_message"]
+
+
+async def test_resume_marks_the_adopted_job_done(monkeypatch):
+    """Resume adopts the novel's still-open job row and resolves it on
+    success. Before the fix resume passed job_id=None, so the original row
+    stayed 'running' forever even after a fully successful resume."""
+    # Phase 1: build a partial novel through the normal fresh-import path.
+    _patch_recipe(monkeypatch, FakeRecipe(chapter_count=8, fail_at=4))
+    job_id = await scrape_jobs.create_job("https://fake.test/novel/9")
+    await import_runner.start_from_recipe(
+        job_id, "https://fake.test/novel/9", None,
+    )
+
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM novels WHERE title = 'Test Novel'"
+        )
+        novel_id = (await cur.fetchone())["id"]
+        # Rewind to the state a mid-crawl process death leaves behind
+        # (rather than the clean per-chapter failure above): novel still
+        # flagged in_progress, job row still 'running', nobody resolved it.
+        await conn.execute(
+            "UPDATE novels SET import_status = 'in_progress' WHERE id = ?",
+            (novel_id,),
+        )
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'running', error_message = NULL, "
+            "error_kind = NULL, finished_at = NULL WHERE id = ?",
+            (job_id,),
+        )
+        await conn.commit()
+
+    # Phase 2: resume with a healed recipe.
+    healed = FakeRecipe(chapter_count=8)
+    _patch_recipe(monkeypatch, healed)
+    await import_runner.resume_recipe_import(novel_id)
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["status"] == "done"
+    assert job["novel_id"] == novel_id
+    assert job["finished_at"] is not None
+    assert healed.fetched_indices == [4, 5, 6, 7, 8]
+
+
+async def test_drain_sweeps_stranded_job_rows_at_boot():
+    """The boot sweep is wired into the lifespan hook and runs before the
+    early return, so a DB that already carries a stranded row is healed on
+    the next start. A row whose novel is genuinely importing is spared."""
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type, import_status) "
+            "VALUES ('Stranded Novel', 'url', 'paused')"
+        )
+        stranded_novel = cur.lastrowid
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type, import_status) "
+            "VALUES ('Live Novel', 'url', 'in_progress')"
+        )
+        live_novel = cur.lastrowid
+        await conn.commit()
+
+    stranded = await scrape_jobs.create_job("https://fake.test/stranded")
+    live = await scrape_jobs.create_job("https://fake.test/live")
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'running', novel_id = ? WHERE id = ?",
+            (stranded_novel, stranded),
+        )
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'running', novel_id = ? WHERE id = ?",
+            (live_novel, live),
+        )
+        await conn.commit()
+
+    await import_runner.drain_imports_on_startup()
+
+    assert (await scrape_jobs.get_job(stranded))["status"] == "error"
+    assert (await scrape_jobs.get_job(stranded))["error_kind"] == "orphaned"
+    # 'Live Novel' has no pending skeleton chapters, so drain flips it to
+    # paused (bulk/EPUB partial) and resolves its row in the same pass
+    # rather than leaving it for the next boot.
+    assert (await scrape_jobs.get_job(live))["status"] == "error"
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT import_status FROM novels WHERE id = ?", (live_novel,),
+        )
+        assert (await cur.fetchone())["import_status"] == "paused"
+
+
+async def test_drain_marks_job_done_for_fully_fetched_novel():
+    """Crash after the last fill commit but before the status flip: drain
+    finishes the novel, and the job row that was still open finishes with
+    it (marked done, not orphaned)."""
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO novels (title, source_type, import_status) "
+            "VALUES ('Finished Novel', 'url', 'in_progress')"
+        )
+        novel_id = cur.lastrowid
+        for i in range(1, 4):
+            await conn.execute(
+                "INSERT INTO chapters (novel_id, chapter_num, original_text, "
+                "status, import_source_url, import_fetched_at) "
+                "VALUES (?, ?, ?, 'pending', ?, datetime('now'))",
+                (novel_id, i, f"body {i}", f"https://fake.test/ch/{i}"),
+            )
+        await conn.commit()
+
+    job_id = await scrape_jobs.create_job("https://fake.test/finished")
+    async with open_conn() as conn:
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'running', novel_id = ? WHERE id = ?",
+            (novel_id, job_id),
+        )
+        await conn.commit()
+
+    await import_runner.drain_imports_on_startup()
+
+    job = await scrape_jobs.get_job(job_id)
+    assert job["status"] == "done"
+    assert job["novel_id"] == novel_id
+    async with open_conn() as conn:
+        cur = await conn.execute(
+            "SELECT import_status FROM novels WHERE id = ?", (novel_id,),
+        )
+        assert (await cur.fetchone())["import_status"] == "done"
+
+
 async def test_drain_resumes_in_progress_recipe(monkeypatch):
     """drain_imports_on_startup spawns the runner for any recipe novel
     still in import_status='in_progress' with pending skeleton URLs."""
