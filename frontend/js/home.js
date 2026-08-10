@@ -154,7 +154,7 @@ const importPreviewSnippet = document.getElementById("import-preview-snippet");
 const importPreviewConfirm = document.getElementById("import-preview-confirm");
 
 function previewThenImport(previewArg, doImport) {
-  return new Promise(async (resolve) => {
+  return new Promise(async (resolve, reject) => {
     let preview;
     try {
       preview = await api.importPreview(previewArg);
@@ -204,8 +204,12 @@ function previewThenImport(previewArg, doImport) {
       try {
         const r = await doImport();
         resolve(r);
-      } catch {
-        resolve(null);
+      } catch (err) {
+        // A real POST failure after the user already confirmed the
+        // preview must NOT look like a quiet cancel: reject so the
+        // caller's own try/catch surfaces the actual error and does
+        // not silently unlock the button for a duplicate-prone re-click.
+        reject(err);
       }
     };
     const onCancel = () => { cleanup(); importPreviewDlg.close(); resolve(null); };
@@ -336,7 +340,9 @@ document.getElementById("submit-paste").addEventListener("click", async (e) => {
     return;
   }
   if (!r) {
-    // User cancelled at preview, OR preview-then-import surfaced no result.
+    // User cancelled at the preview dialog. A real import failure after
+    // confirm now rejects above instead of resolving null, so this is a
+    // quiet cancel only.
     showStatus("", "info");
     unlockSubmit(btn);
     return;
@@ -404,12 +410,24 @@ document.getElementById("submit-url").addEventListener("click", async (e) => {
   }
 });
 
-/* Track a background scrape job — poll every 1.5s, render progress, and
+/* Track a background scrape job: poll every 1.5s, render progress, and
  * navigate to the reader on completion. The poller survives navigation
  * away from /; the job itself runs in the FastAPI worker independently.
  * If the user comes back to / before the job finishes, the next page
- * load picks the job up via localStorage so progress stays visible. */
+ * load picks the job up via localStorage so progress stays visible.
+ *
+ * Hardening (2026-08-10, alongside backend commit c623931 which retires
+ * stranded 'running' rows on the server side): this poller still guards
+ * three ways client-side so a wedged tab never locks the submit button
+ * forever:
+ *   - any status outside pending/running/done/error counts as terminal,
+ *     not just done/error;
+ *   - a stall timer bails out after _SCRAPE_JOB_STALL_MS of no change
+ *     in (status, step, current);
+ *   - a Dismiss control on the progress panel is always an escape hatch.
+ */
 const _SCRAPE_JOB_LS_KEY = "ln.activeScrapeJob";
+const _SCRAPE_JOB_STALL_MS = 10 * 60 * 1000;
 
 function _trackScrapeJob(jobId, btn) {
   // Persist so a reload / quick navigation away and back doesn't lose
@@ -418,6 +436,26 @@ function _trackScrapeJob(jobId, btn) {
 
   const statusEl = document.getElementById("status");
   let stopped = false;
+  let lastProgressKey = null;
+  let lastProgressAt = Date.now();
+
+  function stopTracking() {
+    stopped = true;
+    try { localStorage.removeItem(_SCRAPE_JOB_LS_KEY); } catch (_) {}
+    if (btn) unlockSubmit(btn);
+  }
+
+  // _renderProgress replaces statusEl's innerHTML on every call, which
+  // discards any previously-attached listener along with the old node,
+  // so the Dismiss button is rewired fresh after each render.
+  function wireDismiss() {
+    const dismissBtn = document.getElementById("scrape-job-dismiss");
+    if (!dismissBtn) return;
+    dismissBtn.addEventListener("click", () => {
+      stopTracking();
+      showStatus("", "info");
+    });
+  }
 
   async function tick() {
     if (stopped) return;
@@ -429,16 +467,47 @@ function _trackScrapeJob(jobId, btn) {
         status: "error",
         message: `Could not read job status: ${err && err.message ? err.message : err}`,
       });
-      stopped = true;
-      try { localStorage.removeItem(_SCRAPE_JOB_LS_KEY); } catch (_) {}
-      if (btn) unlockSubmit(btn);
+      wireDismiss();
+      stopTracking();
       return;
     }
+
+    const isPolling = job.status === "pending" || job.status === "running";
+
+    // Stall bail-out: no change in (status, step, current) for
+    // _SCRAPE_JOB_STALL_MS means this tab has likely been left open
+    // well past the point polling is useful. The job itself is
+    // untouched server-side, so stop watching and point at the
+    // Library card instead of spinning the progress bar forever.
+    const progressKey = JSON.stringify([job.status, job.step, job.current]);
+    if (progressKey !== lastProgressKey) {
+      lastProgressKey = progressKey;
+      lastProgressAt = Date.now();
+    } else if (isPolling && Date.now() - lastProgressAt >= _SCRAPE_JOB_STALL_MS) {
+      _renderProgress(statusEl, { stalled: true });
+      wireDismiss();
+      stopTracking();
+      return;
+    }
+
+    // Any status other than the four the backend actually emits counts
+    // as terminal too, so an unexpected value can't spin the poller (or
+    // leave the button locked across a reload) forever.
+    if (!isPolling && job.status !== "done" && job.status !== "error") {
+      _renderProgress(statusEl, {
+        status: "error",
+        message: `Unrecognized job status ${_escape(String(job.status))}. Check the Library card.`,
+      });
+      wireDismiss();
+      stopTracking();
+      return;
+    }
+
     _renderProgress(statusEl, job);
+    wireDismiss();
 
     if (job.status === "done") {
-      stopped = true;
-      try { localStorage.removeItem(_SCRAPE_JOB_LS_KEY); } catch (_) {}
+      stopTracking();
       renderRecent();
       setTimeout(() => {
         if (job.novel_id) location.href = `/reader?novel=${job.novel_id}&ch=1`;
@@ -446,9 +515,7 @@ function _trackScrapeJob(jobId, btn) {
       return;
     }
     if (job.status === "error") {
-      stopped = true;
-      try { localStorage.removeItem(_SCRAPE_JOB_LS_KEY); } catch (_) {}
-      if (btn) unlockSubmit(btn);
+      stopTracking();
       return;
     }
     setTimeout(tick, 1500);
@@ -458,9 +525,39 @@ function _trackScrapeJob(jobId, btn) {
 
 function _renderProgress(el, job) {
   if (!el) return;
+  // Always-present escape hatch: dismiss the panel from any state
+  // (in-progress, error, or stalled) without waiting on the poller.
+  const dismissHtml = `<button type="button" class="btn-ghost" id="scrape-job-dismiss">Dismiss</button>`;
+
+  if (job.stalled) {
+    el.className = "status info";
+    el.innerHTML =
+      `No progress for 10 minutes. The import may still be running ` +
+      `server-side. Check the Library card for its progress. ${dismissHtml}`;
+    return;
+  }
+
   if (job.status === "error") {
+    // F06-style differentiated copy for the terminal kinds the backend
+    // now emits for cancel/resume/orphan paths (services/scrape_jobs.py).
+    // Neither is a crawl failure, so neither should read like one.
+    const kind = job.error_kind || null;
+    if (kind === "cancelled") {
+      el.className = "status info";
+      el.innerHTML =
+        `<strong>Import cancelled.</strong> Chapters fetched so far are ` +
+        `kept in your library. ${dismissHtml}`;
+      return;
+    }
+    if (kind === "orphaned") {
+      el.className = "status err";
+      el.innerHTML =
+        `<strong>This import was interrupted (app restarted).</strong> ` +
+        `Resume it from the Library card. ${dismissHtml}`;
+      return;
+    }
     el.className = "status err";
-    el.innerHTML = `<strong>Import failed.</strong> ${_escape(job.message || job.error_message || "Unknown error.")}`;
+    el.innerHTML = `<strong>Import failed.</strong> ${_escape(job.message || job.error_message || "Unknown error.")} ${dismissHtml}`;
     return;
   }
   const titleBit = job.scraped_title
@@ -482,7 +579,7 @@ function _renderProgress(el, job) {
       <div class="scrape-progress-head">${titleBit}</div>
       <div class="scrape-progress-step">${_escape(stepLabel)}${job.total > 0 ? ` · ${pct}%` : ""}</div>
       ${bar}
-      <div class="scrape-progress-hint muted">You can navigate away. The import continues in the background.</div>
+      <div class="scrape-progress-hint muted">You can navigate away. The import continues in the background. ${dismissHtml}</div>
     </div>
   `;
 }
@@ -634,6 +731,8 @@ document.getElementById("submit-upload").addEventListener("click", async (e) => 
     return;
   }
   if (!r) {
+    // User cancelled at the preview dialog (a real import failure after
+    // confirm rejects above instead of resolving null).
     showStatus("", "info");
     unlockSubmit(btn);
     return;
@@ -753,8 +852,17 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
       showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipMsg}.${tail}`, "ok");
       broadcastNovelChange(appendNovelId, "appended");
       renderRecent();
-      if (hadSkips) { unlockSubmit(btn); }
-      else { setTimeout(() => { location.href = href; }, 800); }
+      if (hadSkips) {
+        // Clear the FileList so a re-click can't re-import the same
+        // (already-imported) files. The skip report and its "Open
+        // reader" link stay visible; a new bulk upload requires the
+        // user to pick files again.
+        bulkInput.value = "";
+        renderBulkList();
+        unlockSubmit(btn);
+      } else {
+        setTimeout(() => { location.href = href; }, 800);
+      }
     } catch (err) {
       showStatus(`Failed: ${err.message}`, "err");
       unlockSubmit(btn);
@@ -773,8 +881,16 @@ document.getElementById("submit-bulk").addEventListener("click", async (e) => {
     const tail = hadSkips ? "" : " Open the reader and click Translate on a chapter to queue it.";
     showStatus(`Imported ${r.added_chapters} raw chapter(s)${skipMsg}.${tail}`, "ok");
     renderRecent();
-    if (hadSkips) { unlockSubmit(btn); }
-    else { setTimeout(() => { location.href = `/library`; }, 800); }
+    if (hadSkips) {
+      // Same duplicate-import guard as the append path: clear the
+      // FileList so a re-click fails the "choose at least one file"
+      // check instead of re-importing.
+      bulkInput.value = "";
+      renderBulkList();
+      unlockSubmit(btn);
+    } else {
+      setTimeout(() => { location.href = `/library`; }, 800);
+    }
   } catch (err) {
     showStatus(`Failed: ${err.message}`, "err");
     unlockSubmit(btn);
