@@ -14,6 +14,11 @@ let searchQuery = "";
 // Archive counts the soft-deleted set.
 let archivedCount = 0;
 let activeNovelsCache = [];
+// Last successfully-fetched archived list. A failed archived poll (rare,
+// transient) falls back to this rather than an empty array -- otherwise the
+// Archive tab flashes "Nothing in the archive" on a plain network hiccup,
+// which reads as "your novel was purged".
+let archivedNovelsCache = [];
 // Track previous done-chapter counts so we can spot novels that translated
 // progress since the last poll and surface a brief pulsing dot to draw the
 // eye. Reset (not cleared) on every load.
@@ -144,15 +149,24 @@ async function load() {
     // chip counts; the archived set drives the Archive chip count and (when
     // the user is on the Archive tab) the visible grid. Two cheap GETs
     // beat any cleverer scheme — DB is local and the rows are small.
-    const [activeList, archivedList, obsSummary, providersList] = await Promise.all([
+    let archivedFetchError = null;
+    const [activeList, archivedResult, obsSummary, providersList] = await Promise.all([
       api.novels(),
-      api.novels({ archived: true }).catch(() => []),
+      api.novels({ archived: true }).catch(e => { archivedFetchError = e; return null; }),
       api.observationsLibrarySummary().catch(() => ({})),
       api.providers().catch(() => []),
     ]);
     activeNovelsCache = activeList;
-    archivedCount = archivedList.length;
-    const fresh = filterStatus === "archived" ? archivedList : activeList;
+    // null is the failure sentinel (not []) -- an empty array is a valid
+    // "archive really is empty" result and must not be confused with "the
+    // fetch failed". On failure, keep rendering the previous archived
+    // list/count instead of the fresh (empty-looking) one.
+    const archivedFetchFailed = archivedResult === null;
+    if (!archivedFetchFailed) {
+      archivedNovelsCache = archivedResult;
+      archivedCount = archivedNovelsCache.length;
+    }
+    const fresh = filterStatus === "archived" ? archivedNovelsCache : activeList;
     // Build the per-novel last-read snapshot once for the render that's
     // about to follow; lastReadInfo / effectiveStatus pick it up via
     // _lastReadCache rather than re-parsing localStorage per call.
@@ -204,9 +218,19 @@ async function load() {
       activeNovelsCache,
     ]);
     // Always update the cheap text nodes even on a skip so the clock/error
-    // chip stay current without tearing down the grid.
-    if (lastSyncEl) lastSyncEl.textContent = `Synced ${fmtClock(Date.now())}`;
-    if (pollErrorEl) pollErrorEl.classList.add("hidden");
+    // chip stay current without tearing down the grid. A failed archived
+    // fetch is a real (if partial) sync failure: surface the poll-error
+    // chip and skip the clean "Synced" stamp for this poll, even though the
+    // active-tab data came through fine and rendering continues below.
+    if (archivedFetchFailed) {
+      if (pollErrorEl) {
+        pollErrorEl.textContent = `Sync failed · ${archivedFetchError ? archivedFetchError.message : "archive list unavailable"}`;
+        pollErrorEl.classList.remove("hidden");
+      }
+    } else {
+      if (lastSyncEl) lastSyncEl.textContent = `Synced ${fmtClock(Date.now())}`;
+      if (pollErrorEl) pollErrorEl.classList.add("hidden");
+    }
     if (renderSig === _lastRenderSig) return;
     _lastRenderSig = renderSig;
     renderSummary();
@@ -291,7 +315,23 @@ function renderContinue() {
     return;
   }
   const { n, last } = recent[0];
-  const pct = n.total_chapters ? Math.round((last.ch / n.total_chapters) * 100) : 0;
+  // total_chapters is a ROW COUNT, last.ch is an ABSOLUTE chapter_num -- a
+  // novel imported starting at chapter 296 has total_chapters around 10 but
+  // last.ch around 300, so dividing last.ch straight by total_chapters reads
+  // as "Ch 300 of 10" and a bar past 100%. Same first_chapter_num fallback
+  // wireCardActions already uses for the resume link (default 1 when the
+  // novel is a plain 1-based import).
+  const firstCh = n.first_chapter_num || 1;
+  const read = last.ch - firstCh + 1;
+  const pct = n.total_chapters
+    ? Math.max(0, Math.min(100, Math.round((read / n.total_chapters) * 100)))
+    : 0;
+  // "Ch X of Y" only makes sense when chapter numbers start at 1; a
+  // partial-import novel keeps the raw chapter number instead of pairing it
+  // with a total it doesn't correspond to.
+  const chLabel = firstCh === 1
+    ? `Ch ${last.ch} of ${n.total_chapters || "…"}`
+    : `Ch ${last.ch}`;
   const lastLine = last.lastLine
     ? `<p class="last-line">${escapeHtml(last.lastLine)}</p>` : "";
   // Cover block — pull from the same /api/novels/{id}/cover endpoint as
@@ -313,7 +353,7 @@ function renderContinue() {
         <div class="continue-eyebrow">Continue reading</div>
         <h3 class="continue-title">${escapeHtml(n.title)}</h3>
         <div class="continue-meta">
-          <span>Ch ${last.ch} of ${n.total_chapters || "…"}</span>
+          <span>${chLabel}</span>
           <span>${pct}%</span>
           <span>${relTime(last.ts)}</span>
         </div>
@@ -808,6 +848,11 @@ function wireCardActions() {
     if (purgeBtn) purgeBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const n = novels.find(x => x.id == id);
+      // Disable at click time, before the deleteCounts await -- otherwise a
+      // double-click lands its second click while the button is still
+      // enabled and the dialog hasn't opened yet, so both invocations race
+      // to showModal() on the one dialog element (InvalidStateError).
+      purgeBtn.disabled = true;
       // B4: quantify what a purge destroys, in particular the CAT-editor
       // segments (the edited/confirmed subset is the user's own work).
       let counts = null;
@@ -826,6 +871,10 @@ function wireCardActions() {
         okText: "Purge permanently",
         danger: true,
       });
+      // Re-enable now that the dialog is closed, on both the confirm and
+      // cancel paths; the purge call below disables it again for its own
+      // duration.
+      purgeBtn.disabled = false;
       if (!ok) return;
       purgeBtn.disabled = true;
       try { await api.purgeNovel(id); await load(); }
