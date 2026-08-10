@@ -20,6 +20,7 @@
   let selected = null; // {providerType, model, secretRef, name, hue, glyph}
   let createdProviderId = null;
   let createdSignature = null; // "type::model" of the row we created, to detect a changed selection
+  let step1InFlight = false; // guards onContinueFromStep1 against a double-click firing two POSTs
 
   const PROVIDER_LABEL = {
     claude_agent: { name: "Claude Agent SDK", glyph: "C", hue: "#c8423a" },
@@ -169,49 +170,65 @@
   });
 
   async function onContinueFromStep1() {
-    if (!selected) return;
-    const sig = `${selected.providerType}::${selected.model}`;
-    // Create the provider row first — needed for both the key step
-    // (provider id is required for set-secret) and the summary step.
-    if (!createdProviderId) {
-      try {
-        const created = await api.createProvider({
-          name: selected.name,
-          provider_type: selected.providerType,
-          model_id: selected.model,
-          secret_ref: selected.secretRef || null,
-          base_url: selected.baseUrl || null,
-          is_default: true,
-        });
-        createdProviderId = created.id;
-        createdSignature = sig;
-      } catch (err) {
-        // The most common failure is the UNIQUE(name) constraint —
-        // probably a returning user re-running the wizard. Surface
-        // gracefully instead of stranding them.
-        await confirmDialog({ title: "Couldn't create the provider", body: `<p>${escapeHtml(err.message)}</p><p>If you've already configured this provider, use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
-        return;
+    if (!selected || step1InFlight) return;
+    step1InFlight = true;
+    try {
+      const sig = `${selected.providerType}::${selected.model}`;
+      // Create the provider row first: needed for both the key step
+      // (provider id is required for set-secret) and the summary step.
+      if (!createdProviderId) {
+        try {
+          const created = await api.createProvider({
+            name: selected.name,
+            provider_type: selected.providerType,
+            model_id: selected.model,
+            secret_ref: selected.secretRef || null,
+            base_url: selected.baseUrl || null,
+            is_default: true,
+          });
+          createdProviderId = created.id;
+          createdSignature = sig;
+          // The row now exists but its secret (if any) isn't stored yet.
+          // Stamp first_run_complete="0" so a mid-wizard abandonment from
+          // here on resumes into /onboarding on next launch instead of the
+          // provider-count heuristic reading this half-configured row as a
+          // "returning install" and routing home. Fire-and-forget: the
+          // heuristic is the fallback if this write fails.
+          fetch("/api/config/first_run_complete", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value: "0" }),
+          }).catch(() => {});
+        } catch (err) {
+          // The most common failure is the UNIQUE(name) constraint,
+          // probably a returning user re-running the wizard. Surface
+          // gracefully instead of stranding them.
+          await confirmDialog({ title: "Couldn't create the provider", body: `<p>${escapeHtml(err.message)}</p><p>If you've already configured this provider, use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
+          return;
+        }
+      } else if (createdSignature !== sig) {
+        // The user went Back and picked a different provider after a row was
+        // already created. Update that row to match so the key step and the
+        // summary act on the current selection, not the stale one.
+        try {
+          await api.updateProvider(createdProviderId, {
+            name: selected.name,
+            provider_type: selected.providerType,
+            model_id: selected.model,
+            secret_ref: selected.secretRef || null,
+            base_url: selected.baseUrl || null,
+          });
+          createdSignature = sig;
+        } catch (err) {
+          await confirmDialog({ title: "Couldn't update the provider", body: `<p>${escapeHtml(err.message)}</p><p>Use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
+          return;
+        }
       }
-    } else if (createdSignature !== sig) {
-      // The user went Back and picked a different provider after a row was
-      // already created. Update that row to match so the key step and the
-      // summary act on the current selection, not the stale one.
-      try {
-        await api.updateProvider(createdProviderId, {
-          name: selected.name,
-          provider_type: selected.providerType,
-          model_id: selected.model,
-          secret_ref: selected.secretRef || null,
-          base_url: selected.baseUrl || null,
-        });
-        createdSignature = sig;
-      } catch (err) {
-        await confirmDialog({ title: "Couldn't update the provider", body: `<p>${escapeHtml(err.message)}</p><p>Use Settings to make changes.</p>`, okText: "OK", cancelText: "" });
-        return;
-      }
+      populateStep2();
+      goto(2);
+    } finally {
+      step1InFlight = false;
     }
-    populateStep2();
-    goto(2);
   }
 
   function populateStep2() {
@@ -223,6 +240,13 @@
     const skipBtn = document.getElementById("ob-skip-key");
     const input = document.getElementById("ob-key-input");
     input.value = "";
+    // Reset skipBtn to its default label/action in case a previous pass
+    // through this step (a failed test) repurposed it into "Continue
+    // anyway" via _showContinueAnyway; otherwise going Back and picking
+    // a different provider could show "Continue anyway" where "Skip · set
+    // the key later" belongs.
+    skipBtn.textContent = "Skip · set the key later";
+    skipBtn.dataset.act = "skip-key";
 
     if (!selected.secretRef) {
       // Subscription / no-key provider (Claude Agent SDK, a CLI subscription
