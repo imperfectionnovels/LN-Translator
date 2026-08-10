@@ -75,7 +75,6 @@
 
 /* ---- Status banner cards ---- */
 .editor-status { margin: 14px 0; }
-.editor-status .banner-actions { margin-top: 8px; }
 .editor-purpose { font-size: 13px; line-height: 1.55; margin: 0 0 12px; }
 .shortcuts-subhead {
   font-family: var(--font-family-sans);

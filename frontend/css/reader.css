@@ -148,14 +148,12 @@
   .chapter-bar .view-group .icon-btn {
     padding: 8px 10px; font-size: 12px; min-height: 36px;
   }
-  .chapter-bar .util-group .icon-btn,
-  .chapter-bar .util-group .download-link {
+  .chapter-bar .util-group .icon-btn {
     padding: 8px 8px; font-size: 12px; min-height: 36px; min-width: 32px;
   }
   .chapter-bar .util-group a#append-chapters { font-size: 0; padding: 8px 10px; min-height: 36px; min-width: 36px; }
   .chapter-bar .util-group a#append-chapters::before { content: "+"; font-size: 16px; line-height: 1; }
   .mobile-toc-toggle { min-width: 36px; min-height: 36px; padding: 6px 10px; }
-  .download-menu > summary { padding: 8px 10px; min-height: 36px; }
 
   /* Chinese subtitle had 40px bottom margin to give the body breathing room
    * under the title block; that breathing room is excessive on phones. */
@@ -490,11 +488,10 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   padding: 5px 8px;
   font-size: 12.5px;
 }
-/* Utility buttons (download, retranslate, etc.): always second-tier.
+/* Utility buttons (retranslate, etc.): always second-tier.
  * Icon-only by default with tooltips; the label appears on hover so the row
  * stops shouting six equal-weight controls at once. */
-.chapter-bar .util-group .icon-btn,
-.chapter-bar .util-group .download-link {
+.chapter-bar .util-group .icon-btn {
   color: var(--muted);
   font-size: 12px;
   padding: 5px 8px;
@@ -503,8 +500,7 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
   background: transparent;
   transition: color 120ms var(--ease), background 120ms var(--ease);
 }
-.chapter-bar .util-group .icon-btn:hover,
-.chapter-bar .util-group .download-link:hover { color: var(--fg); background: var(--bg-tint); }
+.chapter-bar .util-group .icon-btn:hover { color: var(--fg); background: var(--bg-tint); }
 
 /* Bookmarks panel (Initiative 2). */
 .bookmarks-dialog { max-width: 640px; }
@@ -568,13 +564,6 @@ html[data-focus-mode="1"] .reader-body .crumbs { display: none; }
 
 /* Bookmark add-button "filled" state when this chapter has any bookmark. */
 .chapter-bar .util-group #bookmark-add.has-bookmark { color: var(--accent, var(--fg)); }
-
-.chapter-bar .util-group .download-group {
-  display: inline-flex; gap: 2px; align-items: center;
-  padding-left: 6px;
-  border-left: 1px solid var(--border);
-  margin-left: 2px;
-}
 /* View-mode toggles get a segmented look so they read as the primary
  * "what am I looking at" controls, distinct from the utility row. */
 .chapter-bar .view-group .icon-btn {
@@ -1443,51 +1432,6 @@ body[data-chapter-status="error"] .reading-rail {
  * styles the old #append-chapters relied on. */
 #append-chapters.util-menu-item { color: var(--fg); }
 
-/* ===== Reader — Download details menu (legacy, retained for restore) ===== */
-.download-menu { position: relative; font-family: var(--font-family-sans); font-size: 12px; }
-.download-menu > summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--muted);
-  padding: 5px 10px;
-  border-radius: var(--r-md);
-  border: 1px solid transparent;
-}
-.download-menu > summary:hover { color: var(--fg); background: var(--bg-tint); }
-.download-menu > summary::-webkit-details-marker { display: none; }
-.download-menu[open] > summary { color: var(--fg); border-color: var(--border); }
-.download-menu .menu {
-  position: absolute;
-  right: 0; top: calc(100% + 4px);
-  z-index: 6;
-  min-width: 220px;
-  background: var(--pane-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-popover);
-  padding: 6px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.download-menu .menu a {
-  padding: 6px 10px;
-  border-radius: var(--r-sm);
-  color: var(--fg);
-  font-size: 12.5px;
-}
-.download-menu .menu a:hover { background: var(--bg-tint); }
-.download-menu .menu .menu-section {
-  padding: 6px 10px 2px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.download-menu .menu .menu-section + .menu-section,
-.download-menu .menu a + .menu-section {
-  margin-top: 4px;
-  border-top: 1px solid var(--border);
-}
 
 /* ===== Reader — retranslate spinner state ===== */
 .spinning {
@@ -1654,7 +1598,6 @@ body[data-chapter-status="error"] .reading-rail {
   .alert-banner,
   .toolbar-error,
   .pane-label,
-  .lib-toolbar,
   dialog {
     display: none !important;
   }
