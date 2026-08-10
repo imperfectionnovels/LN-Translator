@@ -177,7 +177,12 @@
   function render(snap) {
     // Skip the full rebuild when the snapshot is unchanged since the last poll.
     // This is the core de-clunk: an idle queue no longer flickers every 4s.
-    const sig = JSON.stringify(snap);
+    // The Recent column's relTime(...) strings are computed at render time
+    // though, so a coarse minute bucket rides along in the signature: an
+    // otherwise byte-identical snapshot still re-renders once a minute so
+    // "just now" doesn't freeze there for an hour on an idle queue.
+    const minuteBucket = Math.floor(Date.now() / 60000);
+    const sig = `${minuteBucket}|${JSON.stringify(snap)}`;
     if (sig === lastSig) return;
     lastSig = sig;
     const translate = snap.translate || [];
@@ -252,16 +257,46 @@
     });
   }
 
-  async function refresh() {
+  // Poll failures are swallowed silently (mirrors queue-panel.js's
+  // deliberate silence, ~:175-178): toasting on every failed 4s tick during
+  // a server restart pins a permanent bottom-center error, since showToast
+  // re-arms its own timer on each call. We still want an honest signal
+  // though, so consecutive poll failures are tracked and, past STALE_AFTER
+  // in a row, an inline note appears near the summary line. Cleared on the
+  // next successful refresh. The explicit Refresh button is a deliberate
+  // user action, so it keeps toasting its failure directly.
+  const STALE_AFTER = 3;
+  let consecutiveFailures = 0;
+  let staleNoteEl = null;
+  function staleNote() {
+    if (staleNoteEl) return staleNoteEl;
+    staleNoteEl = document.createElement("div");
+    staleNoteEl.id = "qs-stale-note";
+    staleNoteEl.className = "muted";
+    staleNoteEl.hidden = true;
+    staleNoteEl.textContent = "Showing last known data, still trying to reconnect…";
+    sumEl?.insertAdjacentElement("afterend", staleNoteEl);
+    return staleNoteEl;
+  }
+
+  async function refresh(opts) {
+    const manual = !!(opts && opts.manual);
     try {
       const snap = await api.globalQueue();
+      consecutiveFailures = 0;
+      if (staleNoteEl) staleNoteEl.hidden = true;
       render(snap);
     } catch (e) {
-      showToast(`Refresh failed: ${e.message}`, "err");
+      if (manual) {
+        showToast(`Refresh failed: ${e.message}`, "err");
+        return;
+      }
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= STALE_AFTER) staleNote().hidden = false;
     }
   }
 
-  refreshBtn?.addEventListener("click", refresh);
+  refreshBtn?.addEventListener("click", () => refresh({ manual: true }));
   cancelAllBtn?.addEventListener("click", async () => {
     const ok = await confirmDialog({
       title: "Cancel all queued chapters?",

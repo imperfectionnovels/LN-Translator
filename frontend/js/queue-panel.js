@@ -137,10 +137,12 @@
       await api.cancelGlobalQueue();
       await refresh();
     } catch (e) {
-      pop.querySelector(".qp-actions").insertAdjacentHTML(
-        "afterbegin",
-        `<div class="status err" style="margin-bottom:6px;">Cancel failed: ${escape(e.message)}</div>`
-      );
+      // The confirm dialog's own button click lands outside the popover, so
+      // the click-outside closer above has already hidden it by the time
+      // this runs: an insertAdjacentHTML write into the popover would be
+      // invisible. showToast (utils.js, loaded on every page that mounts
+      // this pill) surfaces the failure regardless of popover state.
+      showToast(`Cancel failed: ${e.message}`, "err");
     }
   }
 
