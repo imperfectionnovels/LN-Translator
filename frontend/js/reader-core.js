@@ -11,10 +11,19 @@ let currentCh = parseInt(params.get("ch") || "1", 10);
 // that resume instead of landing on a specific spot in a specific chapter.
 // Consumed once, in reader-chapter.js's loadChapter, at the same call site
 // that restores the saved scroll position.
+// The chapter the handoff belongs to. The consumption site only runs for a
+// 'done' chapter, so a deep link that lands on a pending / translating one
+// would otherwise leave the value parked and let the NEXT done chapter the
+// reader opens swallow it (discarding that chapter's saved scroll position).
+// Both are nulled together at every consumption / mismatch site.
 let pendingDeepPara = null;
+let pendingDeepParaCh = null;
 if (hadExplicitCh) {
   const p = Number.parseInt(params.get("para"), 10);
-  if (Number.isFinite(p) && p >= 0) pendingDeepPara = p;
+  if (Number.isFinite(p) && p >= 0) {
+    pendingDeepPara = p;
+    pendingDeepParaCh = currentCh;
+  }
 }
 
 // Phase 6 (reader edit-mode retirement): legacy `?mode=edit` deep links (old

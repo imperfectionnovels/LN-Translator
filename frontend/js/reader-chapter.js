@@ -468,6 +468,18 @@ function restoreScrollFor(num) {
 //      in the prefetch slot.
 const _PREFETCH_TTL_MS = 2 * 60_000;
 const _prefetchedChapter = { num: null, data: null, at: 0 };
+// Eviction generation. Clearing the slot cannot cancel an already-issued
+// fetch, so every eviction bumps this counter and _prefetchNext's .then
+// commits only while its captured value still matches. Without it, a fetch
+// in flight across a glossary rewrite re-populates the slot with
+// pre-mutation text moments after the eviction that was meant to kill it.
+let _prefetchGen = 0;
+function _evictPrefetch() {
+  _prefetchedChapter.num = null;
+  _prefetchedChapter.data = null;
+  _prefetchedChapter.at = 0;
+  _prefetchGen++;
+}
 
 function _prefetchNext(currentDoneChapter) {
   const nextNum = currentDoneChapter + 1;
@@ -478,8 +490,10 @@ function _prefetchNext(currentDoneChapter) {
       && Date.now() - _prefetchedChapter.at < _PREFETCH_TTL_MS) {
     return; // already fresh
   }
+  const gen = _prefetchGen;
   api.chapter(novelId, nextNum)
     .then(d => {
+      if (gen !== _prefetchGen) return; // evicted mid-flight, drop the result
       _prefetchedChapter.num = nextNum;
       _prefetchedChapter.data = d;
       _prefetchedChapter.at = Date.now();
@@ -504,12 +518,42 @@ function _paintDoneChapterEpilogue(ch, num) {
   // stored position exactly once; double rAF matches the restore path's own
   // paint-timing choreography, and _scrollToParagraph already suppresses the
   // synthetic scroll save.
-  if (pendingDeepPara != null) {
+  // The handoff is anchored to the chapter the ?para= URL named
+  // (pendingDeepParaCh, reader-core.js): landing anywhere else clears it and
+  // falls through to that chapter's own saved position rather than stealing
+  // the jump.
+  if (pendingDeepPara != null && num === pendingDeepParaCh) {
     const targetPara = pendingDeepPara;
     pendingDeepPara = null;
+    pendingDeepParaCh = null;
     requestAnimationFrame(() => requestAnimationFrame(() => _scrollToParagraph(targetPara)));
   } else {
+    if (pendingDeepPara != null) {
+      pendingDeepPara = null;
+      pendingDeepParaCh = null;
+    }
     restoreScrollFor(num);
+  }
+}
+
+// Continuation polls, shared by loadChapter's normal fetch path and its F14
+// prefetch-cache fast path. Two independent background lanes can still be
+// running on a chapter the reader is already looking at:
+//   * refinement pending / in_progress on a done chapter: the body is
+//     deliberately blank under the no-draft-preview rule, so without a re-poll
+//     a prefetch-served chapter stays blank forever;
+//   * free_draft pending / in_progress: the mechanical draft lands seconds
+//     later and the body switches to it.
+// One timer covers both: pollHandle holds a single handle, so arming the two
+// separately (the old shape) leaked the first timer whenever both fired.
+function _armContinuationPolls(ch, num) {
+  if (!ch) return;
+  const refining = ch.status === "done"
+    && (ch.refinement_status === "pending" || ch.refinement_status === "in_progress");
+  const drafting = ch.free_draft_status === "pending"
+    || ch.free_draft_status === "in_progress";
+  if (refining || drafting) {
+    pollHandle = setTimeout(() => loadChapter(num), pollInterval(num, 3000));
   }
 }
 
@@ -521,9 +565,25 @@ async function loadChapter(num) {
   // on the very first boot call, where num happens to equal the just-set
   // currentCh too.
   if (num === currentCh) {
-    _prefetchedChapter.num = null;
-    _prefetchedChapter.data = null;
-    _prefetchedChapter.at = 0;
+    _evictPrefetch();
+    // Scroll-position protection for a same-chapter reload (the glossary
+    // mini-form save, a cross-tab glossary repaint, reread, a poll tick). The
+    // body wipe below collapses the document and the browser clamps scrollY
+    // toward 0; the resulting scroll event's debounced save would then DELETE
+    // this chapter's stored offset (the y <= 16 branch) whenever the fetch
+    // outlasts the debounce. Flush a genuinely pending save first (scrollY is
+    // still the user's real position at this instant), then suppress saves
+    // across the reload window. Only flush when a timer is actually pending:
+    // an unconditional _persistCurrentScroll() would run at boot, where
+    // scrollY is 0, and erase the very key the epilogue is about to restore.
+    // No scrollTo either: a same-chapter reload keeps the reader where they
+    // were, and restoreScrollFor runs in the epilogue.
+    if (_scrollSaveTimer) {
+      clearTimeout(_scrollSaveTimer);
+      _scrollSaveTimer = null;
+      _persistCurrentScroll();
+    }
+    _ignoreScrollFor(600);
   }
   // Cancel any prior poll handle unconditionally. This is the single guard
   // that prevents a stale timer captured against an old `num` from firing
@@ -540,7 +600,21 @@ async function loadChapter(num) {
       && !chaptersCache.some(c => c.chapter_num === num)) {
     bodyEn.innerHTML = `<p class="muted">Chapter ${num} doesn't exist in this novel. <a href="/library">Back to library</a>.</p>`;
     bodyZh.innerHTML = "";
+    // Only renderChapterBody repaints the badge, so every path that returns
+    // without it has to clear the previous chapter's score itself.
+    if (typeof resetQualityBadge === "function") resetQualityBadge();
     return;
+  }
+
+  // Drift guard: the TOC cache refreshes on the 6s poll, on visibilitychange
+  // and on cross-tab broadcasts, so it can know about a status change the
+  // prefetched row predates (a retranslate landed, a glossary edit flipped the
+  // row to 'stale', a refinement finished). Serving the cached body then shows
+  // the reader a chapter the app itself already considers different. Checked
+  // BEFORE the freshness test so an evicted row can never be served.
+  if (_prefetchedChapter.num === num && _prefetchedChapter.data) {
+    const tocRow = chaptersCache.find(c => c.chapter_num === num);
+    if (tocRow && tocRow.status !== _prefetchedChapter.data.status) _evictPrefetch();
   }
 
   // F14 (2026-05-25): consume the pre-render cache if fresh. The cache
@@ -550,8 +624,7 @@ async function loadChapter(num) {
       && _prefetchedChapter.data
       && Date.now() - _prefetchedChapter.at < _PREFETCH_TTL_MS) {
     const cachedCh = _prefetchedChapter.data;
-    _prefetchedChapter.num = null;
-    _prefetchedChapter.data = null;
+    _evictPrefetch();
     // Apply the same prologue as the normal path so the loader / scroll
     // reset still fires before render — easier than carving out a
     // shortcut path.
@@ -585,17 +658,26 @@ async function loadChapter(num) {
     document.getElementById("quality-banner")?.remove();
     document.getElementById("glossary-merge-error-card")?.remove();
     renderToc();
+    // Parity with the normal path: pull the chapter list when this row's state
+    // has drifted from the cache, fire-and-forget so the render isn't blocked.
+    refreshTocIfStale(cachedCh);
     renderChapterBody(cachedCh);
     if (cachedCh.status === "done") {
       // L1 fix (2026-08-08): run the same post-render epilogue the normal
       // path runs for a done chapter (end-of-chapter card, scroll restore /
       // pending-paragraph-handoff consumption, last-read breadcrumb)
       // instead of returning before any of it fires.
+      // renderChapterBody already prefetched the next chapter for a done row,
+      // so there is no explicit _prefetchNext call here.
       _paintDoneChapterEpilogue(cachedCh, num);
-      _prefetchNext(num);
     } else {
       endBlock.classList.add("hidden");
+      if (typeof resetQualityBadge === "function") resetQualityBadge();
     }
+    // Parity with the normal path: a cached done row can still have a
+    // refinement or a free draft in flight, and without these polls it would
+    // render blank (no-draft-preview) and never update.
+    _armContinuationPolls(cachedCh, num);
     return;
   }
   // When navigating to a different chapter, tear down any in-flight loader.
@@ -666,6 +748,11 @@ async function loadChapter(num) {
     // render for a network round-trip the user doesn't need.
     refreshTocIfStale(ch);
     if (ch.status === "pending" || ch.status === "translating") {
+      // Nothing below this point calls renderChapterBody, the only site that
+      // repaints the badge, and every exit from this branch is a return.
+      // Clear it here so the previous chapter's score doesn't sit in the
+      // chapter bar over a pending / translating one.
+      if (typeof resetQualityBadge === "function") resetQualityBadge();
       setChapterBarTitle(num, null, ch.title_zh);
       // Title hasn't been translated yet; fall back to the Han title (with
       // any 第N章 prefix stripped) or "Chapter N" as last resort. The Han
@@ -799,31 +886,17 @@ async function loadChapter(num) {
       // path's cache-hit branch: see _paintDoneChapterEpilogue, L1 fix
       // 2026-08-08.)
       _paintDoneChapterEpilogue(ch, num);
-      // Phase 4: refinement-in-flight continuation poll. The chapter is
-      // displayed (draft body), but the refiner is still running; re-poll
-      // so the banner updates and the body switches to refined_text when
-      // the refiner finishes.
-      if (
-        ch.refinement_status === "pending"
-        || ch.refinement_status === "in_progress"
-      ) {
-        pollHandle = setTimeout(() => loadChapter(num), pollInterval(num, 3000));
-      }
     } else {
       endBlock.classList.add("hidden");
     }
-    // 2026-05-26 — keep polling while the mechanical-NMT free draft is in
-    // flight so the reader switches from "nothing to display" to
-    // free_draft_text once the worker finishes (typically a few seconds for
-    // Google Translate). Same pattern as the refinement continuation poll above.
-    if (
-      ch.free_draft_status === "pending"
-      || ch.free_draft_status === "in_progress"
-    ) {
-      pollHandle = setTimeout(() => loadChapter(num), pollInterval(num, 3000));
-    }
+    // Refinement-in-flight and free-draft-in-flight continuation polls, shared
+    // with the prefetch fast path so a cached chapter gets the same treatment.
+    _armContinuationPolls(ch, num);
   } catch (e) {
     if (e.message && e.message.startsWith("404:")) {
+      // No body renders on either 404 sub-branch, so drop the previous
+      // chapter's quality badge here.
+      if (typeof resetQualityBadge === "function") resetQualityBadge();
       // Bounded retry. The original intent (auto-recovery when a chapter
       // is being created mid-poll) is preserved for the first few attempts.
       // Past _NOT_FOUND_MAX we surface a definitive "not found" UI rather
@@ -848,6 +921,7 @@ async function loadChapter(num) {
     statusEl.className = "status err";
     statusEl.textContent = `Load failed: ${e.message}`;
     bodyEn.innerHTML = "";
+    if (typeof resetQualityBadge === "function") resetQualityBadge();
   }
 }
 
@@ -1618,6 +1692,10 @@ if (termMarksToggle) {
 }
 
 document.addEventListener("keydown", (e) => {
+  // An open dialog owns the keyboard: b / arrows / "/" would otherwise turn
+  // the page behind the shortcuts panel, the bookmark form or the glossary
+  // mini dialog, leaving the user editing against a chapter they can't see.
+  if (document.querySelector("dialog[open]")) return;
   // Guard inputs so shortcuts don't fire while the user is typing in the TOC
   // search. Modifiers are reserved for browser shortcuts.
   if (e.target.matches("input, textarea, select")) return;
@@ -1890,6 +1968,26 @@ if (bookmarkAddSaveBtn) {
 // Initial load on page open.
 loadBookmarksForNovel();
 
+/* ---- Deferred cross-tab glossary repaint ----
+ * A "glossary" broadcast that lands while a dialog is open must not yank the
+ * mini add/revise form away mid-edit, but the repaint is still owed: the
+ * stored chapter text may have been rewritten by an apply-in-place, so
+ * skipping it silently leaves the reader on pre-rename text until the next
+ * navigation. Park the repaint and drain it when the last dialog closes.
+ * `close` does not bubble, hence the capture-phase listener on document; the
+ * one-task defer covers a stacked dialog closing in the same tick (and any
+ * ordering where the open attribute has not been dropped yet). */
+let _glossaryRepaintPending = false;
+document.addEventListener("close", () => {
+  if (!_glossaryRepaintPending) return;
+  setTimeout(() => {
+    if (!_glossaryRepaintPending) return;
+    if (document.querySelector("dialog[open]")) return;
+    _glossaryRepaintPending = false;
+    loadChapter(currentCh);
+  }, 0);
+}, true);
+
 /* ---- Boot ----
  * Wrapped in try/catch so a stale `ink:lastNovel` (the spine.js source of
  * truth for the Reader glyph's href) or a missing novel/chapter doesn't
@@ -2019,15 +2117,15 @@ loadBookmarksForNovel();
     // never rewrites or renumbers existing ones, so nothing already cached
     // can go stale from it.
     if (d.type === "glossary" || d.type === "inserted") {
-      _prefetchedChapter.num = null;
-      _prefetchedChapter.data = null;
-      _prefetchedChapter.at = 0;
+      _evictPrefetch();
     }
     if (d.type === "glossary") {
       // Same-chapter reload preserves scroll; the open-dialog guard protects
       // the mini add/revise form mid-edit from a re-render yanking it away.
+      // The repaint is deferred rather than dropped, and drains on dialog close.
       loadGlossary().then(() => {
-        if (!document.querySelector("dialog[open]")) loadChapter(currentCh);
+        if (document.querySelector("dialog[open]")) _glossaryRepaintPending = true;
+        else loadChapter(currentCh);
       });
     }
   });
