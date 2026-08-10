@@ -30,8 +30,22 @@ const applyChoiceDlg = document.getElementById("apply-choice-dialog");
 const applyChoiceBody = document.getElementById("apply-choice-body");
 const applyChoiceMeta = document.getElementById("apply-choice-meta");
 
+// One apply-choice flow at a time. The usage scan below is a slow INSTR pass
+// over every chapter in the library, and the page stays fully interactive
+// while it awaits, so editing a second entry's English (commit-on-blur) can
+// start a second call before the first one ever reaches showModal. That
+// second call would overwrite this dialog's body/meta with the second
+// entry's text and stack a second handler set on the shared [data-choice]
+// buttons, so one click fires the apply for both entries at once. The flag
+// is set before the usage await, not after, and covers the whole call
+// through the button handler's async work; the caller falls back to the
+// plain Saved toast so a skipped call is still acknowledged.
+let applyChoiceBusy = false;
+
 async function openGlobalApplyChoiceDialog(entry, oldTermEn) {
-  if (!applyChoiceDlg) return;
+  if (!applyChoiceDlg) return false;
+  if (applyChoiceBusy || applyChoiceDlg.open) return false;
+  applyChoiceBusy = true;
   // Surface the blast radius up front, global edits hit every novel.
   // If the usage lookup fails, surface it: an empty array would falsely
   // read as "0 novels affected" and the user could confidently apply
@@ -67,30 +81,34 @@ async function openGlobalApplyChoiceDialog(entry, oldTermEn) {
     handlers.forEach(({ btn, fn }) => btn.removeEventListener("click", fn));
     applyChoiceDlg.removeEventListener("cancel", onCancelEvt);
   }
-  const onCancelEvt = () => cleanup();
+  const onCancelEvt = () => { cleanup(); applyChoiceBusy = false; };
   applyChoiceDlg.querySelectorAll("[data-choice]").forEach(btn => {
     const fn = async () => {
       const choice = btn.dataset.choice;
       cleanup();
       applyChoiceDlg.close();
-      if (choice === "none") {
-        showToast(`Saved "${entry.term_zh}". Existing chapters unchanged.`, "ok");
-        return;
-      }
-      if (choice === "apply") {
-        try {
-          const res = await api.globalGlossaryApplyInPlace(entry.id, oldTermEn, entry.term_en);
-          showToast(
-            `Applied across ${res.chapters_updated} chapter${res.chapters_updated === 1 ? "" : "s"} · ` +
-            `${res.rows_updated_translated} draft / ${res.rows_updated_refined} refined rows.`,
-            "ok"
-          );
-          // A global-entry change can affect any novel, so broadcast with a
-          // null novel_id (Block 2, 2026-08-07) rather than scoping to one.
-          broadcastNovelChange(null, "glossary");
-        } catch (e) {
-          showToast(`Apply failed: ${e.message}`, "err");
+      try {
+        if (choice === "none") {
+          showToast(`Saved "${entry.term_zh}". Existing chapters unchanged.`, "ok");
+          return;
         }
+        if (choice === "apply") {
+          try {
+            const res = await api.globalGlossaryApplyInPlace(entry.id, oldTermEn, entry.term_en);
+            showToast(
+              `Applied across ${res.chapters_updated} chapter${res.chapters_updated === 1 ? "" : "s"} · ` +
+              `${res.rows_updated_translated} draft / ${res.rows_updated_refined} refined rows.`,
+              "ok"
+            );
+            // A global-entry change can affect any novel, so broadcast with a
+            // null novel_id (Block 2, 2026-08-07) rather than scoping to one.
+            broadcastNovelChange(null, "glossary");
+          } catch (e) {
+            showToast(`Apply failed: ${e.message}`, "err");
+          }
+        }
+      } finally {
+        applyChoiceBusy = false;
       }
     };
     btn.addEventListener("click", fn);
@@ -98,6 +116,7 @@ async function openGlobalApplyChoiceDialog(entry, oldTermEn) {
   });
   applyChoiceDlg.addEventListener("cancel", onCancelEvt);
   applyChoiceDlg.showModal();
+  return true;
 }
 
 /* ---- Render ---- */
@@ -162,15 +181,17 @@ function _wireCards() {
           const idx = entries.findIndex(x => x.id === id);
           if (idx >= 0) entries[idx] = updated;
           broadcastNovelChange(null, "glossary");
-          if (
+          const askedToApply =
             field === "term_en"
             && oldTermEn != null
             && oldTermEn !== updated.term_en
             && oldTermEn.trim()
             && updated.term_en.trim()
-          ) {
-            openGlobalApplyChoiceDialog(updated, oldTermEn);
-          } else {
+            && await openGlobalApplyChoiceDialog(updated, oldTermEn);
+          if (!askedToApply) {
+            // Either not a term_en change, or the apply-choice dialog was
+            // already busy with another entry. Either way the PATCH above
+            // already saved, so say so honestly rather than staying silent.
             showToast(`Saved "${updated.term_zh}". Cache invalidates on next translation.`, "ok");
           }
         } catch (e) {
