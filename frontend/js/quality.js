@@ -3,8 +3,9 @@
  * The standalone half of "see -> fix -> learn": it surfaces the scorecard /
  * consistency IP that used to live only in CLI scripts, and turns the worst
  * terms + worst chapters into clickable worklists that deep-link into the
- * glossary editor and the reader's edit mode. Plain HTML cards + innerHTML
- * templates (the stats.js pattern); no charting lib, no framework, no build.
+ * glossary and the /editor CAT editor, the same surfaces the reader's
+ * quality badge summarizes. Plain HTML cards + innerHTML templates (the
+ * stats.js pattern); no charting lib, no framework, no build.
  */
 
 const novelSelect = document.getElementById("quality-novel");
@@ -194,7 +195,14 @@ async function loadNovelList() {
 }
 
 /* ---- Render ---- */
+// Bumped on every render() call; a stale in-flight fetch checks its captured
+// value against the live counter before touching the DOM, so picking novel A
+// (slow, a full-novel scan) then novel B (fast) can't let A's late response
+// repaint over B while the dropdown and URL already say B.
+let _renderSeq = 0;
+
 async function render() {
+  const seq = ++_renderSeq;
   const novelId = novelSelect.value;
   if (!novelId) {
     grid.setAttribute("aria-busy", "false");
@@ -208,6 +216,7 @@ async function render() {
       api.qualityScorecard(novelId),
       api.qualityConsistency(novelId),
     ]);
+    if (seq !== _renderSeq) return;
     grid.setAttribute("aria-busy", "false");
     grid.innerHTML = [
       cardSummary(card, cons),
@@ -218,8 +227,15 @@ async function render() {
       cardSignals(card),
     ].join("");
   } catch (e) {
+    if (seq !== _renderSeq) return;
     grid.setAttribute("aria-busy", "false");
-    grid.innerHTML = `<p class="status err">Load failed: ${escapeHtml(e.message)}</p>`;
+    if (e.status === 404) {
+      // Empty-range novels (no translated chapters) 404 the scorecard
+      // endpoint. That's an honest empty state, not a real failure.
+      grid.innerHTML = `<p class="muted">No translated chapters yet. Translate a chapter and this scorecard fills in.</p>`;
+    } else {
+      grid.innerHTML = `<p class="status err">Load failed: ${escapeHtml(e.message)}</p>`;
+    }
   }
 }
 

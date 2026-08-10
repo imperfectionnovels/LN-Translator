@@ -215,12 +215,20 @@ function cardNovelHeader(s) {
 }
 
 /* ---- Render ---- */
+// Bumped on every render() call; a stale in-flight fetch checks its captured
+// value against the live counter before touching the DOM, so picking novel A
+// (slow) then novel B (fast) can't let A's late response repaint over B
+// while the dropdown and URL already say B.
+let _renderSeq = 0;
+
 async function render() {
+  const seq = ++_renderSeq;
   grid.setAttribute("aria-busy", "true");
   grid.innerHTML = `<p class="muted">Loading…</p>`;
   const novelId = novelSelect.value;
   try {
     const s = novelId ? await statsApi.novel(novelId) : await statsApi.global();
+    if (seq !== _renderSeq) return;
     grid.setAttribute("aria-busy", "false");
     const parts = [
       cardNovelHeader(s),
@@ -235,6 +243,7 @@ async function render() {
     parts.push(cardTm(s));
     grid.innerHTML = parts.join("");
   } catch (e) {
+    if (seq !== _renderSeq) return;
     grid.setAttribute("aria-busy", "false");
     grid.innerHTML = `<p class="status err">Load failed: ${escapeHtml(e.message)}</p>`;
   }
