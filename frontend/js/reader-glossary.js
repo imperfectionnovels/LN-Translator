@@ -31,15 +31,24 @@ function _glossAliases(s) {
   return String(s || "").split("/").map(x => x.trim()).filter(Boolean);
 }
 
+// Normalize the curly apostrophe (U+2019) to the straight one and lowercase.
+// Mirrors term-marks.js::enKey so the selection matcher and the mark
+// painter agree on what is "the same term". (enKey also folds the &#39;
+// entity, but selection text comes from the DOM already decoded.)
+function _glossEnKey(s) {
+  return String(s == null ? "" : s)
+    .replace(/’/g, "'")
+    .toLowerCase();
+}
+
 // Find the glossary entry a selection refers to. Chinese side: exact alias
-// match. English side: case-insensitive alias match.
+// match. English side: case-insensitive alias match with apostrophe normalization.
 function _glossFindEntry(text, inZh) {
   const t = String(text || "").trim();
   if (!t) return null;
-  const lc = t.toLowerCase();
   return (glossaryCache || []).find(g => inZh
     ? _glossAliases(g.term_zh).includes(t)
-    : _glossAliases(g.term_en).some(a => a.toLowerCase() === lc)
+    : _glossAliases(g.term_en).some(a => _glossEnKey(a) === _glossEnKey(t))
   ) || null;
 }
 
