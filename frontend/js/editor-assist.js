@@ -39,6 +39,11 @@ let assistOpen = localStorage.getItem(ASSIST_OPEN_KEY) !== "0"; // default open
 let assistSeq = 0; // stale-response guard
 let assistDebounce = null;
 let assistMatches = []; // flattened target texts, exact first (Alt+1..3)
+// Ownership stamp for assistMatches: "ch:idx" of the segment the painted
+// cards were fetched for, null whenever nothing valid is painted. An apply
+// writes straight into the durable ledger, so a match may only land on the
+// row it was fetched for (see applyAssistMatch).
+let assistMatchesKey = null;
 const assistCache = new Map(); // "ch:idx" -> assist payload
 let glossaryPromise = null; // one api.glossary fetch per page load
 
@@ -81,10 +86,26 @@ function scheduleAssist() {
 
 function assistIdle() {
   assistMatches = [];
+  assistMatchesKey = null;
   assistTmEl.innerHTML =
     `<p class="assist-empty">Select a segment to see matching translations from the rest of this novel.</p>`;
   assistGlossaryEl.innerHTML =
     `<p class="assist-empty">Glossary terms for the selected segment appear here.</p>`;
+}
+
+// Drop the painted matches SYNCHRONOUSLY (the refetch behind scheduleAssist
+// is a 150ms debounce plus a round trip away). Without this, Alt+1..3 or an
+// Apply click inside that window would paste the PREVIOUS segment's text
+// into the new row, which commits to the ledger on blur.
+function invalidateAssistMatches() {
+  const seg = focusSeg != null && currentData ? segByIndex(focusSeg) : null;
+  if (!seg) {
+    assistIdle();
+    return;
+  }
+  assistMatches = [];
+  assistMatchesKey = null;
+  assistTmEl.innerHTML = `<p class="assist-empty">Loading matches...</p>`;
 }
 
 async function loadAssist() {
@@ -103,12 +124,13 @@ async function loadAssist() {
   } catch (e) {
     if (seq !== assistSeq) return;
     assistMatches = [];
+    assistMatchesKey = null;
     assistTmEl.innerHTML =
       `<p class="assist-empty">Could not load matches: ${escapeHtml(e.message)}</p>`;
     return;
   }
   if (seq !== assistSeq || ch !== currentCh || idx !== focusSeg) return;
-  renderTmMatches(data);
+  renderTmMatches(data, ch, idx);
   // Prefetch the next row so j / Ctrl+Enter flows feel instant.
   const next = currentData
     ? currentData.segments.find(s => s.index > idx)
@@ -135,8 +157,9 @@ function matchCard(n, label, source, target, meta) {
     </div>`;
 }
 
-function renderTmMatches(data) {
+function renderTmMatches(data, ch, idx) {
   assistMatches = [];
+  assistMatchesKey = `${ch}:${idx}`;
   const cards = [];
   (data.tm_exact || []).forEach(m => {
     const n = assistMatches.length;
@@ -194,6 +217,10 @@ function renderGlossaryChips(seg) {
 // Apply a TM match: replace the active editing cell's text and stay editing;
 // from grid mode, open the edit first (canEdit-gated).
 function applyAssistMatch(i) {
+  // Ownership: the painted cards belong to exactly one (chapter, segment).
+  // If the active row moved since they were fetched, this apply would write
+  // another paragraph's translation into the live cell, so drop it.
+  if (assistMatchesKey !== `${currentCh}:${focusSeg}`) return;
   const text = assistMatches[i];
   if (text == null) return;
   if (!editing) {
@@ -237,18 +264,30 @@ let aiDialogIdx = null;
 function openAiSuggestion(idx) {
   aiDialogIdx = idx;
   aiDialogApply.disabled = true;
-  // Contextual note: kept human rows vs TM-prefilled machine rows.
+  // Contextual note: kept human rows vs TM-prefilled machine rows. Apply
+  // routes through core's revertSegment, which early-returns on exactly this
+  // predicate, so mirror it: a machine row still carrying the stored AI
+  // rendering has nothing to revert to, and the button stays disabled rather
+  // than closing the dialog with no effect.
   const seg = segByIndex(idx);
-  aiDialogNote.textContent = seg && seg.status !== "machine"
-    ? "Your text was kept through the last retranslate. The AI's current rendering of this paragraph:"
-    : "This segment was pre-filled from translation memory. The AI's own rendering of this paragraph:";
+  const applyIsNoop = !seg || (seg.status === "machine" && !seg.machine_differs);
+  if (applyIsNoop) {
+    aiDialogNote.textContent =
+      "This segment already shows the AI's translation, so there is nothing to apply. The stored rendering of this paragraph:";
+  } else if (seg.status !== "machine") {
+    aiDialogNote.textContent =
+      "Your text was kept through the last retranslate. The AI's current rendering of this paragraph:";
+  } else {
+    aiDialogNote.textContent =
+      "This segment was pre-filled from translation memory. The AI's own rendering of this paragraph:";
+  }
   aiDialogText.textContent = "Loading the stored AI translation...";
-  aiDialog.showModal();
+  if (!aiDialog.open) aiDialog.showModal();
   fetchAssist(currentCh, idx).then(d => {
     if (aiDialogIdx !== idx || !aiDialog.open) return;
     if (d.machine_text) {
       aiDialogText.textContent = d.machine_text;
-      aiDialogApply.disabled = readOnly;
+      aiDialogApply.disabled = readOnly || applyIsNoop;
     } else {
       aiDialogText.textContent =
         "No AI translation is stored for this segment.";
@@ -286,11 +325,19 @@ document.addEventListener("keydown", (e) => {
 });
 
 // --- Core hooks ---
-document.addEventListener("editor:active-seg", scheduleAssist);
+document.addEventListener("editor:active-seg", () => {
+  // The active row moved: the painted matches are the previous row's until
+  // the debounced refetch lands, so retire them now. Re-selecting the SAME
+  // row (startEdit re-dispatches this) keeps its matches applicable.
+  if (assistMatchesKey !== `${currentCh}:${focusSeg}`) invalidateAssistMatches();
+  scheduleAssist();
+});
 document.addEventListener("editor:segments-loaded", () => {
   // A fresh payload may follow a retranslate or an out-of-band edit; drop
   // the per-chapter cache so matches and machine_text reflect the new rows.
   assistCache.clear();
+  // Same rows or not, what is painted came from the old payload.
+  invalidateAssistMatches();
   scheduleAssist();
 });
 document.addEventListener("editor:segment-updated", (e) => {
